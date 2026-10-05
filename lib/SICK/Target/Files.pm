@@ -181,6 +181,13 @@ full or not writable leaves the old files as they were.
 
 =cut
 
+# Without a host the answer is a file that deploy wrote itself: waiting does
+# not change it.
+sub verify_timeout {
+  my ( $self ) = @_;
+  return defined $self->device->host ? $self->SUPER::verify_timeout : 0;
+}
+
 sub presented_cert {
   my ( $self ) = @_;
   return $self->SUPER::presented_cert if defined $self->device->host;

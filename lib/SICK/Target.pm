@@ -251,6 +251,16 @@ sub endpoint {
   return ( $host, $device->port );
 }
 
+sub verify_timeout { 30 }
+
+=method verify_timeout
+
+Seconds a device may take after L</deploy> until it presents the new
+certificate - the time its web server needs to restart, for instance.
+L<SICK::Runner> asks L</presented_cert> again and again for that long before
+it calls the deployment failed. C<30>; a target overrides it for a device
+that is slower, or with C<0> where the answer cannot change by waiting.
+
 =method endpoint
 
     my ( $host, $port ) = $target->endpoint;

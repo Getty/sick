@@ -1,0 +1,167 @@
+#!/usr/bin/env perl
+# PODNAME: sick
+# ABSTRACT: Ship internal certificates and keys to the devices of a list
+
+use strict;
+use warnings;
+use SICK::CLI;
+
+our $VERSION = '0.001';
+
+# A signal ends the program the ordinary way, so that the private temporary
+# directories - a fresh key may be in one - are removed (SICK::Temp).
+$SIG{HUP}  = sub { exit 129 };
+$SIG{INT}  = sub { exit 130 };
+$SIG{TERM} = sub { exit 143 };
+
+exit SICK::CLI->new->run(@ARGV);
+
+__END__
+
+=head1 SYNOPSIS
+
+    sick check                      # what does every device present?
+    sick run                        # renew what is due
+    sick run --dry-run              # only say what would be renewed
+    sick run --force switch         # renew one device now, due or not
+    sick trust /srv/www/trust       # root certificate and instructions for clients
+
+    sick --config ./sick.yml check
+    SICK_CONFIG=./sick.yml sick run --verbose
+
+=head1 DESCRIPTION
+
+C<sick> brings certificates of an internal certificate authority to the
+devices of a list and keeps them current. The list is the whole
+configuration (L<SICK::Config>); L<SICK> describes the idea.
+
+C<sick> is no daemon. Renewal is C<sick run> in a timer or a cron job: a
+run looks at every device and changes only those whose certificate is
+missing, from another CA, for other names or about to expire.
+
+    # /etc/cron.d/sick
+    17 4 * * *  root  sick run && sick trust /srv/www/trust
+
+=head1 COMMANDS
+
+=head2 check [device ...]
+
+Prints one line per device: which state its certificate is in and whether
+a run would renew it. Changes nothing.
+
+    DEVICE   STATUS       RENEW  DETAIL
+    switch   ok           no     valid until 2027-11-06 03:02:18 UTC, 396 days left
+    router   unreachable  ?      router.example.internal:443: Connection refused
+    grafana  missing      yes    the device presents no certificate
+
+The states are C<ok>, C<missing>, C<foreign-ca> (not from the CA of the
+list), C<names> (not exactly the names of the list) and C<expiring> (less
+than C<renew_before> left). C<unreachable> means that the device did not
+answer - which is not the same as having no certificate - and C<error>
+that something else kept SICK from looking, a device type without a module
+for instance. Both leave the question of renewal open and make the exit
+code C<1>.
+
+=head2 run [--force] [--dry-run] [--verbose] [device ...]
+
+For every device: check; if a new certificate is due, have it issued,
+deploy it, and check that the device now presents exactly that
+certificate.
+
+    DEVICE   ACTION     REASON       ERROR
+    switch   unchanged  ok
+    router   failed     unreachable  unreachable: router.example.internal:443: Connection refused
+    grafana  renewed    missing
+
+The actions are C<unchanged>, C<renewed>, C<would-renew> (with
+C<--dry-run>) and C<failed>. A device that fails does not stop the others.
+
+=over 4
+
+=item C<--force>, C<-f>
+
+Renew also certificates that are fine. A device that cannot be reached
+still fails.
+
+=item C<--dry-run>, C<-n>
+
+Only look and say what would be renewed. Nothing is issued and nothing is
+changed on any device.
+
+=item C<--verbose>, C<-v>
+
+Report on standard error what is being done, including what the targets
+and the programs they call have to say.
+
+=back
+
+=head2 trust <directory>
+
+Writes the root certificate of the CA into the directory, as PEM
+(C<root_ca.pem>), as DER (C<root_ca.crt>) and as a configuration profile
+for Apple devices (C<root_ca.mobileconfig>), together with an C<index.html>
+that shows the fingerprint and explains the installation for Firefox,
+Chrome, Linux, macOS, Windows, iOS and Android. Put the directory behind a
+web server and send people the link. See L<SICK::Trust>.
+
+The CA is called by the C<name> of the C<ca> section, or by the common name
+of its root certificate.
+
+=head1 OPTIONS
+
+=over 4
+
+=item C<--config E<lt>fileE<gt>>, C<-c>
+
+The device list. Without the option, the file named by the environment
+variable C<SICK_CONFIG>; without that, F</etc/sick/sick.yml>.
+
+=item C<--help>, C<-h>
+
+Prints a summary of the commands and options.
+
+=item C<--version>, C<-V>
+
+Prints the version.
+
+=back
+
+=head1 EXIT CODES
+
+=over 4
+
+=item C<0>
+
+Nothing failed.
+
+=item C<1>
+
+At least one device failed (C<run>) or could not be checked (C<check>), or
+C<trust> could not write its files.
+
+=item C<2>
+
+The command line or the device list is wrong: unknown command, option or
+device, a list that cannot be read or is not valid.
+
+=back
+
+=head1 ENVIRONMENT
+
+=over 4
+
+=item C<SICK_CONFIG>
+
+The device list, when C<--config> is not given.
+
+=item C<SICK_OPENSSL>
+
+The C<openssl> program to use (L<SICK::OpenSSL>).
+
+=item C<TMPDIR>
+
+Where the private temporary directories are made (L<SICK::Temp>).
+
+=back
+
+=cut

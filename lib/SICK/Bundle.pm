@@ -194,6 +194,26 @@ sub fingerprint_sha256 { $_[0]->_info->{fingerprint_sha256} }
 sub subject_dn         { $_[0]->_info->{subject_dn} }
 sub issuer_dn          { $_[0]->_info->{issuer_dn} }
 
+sub common_name {
+  my ( $self ) = @_;
+  unless ( exists $self->{common_name} ) {
+    my $subject = eval {
+      SICK::OpenSSL::run_checked(
+        [ 'x509', '-noout', '-subject', '-nameopt', 'multiline,utf8,-esc_msb' ],
+        stdin => $self->cert,
+      );
+    };
+    croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $subject;
+    $self->{common_name} = SICK::Names::cn_from_text($subject);
+  }
+  return $self->{common_name};
+}
+
+sub is_self_signed {
+  my ( $self ) = @_;
+  return $self->subject_dn eq $self->issuer_dn ? 1 : 0;
+}
+
 =method not_before
 
 Start of the validity as epoch seconds.
@@ -214,6 +234,16 @@ The subject as an RFC 2253 string, for instance C<CN=ant.example.internal>.
 =method issuer_dn
 
 The issuer in the same form.
+
+=method common_name
+
+The common name of the subject as C<openssl> prints it (UTF-8 bytes), or
+C<undef> when the subject has none.
+
+=method is_self_signed
+
+True when subject and issuer are the same name, as they are for a root
+certificate. The signature is not checked.
 
 =cut
 

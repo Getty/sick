@@ -99,6 +99,12 @@ subtest 'validity, fingerprint, subject and issuer' => sub {
 
   is $bundle->subject_dn, 'CN=Ant.Example.Internal', 'subject_dn';
   is $bundle->issuer_dn,  'CN=SICK Test Root',       'issuer_dn';
+
+  is $bundle->common_name, 'Ant.Example.Internal', 'common_name, as written in the certificate';
+  is( SICK::Bundle->new( cert => $root->{pem} )->common_name, 'SICK Test Root', '... of a CA' );
+  ok !$bundle->is_self_signed, 'a certificate of a CA is not self-signed';
+  ok !SICK::Bundle->new( cert => $inter->{pem} )->is_self_signed, '... nor is an intermediate';
+  ok( SICK::Bundle->new( cert => $root->{pem} )->is_self_signed, 'a root certificate is' );
 };
 
 subtest 'is_issued_by' => sub {

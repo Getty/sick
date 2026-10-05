@@ -263,6 +263,11 @@ SKIP: {
   }
 };
 
+subtest 'how long the new certificate may take to show' => sub {
+  is target()->verify_timeout, 0, 'without a host there is nothing to wait for: the file is there or it is not';
+  is target( host => '127.0.0.1' )->verify_timeout, 30, 'with a host the service gets the time every device gets';
+};
+
 subtest 'presented_cert with a host asks the host' => sub {
   my $listener = IO::Socket::INET->new( LocalAddr => '127.0.0.1', LocalPort => 0, Listen => 1 )
     or plan skip_all => 'cannot listen on 127.0.0.1: '.$!;

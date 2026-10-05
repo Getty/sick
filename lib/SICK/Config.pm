@@ -63,6 +63,10 @@ C<selfsigned>; the other keys are C<url>, C<root>, C<provisioner>,
 C<password_file>, C<step> and C<dir>. Which of them are needed is decided by
 the issuer, see L<SICK::Issuer::StepCA> and L<SICK::Issuer::SelfSigned>.
 
+C<name> is optional and for humans only: what the CA is called on the page
+and in the profile C<sick trust> writes (L<SICK::Trust>). Without it the
+common name of the root certificate is used.
+
 =item C<defaults>
 
 C<lifetime> (C<397d>), C<renew_before> (C<30d>) and C<key> (C<rsa2048>) for
@@ -91,7 +95,7 @@ All scalars are read as plain text, so C<mode_key: 0600> stays C<0600>.
 =cut
 
 my @TOP_KEYS     = qw( ca defaults devices );
-my @CA_KEYS      = qw( type url root provisioner password_file step dir );
+my @CA_KEYS      = qw( type name url root provisioner password_file step dir );
 my @DEFAULT_KEYS = qw( lifetime renew_before key );
 my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key );
 my @KEY_TYPES    = qw( rsa2048 rsa3072 rsa4096 ec256 );
@@ -154,6 +158,7 @@ the file name in error messages and in L</path>.
 
 sub path     { $_[0]->{path} }
 sub ca       { $_[0]->{ca} }
+sub ca_name  { $_[0]->{ca}{name} }
 sub defaults { $_[0]->{defaults} }
 sub devices  { @{ $_[0]->{devices} } }
 
@@ -169,6 +174,13 @@ The file the list was loaded from.
 =method ca
 
 Hash reference with the C<ca> section as written: plain strings.
+
+=method ca_name
+
+    my $name = $config->ca_name;    # 'Example Internal CA', or undef
+
+The C<name> of the C<ca> section: what the CA is called in front of humans.
+C<undef> when the list does not give one.
 
 =method defaults
 
@@ -272,6 +284,12 @@ sub _build {
   $self->_unknown( 'ca', $ca, @CA_KEYS );
   for my $key ( sort keys %$ca ) {
     $self->_fail( 'ca.'.$key, 'must be a plain value' ) if ref $ca->{$key};
+  }
+  if ( exists $ca->{name} ) {
+    my $name = $ca->{name};
+    $self->_fail( 'ca.name', 'must not be empty' ) unless defined $name && $name =~ /\S/;
+    $self->_fail( 'ca.name', 'must be one line of at most 100 characters' )
+      if $name =~ /[\x00-\x1f\x7f]/ || length $name > 100;
   }
   $self->{ca} = { %$ca };
 

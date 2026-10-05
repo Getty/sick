@@ -6,6 +6,7 @@ use Test::More;
 for (qw(
   SICK
   SICK::Bundle
+  SICK::CLI
   SICK::Command
   SICK::Config
   SICK::Decision
@@ -16,9 +17,12 @@ for (qw(
   SICK::Issuer::StepCA
   SICK::Names
   SICK::OpenSSL
+  SICK::Runner
   SICK::Target
+  SICK::Target::Acmesh
   SICK::Target::Files
   SICK::Temp
+  SICK::Trust
 )) {
   use_ok($_);
 }

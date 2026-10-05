@@ -72,9 +72,38 @@ Those of them it cannot do without.
 
 =cut
 
+my %TYPE = (
+  stepca     => 'SICK::Issuer::StepCA',
+  selfsigned => 'SICK::Issuer::SelfSigned'
+);
+
+sub from_ca {
+  my ( $class, %ca ) = @_;
+  my $type = defined $ca{type} && !ref $ca{type} && length $ca{type} ? $ca{type} : 'step-ca';
+  ( my $normal = lc $type ) =~ s/[^a-z0-9]//g;
+  my $issuer = $TYPE{$normal}
+    or croak 'ca.type: unknown type \''.$type.'\' (step-ca or selfsigned)';
+  ( my $file = $issuer.'.pm' ) =~ s{::}{/}g;
+  require $file;
+  return $issuer->new(%ca);
+}
+
+=method from_ca
+
+    my $issuer = SICK::Issuer->from_ca( %{ $config->ca } );
+
+The issuer the C<ca> section of the device list asks for: C<type: step-ca>
+(the default when there is no C<type>) is a L<SICK::Issuer::StepCA>,
+C<type: selfsigned> a L<SICK::Issuer::SelfSigned>. The type is compared
+like a device type, without case and punctuation. Croaks with
+C<< ca.type: unknown type '<type>' (step-ca or selfsigned) >> for anything
+else, and like L</new> when the section does not fit the issuer.
+
+=cut
+
 sub new {
   my ( $class, %arg ) = @_;
-  delete $arg{type};
+  delete @arg{qw( type name )};
   my %known = map { $_ => 1 } $class->attributes;
   my @unknown = sort grep { !$known{$_} } keys %arg;
   croak 'ca: unknown key \''.$unknown[0].'\' for '.$class if @unknown;
@@ -90,7 +119,8 @@ sub new {
     my $issuer = SICK::Issuer::StepCA->new( %{ $config->ca } );
 
 Takes the C<ca> section of the device list. C<type> is what selected the
-class and is ignored here. Croaks with C<< ca: missing '<key>' >> when a
+class and C<name> is for humans (L<SICK::Config/ca_name>); both are ignored
+here. Croaks with C<< ca: missing '<key>' >> when a
 required attribute is not given and with C<< ca: unknown key '<key>' ... >>
 for one the class does not know.
 

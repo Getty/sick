@@ -180,6 +180,24 @@ subtest 'unknown keys are errors' => sub {
     'type, dir and step are known in ca';
 };
 
+subtest 'the name of the CA' => sub {
+  my $named = SICK::Config->load_string( "ca:\n  name: Example Internal CA\n  type: selfsigned\n  dir: /var/lib/sick/ca\n".$minimal, 'list.yml' );
+  is $named->ca_name, 'Example Internal CA', 'ca_name is the name of the ca section';
+  is $named->ca->{name}, 'Example Internal CA', '... which is part of ca as written';
+  is( SICK::Config->load_string( $minimal, 'list.yml' )->ca_name, undef, 'undef without one' );
+  is( SICK::Config->load($example)->ca_name, undef, '... as in the example of the design document' );
+  is( SICK::Config->load_string( "ca:\n  name: \"R&D <Lab>\"\n".$minimal, 'list.yml' )->ca_name, 'R&D <Lab>',
+    'markup is none of the business of the list' );
+
+  like error_of( "ca:\n  name:\n".$minimal ),        qr/^list\.yml: ca\.name: must not be empty/, 'a name without a value';
+  like error_of( "ca:\n  name: '  '\n".$minimal ),   qr/^list\.yml: ca\.name: must not be empty/, 'a blank name';
+  like error_of( "ca:\n  name: [a, b]\n".$minimal ), qr/^list\.yml: ca\.name: must be a plain value/, 'a list as name';
+  like error_of( "ca:\n  name: \"two\\nlines\"\n".$minimal ),
+    qr/^list\.yml: ca\.name: must be one line of at most 100 characters/, 'a name of two lines';
+  like error_of( "ca:\n  name: ".( 'x' x 101 )."\n".$minimal ),
+    qr/^list\.yml: ca\.name: must be one line of at most 100 characters/, 'a name that is too long';
+};
+
 subtest 'invalid values' => sub {
   my $device = "devices:\n  ant:\n    type: files\n    names: [ant.example.internal]\n";
 

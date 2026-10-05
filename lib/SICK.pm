@@ -30,29 +30,32 @@ A device list is the whole configuration:
         names: [grafana.example.internal]
         dir: /srv/certs/grafana
         reload: "docker restart grafana"
+      router:
+        type: acmesh                    # built in: a deploy hook of acme.sh
+        hook: routeros
+        names: [router.example.internal]
+        env: { ROUTER_OS_HOST: router.example.internal, ROUTER_OS_USERNAME: sick }
 
-The parts, used by hand:
+On the command line (L<sick>):
+
+    sick check                   # what does every device present?
+    sick run                     # renew what is due
+    sick trust /srv/www/trust    # root certificate and instructions for clients
+
+From Perl:
 
     use SICK::Config;
-    use SICK::Decision;
-    use SICK::Issuer::StepCA;
-    use SICK::Target;
+    use SICK::Issuer;
+    use SICK::Runner;
 
     my $config = SICK::Config->load('/etc/sick/sick.yml');
-    my $issuer = SICK::Issuer::StepCA->new( %{ $config->ca } );
+    my $runner = SICK::Runner->new(
+      config => $config,
+      issuer => SICK::Issuer->from_ca( %{ $config->ca } ),
+    );
 
-    for my $device ( $config->devices ) {
-      my $target = SICK::Target->class_for( $device->type )->new( device => $device );
-      $target->validate;
-
-      my $decision = SICK::Decision::evaluate(
-        device    => $device,
-        presented => $target->presented_cert,
-        root_pem  => $issuer->root_pem,
-      );
-      next unless $decision->{renew};
-
-      $target->deploy( $issuer->issue( $device->spec ) );
+    for my $result ( $runner->run ) {
+      print "$result->{device}: $result->{action}\n";
     }
 
 =head1 DESCRIPTION
@@ -83,9 +86,15 @@ Nothing is parsed in Perl.
 
 =item *
 
+Where L<acme.sh|https://github.com/acmesh-official/acme.sh> already has a
+deploy hook for a device, SICK uses that hook (L<SICK::Target::Acmesh>).
+
+=item *
+
 What SICK adds is the device list (L<SICK::Config>), the decision whether a
-device needs a new certificate (L<SICK::Decision>), and the connections to
-the devices (L<SICK::Target>).
+device needs a new certificate (L<SICK::Decision>), the connections to the
+devices (L<SICK::Target>) and the run that ties them together
+(L<SICK::Runner>).
 
 =back
 
@@ -94,11 +103,17 @@ the device present - none, one of another CA, one with other names, one
 about to expire? B<Issue>: if so, get a new one. B<Deploy>: the target of
 the device type installs it. B<Check again>: the device has to present the
 new certificate now. A run changes nothing when everything is current, so it
-can be repeated as often as a timer likes.
+can be repeated as often as a timer likes. SICK is no daemon: renewal is
+C<sick run> in a timer or a cron job.
+
+A certificate of an internal CA only helps on machines that trust that CA.
+C<sick trust> writes the root certificate in the forms clients want and a
+page that explains the installation per platform (L<SICK::Trust>).
 
 The core distribution depends on core Perl and L<YAML::PP>, nothing else.
-The programs it calls - C<openssl>, C<step> - are prerequisites of a run,
-not of the installation; when one is missing, the error says which. A device
+The programs it calls - C<openssl>, C<step>, C<acme.sh> - are prerequisites
+of a run, not of the installation; when one is missing, the error says
+which. A device
 type that needs more than that (SSH, an HTTP client) is a distribution of
 its own, C<SICK-Target-*>, and is found by the C<type> in the device list.
 
@@ -108,6 +123,15 @@ them, and they do not show up in messages.
 =head1 MODULES
 
 =over 4
+
+=item L<sick>, L<SICK::CLI>
+
+The command line: C<check>, C<run>, C<trust>.
+
+=item L<SICK::Runner>
+
+Check, issue, deploy, check again - for every device, one not stopping the
+others.
 
 =item L<SICK::Config>, L<SICK::Device>
 
@@ -121,10 +145,16 @@ Renew or not: C<ok>, C<missing>, C<foreign-ca>, C<names>, C<expiring>.
 
 Where certificates come from: a step-ca, or a throwaway CA for tests.
 
-=item L<SICK::Target>, L<SICK::Target::Files>
+=item L<SICK::Target>, L<SICK::Target::Files>, L<SICK::Target::Acmesh>
 
-Where certificates go: the base class and plugin loader, and the built-in
-target that writes PEM files and runs a reload command.
+Where certificates go: the base class and plugin loader, and the two
+built-in targets - one writes PEM files and runs a reload command, the
+other hands the certificate to a deploy hook of acme.sh.
+
+=item L<SICK::Trust>
+
+The root certificate as PEM, DER and Apple configuration profile, and a page
+with instructions for every platform.
 
 =item L<SICK::Bundle>
 
@@ -144,6 +174,8 @@ directories, one spelling for names, durations in seconds.
 =item * L<step-ca|https://smallstep.com/docs/step-ca/> and the L<step CLI|https://smallstep.com/docs/step-cli/> - the CA and its client
 
 =item * L<OpenSSL|https://www.openssl.org/> - everything X.509
+
+=item * L<acme.sh|https://github.com/acmesh-official/acme.sh> - its deploy hooks, through L<SICK::Target::Acmesh>
 
 =item * L<YAML::PP> - reads the device list
 

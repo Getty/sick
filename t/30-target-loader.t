@@ -162,6 +162,7 @@ subtest 'defaults of the base class' => sub {
   is $target->csr( { names => ['box.example.internal'], lifetime => 60 } ), undef, 'csr is undef: the key is made by SICK';
   is_deeply [ $target->csr( {} ) ], [undef], '... one undef in list context, safe as a hash value';
   is $target->connect_timeout, 10, 'the time limit for the device is 10 seconds';
+  is $target->verify_timeout,  30, 'a device gets 30 seconds to present a new certificate';
 
   is_deeply [ $target->endpoint ], [ 'box.example.internal', 443 ], 'endpoint without host: the first name, port 443';
   my $with_host = SICK::Target::CiscoSB->new( device => device( host => '192.0.2.5', port => 8443 ) );

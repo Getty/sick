@@ -1,0 +1,148 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use Digest::SHA qw( sha256_hex );
+use JSON::PP;
+
+# A stand-in for "acme.sh --deploy", for t/42-target-acmesh.t and
+# t/41-cli.t. It behaves the way acme.sh 3.1.6 was seen to behave
+# (docs/findings/acmesh-deploy.md): the certificate is the directory
+# <cert-home>/<domain>, the hook receives its files, a failing hook is exit 1.
+#
+#   FAKE_ACME_LOG   file every call is appended to, one line of JSON
+#
+# Hooks:
+#
+#   localcopy   copies like the real one: DEPLOY_LOCALCOPY_CERTIFICATE,
+#               _CERTKEY, _FULLCHAIN and _CA name the destinations
+#   sickfail    fails the way a hook does
+#   sickleak    prints the value of SICK_TEST_TOKEN to both outputs, then
+#               exits with SICK_TEST_EXIT (0 when not set)
+#   sickwait    writes its home and its process id into the file
+#               SICK_TEST_MARKER and then does not finish
+#
+# No value of an environment variable is ever recorded, only its name and a
+# SHA-256 digest for those a test wants to recognize.
+
+sub fail {
+  my ( @lines ) = @_;
+  print STDERR $_, "\n" for @lines;
+  record();
+  exit 1;
+}
+
+sub mode_of { my @stat = stat $_[0]; return @stat ? sprintf( '%04o', $stat[2] & 07777 ) : undef }
+
+sub slurp {
+  my ( $path ) = @_;
+  open my $in, '<', $path or return undef;
+  local $/;
+  return scalar <$in>;
+}
+
+my %call = (
+  argv     => [@ARGV],
+  umask    => sprintf( '%04o', umask ),
+  env_set  => [ sort keys %ENV ],
+  env_sha  => { map { $_ => sha256_hex( $ENV{$_} ) } grep { /\A(?:DEPLOY_|ROUTER_OS_|SICK_TEST_)/ } keys %ENV },
+  no_timestamp => $ENV{NO_TIMESTAMP}
+);
+
+sub record {
+  return unless defined $ENV{FAKE_ACME_LOG};
+  open my $log, '>>', $ENV{FAKE_ACME_LOG} or die 'fake-acme-sh: cannot write log: '.$!;
+  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
+  close $log;
+}
+
+my %takes_value = map { $_ => 1 } qw( -d --domain --deploy-hook --home --config-home --cert-home );
+my ( %flag, $deploy );
+my @rest = @ARGV;
+while (@rest) {
+  my $arg = shift @rest;
+  if ( $arg eq '--deploy' ) { $deploy = 1; next }
+  fail( 'Unknown parameter: '.$arg ) unless $takes_value{$arg};
+  fail( 'Unknown parameter: '.$arg ) unless @rest;
+  $flag{$arg} = shift @rest;
+}
+fail('fake-acme-sh: only --deploy is implemented') unless $deploy;
+
+my $domain = defined $flag{'-d'} ? $flag{'-d'} : $flag{'--domain'};
+my $hook   = $flag{'--deploy-hook'};
+my $home   = $flag{'--home'};
+fail('Usage: acme.sh --deploy --domain <domain.tld> --deploy-hook <hookname> [--ecc] ')
+  unless defined $domain && defined $hook && defined $home;
+my $cert_home = defined $flag{'--cert-home'} ? $flag{'--cert-home'} : $home;
+my $dir       = $cert_home.'/'.$domain;
+
+fail(
+  'The domain \''.$domain.'\' is not a cert name. You must use the cert name to specify the cert to install.',
+  'Cannot find path: \''.$dir.'\''
+) unless -d $dir;
+
+my %file = (
+  key       => $dir.'/'.$domain.'.key',
+  cert      => $dir.'/'.$domain.'.cer',
+  ca        => $dir.'/ca.cer',
+  fullchain => $dir.'/fullchain.cer',
+  conf      => $dir.'/'.$domain.'.conf'
+);
+opendir my $dh, $dir or fail( 'fake-acme-sh: cannot read '.$dir.': '.$! );
+$call{files}     = { map { $_ => mode_of( $dir.'/'.$_ ) } grep { !/\A\.\.?\z/ } readdir $dh };
+$call{home_mode} = mode_of($home);
+$call{dir_mode}  = mode_of($dir);
+$call{conf}      = slurp( $file{conf} );
+$call{key_is_pem} = ( slurp( $file{key} ) || q{} ) =~ /PRIVATE KEY-----/ ? 1 : 0;
+
+# what the real one leaves in the configuration of the certificate
+if ( open my $conf, '>>', $file{conf} ) {
+  print {$conf} 'Le_DeployHook=\''.$hook.',\''."\n";
+  close $conf;
+}
+
+if ( $hook eq 'localcopy' ) {
+  my %target = (
+    cert      => $ENV{DEPLOY_LOCALCOPY_CERTIFICATE},
+    key       => $ENV{DEPLOY_LOCALCOPY_CERTKEY},
+    fullchain => $ENV{DEPLOY_LOCALCOPY_FULLCHAIN},
+    ca        => $ENV{DEPLOY_LOCALCOPY_CA}
+  );
+  for my $part (qw( cert key fullchain ca )) {
+    next unless defined $target{$part} && length $target{$part};
+    my $content = slurp( $file{$part} );
+    fail( 'cat: '.$file{$part}.': No such file or directory', 'Error encountered while deploying.' )
+      unless defined $content;
+    open my $out, '>', $target{$part} or fail( 'fake-acme-sh: cannot write '.$target{$part}.': '.$! );
+    print {$out} $content;
+    close $out;
+    chmod 0600, $target{$part} if $part eq 'key';
+  }
+  print "'localcopy' deploy success\n", "Success\n";
+}
+elsif ( $hook eq 'sickfail' ) {
+  print "Trying the device\n";
+  fail( 'the device said no', 'Error deploying for domain: '.$domain, 'Error encountered while deploying.' );
+}
+elsif ( $hook eq 'sickleak' ) {
+  my $token = defined $ENV{SICK_TEST_TOKEN} ? $ENV{SICK_TEST_TOKEN} : q{};
+  print 'Logging in with '.$token."\n";
+  print STDERR 'The device did not like '.$token.' at all'."\n";
+  record();
+  exit( $ENV{SICK_TEST_EXIT} || 0 );
+}
+elsif ( $hook eq 'sickwait' ) {
+  if ( defined $ENV{SICK_TEST_MARKER} ) {
+    open my $marker, '>', $ENV{SICK_TEST_MARKER} or die 'fake-acme-sh: cannot write marker: '.$!;
+    print {$marker} $home, "\n", $$, "\n";
+    close $marker;
+  }
+  record();
+  sleep 120;
+  exit 0;
+}
+else {
+  fail( 'The deploy hook '.$hook.' was not found.' );
+}
+
+record();
+exit 0;

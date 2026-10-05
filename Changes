@@ -17,5 +17,20 @@ Revision history for SICK
       ("cisco-sb" loads SICK::Target::CiscoSB), default presented_cert over
       TLS; SICK::Target::Files writes PEM files and runs a reload command
     - SICK::Decision: renew or not - missing, foreign-ca, names, expiring
+    - SICK::Runner: check, issue, deploy, check again for every device;
+      a device that fails or does not answer does not stop the others, and
+      a deployment only counts when the device presents the certificate
+      that was issued
+    - sick, the command line: check, run (--force, --dry-run, --verbose)
+      and trust; exit code 1 when a device failed, 2 for a wrong command
+      line or device list
+    - SICK::Target::Acmesh: hands the certificate to a deploy hook of
+      acme.sh ("type: acmesh"), secrets from files reach the hook through
+      its environment only; verified with acme.sh 3.1.6 and its localcopy
+      hook
+    - SICK::Trust and "sick trust": the root certificate as PEM, DER and
+      Apple configuration profile, and a page with the fingerprints and the
+      installation steps for each platform
+    - "name" in the ca section: what the CA is called on that page
     - X.509 handling goes through the openssl command line, started without
       a shell; runtime dependencies are core Perl plus YAML::PP
