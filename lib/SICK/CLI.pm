@@ -41,8 +41,9 @@ Usage:
 Commands:
   check    Show which certificate every device presents. Changes nothing.
   run      Renew what is due: check, issue, deploy, check again.
-  trust    Write the root certificate, an Apple configuration profile and a
-           page with instructions into a directory.
+  trust    Write the certificates clients have to know - the root, and the
+           intermediate when the CA has one -, an Apple configuration
+           profile and a page with instructions into a directory.
 
 Options:
   -c, --config <file>  The device list. Default: $SICK_CONFIG, otherwise
@@ -199,9 +200,16 @@ sub _trust {
   return $self->_misuse('trust takes one directory') if @args > 1;
 
   my ( $config, $issuer ) = $self->_setup($opt) or return 2;
-  my @files = eval { SICK::Trust->write( $args[0], root_pem => $issuer->root_pem, name => $config->ca_name ) };
+  my @files = eval {
+    SICK::Trust->write(
+      $args[0],
+      root_pem          => $issuer->root_pem,
+      intermediates_pem => $issuer->intermediates_pem,
+      name              => $config->ca_name,
+    );
+  };
   return $self->_fail( _message($@) ) unless @files;
-  print { $self->{out} } 'wrote '.join( ', ', SICK::Trust->files ).' to '.$args[0]."\n";
+  print { $self->{out} } 'wrote '.join( ', ', map { s{.*/}{}r } @files ).' to '.$args[0]."\n";
   return 0;
 }
 

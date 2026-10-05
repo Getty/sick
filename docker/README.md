@@ -1,7 +1,7 @@
 # SICK with Docker Compose
 
-A certificate authority, SICK on a schedule and a page that hands the root
-certificate to your clients – three containers, one `docker compose up`.
+A certificate authority, SICK on a schedule and a page that hands your
+clients what they have to trust – three containers, one `docker compose up`.
 
 ```
             ┌───────────────┐   step ca certificate   ┌────────────────┐   ssh, API, files   ┌─────────┐
@@ -21,7 +21,7 @@ certificate to your clients – three containers, one `docker compose up`.
 |---|---|---|
 | `ca` | the official `smallstep/step-ca` | the CA. `init-ca.sh` makes it at the first start: root and intermediate certificate, a JWK provisioner `sick` that grants up to 825 days, an ACME provisioner `acme` |
 | `sick` | built here: Debian, Perl, `SICK`, `SICK-Target-CiscoSB`, `step`, `acme.sh` with its deploy hooks, `openssl`, `ssh` | `sick run` now and then every `SICK_INTERVAL`, `sick trust` after every run |
-| `trust` | `busybox` (its `httpd`) | serves what `sick trust` wrote: `index.html`, `root_ca.pem`, `root_ca.crt`, `root_ca.mobileconfig` |
+| `trust` | `busybox` (its `httpd`) | serves what `sick trust` wrote: `index.html`, the root (`root_ca.pem`, `root_ca.crt`), the intermediate (`intermediate_ca.pem`, `intermediate_ca.crt`), both in one file (`ca_bundle.pem`) and a profile for Apple devices with both (`root_ca.mobileconfig`) |
 
 Run on Debian 13 with Docker Engine 26.1 and Compose 2.26 against an
 SG300-20 switch, and nowhere else so far; the transcript is
@@ -136,11 +136,12 @@ root. That is what `intermediates:` in the `ca` section is for: without it
 such a device is `foreign-ca` on every run and gets a new certificate every
 time. The example list has it.
 
-Your clients are in the same position. A browser that trusts the root from
-the trust page still needs the intermediate for a device that does not send
-it along. It is public and the CA hands it out:
-`https://<host>:9000/intermediates.pem`. The trust page does not offer it yet
-– see [what is open](#what-is-open).
+Your clients are in the same position. A browser that trusts the root and
+nothing else still refuses a device that does not send the intermediate
+along. The same key of the `ca` section takes care of that: with
+`intermediates:` set, `sick trust` publishes the intermediate next to the
+root, and [the trust page](#the-trust-service) tells every platform where to
+put it.
 
 ## The CA
 
@@ -229,13 +230,13 @@ The entrypoint runs `sick run` at once and then every `SICK_INTERVAL`, and
 `sick trust /srv/trust` after every run, whatever the run ended with:
 
 ```
-2026-10-05T05:10:25Z entrypoint: sick run --verbose every 20s (20s), device list /etc/sick/sick.yml, trust page in /srv/trust
-2026-10-05T05:10:25Z entrypoint: sick run --verbose
+2026-10-05T05:29:32Z entrypoint: sick run --verbose every 1d (86400s), device list /etc/sick/sick.yml, trust page in /srv/trust
+2026-10-05T05:29:32Z entrypoint: sick run --verbose
 DEVICE  ACTION     REASON  ERROR
 switch  unchanged  ok
-2026-10-05T05:10:28Z entrypoint: sick run: exit 0, nothing failed
-wrote root_ca.pem, root_ca.crt, root_ca.mobileconfig, index.html to /srv/trust
-2026-10-05T05:10:28Z entrypoint: next run in 20s
+2026-10-05T05:29:34Z entrypoint: sick run: exit 0, nothing failed
+wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to /srv/trust
+2026-10-05T05:29:35Z entrypoint: next run in 86400s
 ```
 
 | `sick run` ends with | The log says | |
@@ -276,10 +277,44 @@ container.
 ## The trust service
 
 `busybox httpd` as an unprivileged user on a read-only file system, over the
-volume `sick trust` writes into. `trust-httpd.conf` gives the three downloads
-the media types that make a browser or a phone offer to install them
+volume `sick trust` writes into. `trust-httpd.conf` gives the downloads the
+media types that make a browser or a phone offer to install them
 (`application/x-x509-ca-cert`, `application/x-pem-file`,
 `application/x-apple-aspen-config`).
+
+| On the page | For |
+|---|---|
+| `root_ca.pem`, `root_ca.crt` (DER) | the root: what a client trusts |
+| `intermediate_ca.pem`, `intermediate_ca.crt` (DER) | the intermediate: what a client has to know for a device that presents its certificate alone. No trust anchor – except where a platform has nothing but anchors (the system store of Linux, Android) |
+| `ca_bundle.pem` | both in one file: `curl --cacert`, `openssl -CAfile`, `SSL_CERT_FILE` |
+| `root_ca.mobileconfig` | iPhone, iPad, Mac: the root as trusted root, the intermediate as a plain certificate, one installation. On iPhone and iPad full trust for the root has to be switched on afterwards; the page says where |
+| `index.html` | fingerprints of both, and the steps for iPhone and iPad, Android, macOS, Windows, Linux, Firefox and Chrome: where the root goes, where the intermediate goes, and whether that takes a trust setting |
+
+One visit to that page is meant to be all a browser, a phone or a tablet
+needs to accept every device SICK looks after – also the switch that sends
+no intermediate. From the client's side, with the two files of the page and
+nothing else:
+
+```text
+$ curl -sO http://<host>:8080/ca_bundle.pem -O http://<host>:8080/root_ca.pem
+$ openssl s_client -connect switch.example.internal:443 -CAfile ca_bundle.pem -no-CApath -no-CAstore </dev/null 2>&1 | grep 'Verify return'
+    Verify return code: 0 (ok)
+$ openssl s_client -connect switch.example.internal:443 -CAfile root_ca.pem -no-CApath -no-CAstore </dev/null 2>&1 | grep 'Verify return'
+    Verify return code: 21 (unable to verify the first certificate)
+```
+
+What has been tried and what has not: `openssl` as above, against the lab
+switch. With the files of the lab's page and the certificate that switch
+presents, in throwaway containers: the system store of Debian 13
+(`update-ca-certificates`; OpenSSL and GnuTLS accept the certificate with
+root and intermediate installed and refuse it with the root alone), of
+Fedora 44 (`update-ca-trust`, and `trust anchor --store` with both files),
+and an NSS database – what Firefox keeps its certificates in – with the root
+trusted and the intermediate present without any trust (`certutil -V`:
+valid; without the intermediate: issuer not recognized). The steps for
+iPhone, iPad, Android, macOS, Windows and the browsers themselves are
+written from the documentation of those platforms and have not been walked
+through on a device yet.
 
 It speaks plain HTTP, and it has to: it is where a client gets the root from
 that it would need to trust a TLS page. The page shows the fingerprints for
@@ -317,10 +352,11 @@ release archive from GitHub), `DEBIAN_RELEASE` (trixie).
 
 ## What is open
 
-- **Clients and the intermediate.** For a device that presents its
-  certificate alone, a client needs the intermediate as well as the root, and
-  `sick trust` publishes the root only. Until it does more: install
-  `https://<host>:9000/intermediates.pem` on the clients next to the root.
+- **The trust page on real clients.** What it tells a phone, a Mac, a
+  Windows machine and the browsers to do with root and intermediate has been
+  checked with `openssl`, GnuTLS, NSS and the system stores of Debian and
+  Fedora, not yet on those devices – see
+  [the trust service](#the-trust-service).
 - **Name constraints** in the CA certificates themselves – see
   [Restricting the names](#restricting-the-names).
 - **The root key** stays in the volume unless you move it.
@@ -350,6 +386,14 @@ addresses of the lab are replaced by neutral ones, nothing else is changed.
 The switch came into this run with a certificate of the lab's *previous* CA,
 which had the same name – `foreign-ca` is decided by signatures, not by
 names.
+
+That run is older than the intermediate on the trust page: its step 7 looked
+at the root alone, and its `wrote ...` lines name four files. The script now
+checks the intermediate, the bundle and the profile there, and has a step 8
+that connects to the switch with nothing but a file from the trust page. A
+full run replaces the certificate of the switch, so these two steps were run
+on their own against the stack the transcript left running, with the new
+image, on the same day; their output follows the transcript.
 
 ```text
 project sick, working directory /root/sick-e2e, switch 192.0.2.10 as device "switch"
@@ -555,4 +599,36 @@ CA:          https://<this host>:9000   (root fingerprint af22556f14379ec5a8db1e
 Trust page:  http://<this host>:8080/
 
 ALL STEPS PASSED
+```
+
+Steps 7 and 8 as they are now:
+
+```text
+=== 7. the trust page serves what a client needs: root, intermediate, bundle, profile
+    http://localhost:8080/index.html  Content-type: text/html  13183 bytes
+    http://localhost:8080/root_ca.pem  Content-type: application/x-pem-file  639 bytes
+    http://localhost:8080/root_ca.crt  Content-type: application/x-x509-ca-cert  431 bytes
+    http://localhost:8080/intermediate_ca.pem  Content-type: application/x-pem-file  696 bytes
+    http://localhost:8080/intermediate_ca.crt  Content-type: application/x-x509-ca-cert  472 bytes
+    http://localhost:8080/ca_bundle.pem  Content-type: application/x-pem-file  1335 bytes
+    http://localhost:8080/root_ca.mobileconfig  Content-type: application/x-apple-aspen-config  3495 bytes
+PASS  index.html (also as /) and root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig are served
+--- SHA-256 of the served root_ca.pem: af22556f14379ec5a8db1ec01db94434c7a25282331cf01caa7e33916ffd6afc
+PASS  root_ca.pem has the fingerprint of the root of the CA
+PASS  root_ca.crt is the same certificate in DER
+--- SHA-256 of the intermediate of the CA: b53e2cc1c237c38d7b6a660750bf75f0ba4ce77b5a268a09cb59ad8313335c5e
+PASS  intermediate_ca.pem is the intermediate of the CA, intermediate_ca.crt the same in DER
+PASS  ca_bundle.pem is the two of them in one file
+PASS  no key is served
+PASS  the profile carries the root and the intermediate, the page shows the fingerprint and offers both
+PASS  the profile is served as a configuration profile
+
+=== 8. a client that has what the page serves, and nothing else, accepts the switch
+--- openssl s_client -connect 192.0.2.10:443 -CAfile ca_bundle.pem -no-CApath -no-CAstore -verify_ip 192.0.2.10
+    Verify return code: 0 (ok)
+PASS  with ca_bundle.pem from the trust page: the chain is built and the name fits
+--- the same with -CAfile root_ca.pem
+    Verify return code: 21 (unable to verify the first certificate)
+PASS  with root_ca.pem alone it is refused: the switch sends no intermediate, the client has to have it
+PASS  ... and for that reason, not for another
 ```

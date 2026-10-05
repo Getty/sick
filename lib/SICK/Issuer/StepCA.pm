@@ -92,7 +92,9 @@ block.
 Optional. Path of a file with the intermediate certificate of the CA, or
 several of them. C<step> does not get to see it; it is what
 L</intermediates_pem> returns. Set it whenever a device presents its
-certificate without the chain.
+certificate without the chain: SICK then knows that certificate as its own,
+and C<sick trust> hands the intermediate to the clients as well
+(L<SICK::Trust>).
 
 =attr provisioner
 

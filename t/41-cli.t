@@ -12,7 +12,7 @@ use SICK::Bundle;
 use SICK::CLI;
 use SICK::Command;
 use SICK::OpenSSL;
-use Test::SICK::PKI qw( slurp spew );
+use Test::SICK::PKI qw( new_ca slurp spew );
 
 # The sick command line: in this process through SICK::CLI, where output and
 # exit code are easy to look at, and as the real program bin/sick, where the
@@ -273,6 +273,43 @@ subtest 'trust' => sub {
   is $code, 1, 'a directory that cannot be made: exit code 1';
   like $err, qr/^sick: cannot create directory '\Q$blocked\E\/site': \S.*\n\z/, '... with path and reason';
   is $out, q{}, '... and no claim of success';
+};
+
+subtest 'trust for a CA that signs through an intermediate' => sub {
+  # A step-ca section: trust reads its two certificate files and calls nothing.
+  my $pki = $tmp.'/pki';
+  mkdir $pki or die 'mkdir: '.$!;
+  my $root  = new_ca( dir => $pki, name => 'root',  cn => 'Example Internal Root CA' );
+  my $inter = new_ca( dir => $pki, name => 'inter', cn => 'Example Internal Intermediate CA', issuer => $root );
+  my $section = sub {
+    my ( %ca ) = @_;
+    return spew( $tmp.'/list'.++$number.'.yml',
+      "ca:\n  url: https://ca.example.internal:9000\n  root: $root->{cert}\n"
+        .join( q{}, map { '  '.$_.': '.$ca{$_}."\n" } sort keys %ca )
+        ."  provisioner: sick\n  password_file: $tmp/no-such-password\ndevices:\n".files_device('web') );
+  };
+
+  my $dir = $tmp.'/trust/chained';
+  my ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->( intermediates => $inter->{cert} ) );
+  is $code, 0, 'exit code 0';
+  is $out, 'wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to '.$dir."\n",
+    '... saying what was written: the intermediate and the bundle as well';
+  is $err, q{}, '... nothing on standard error';
+  is slurp( $dir.'/intermediate_ca.pem' ), $inter->{pem}, 'the intermediate is the one of the ca section';
+  is slurp( $dir.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}, 'the bundle is root and intermediate';
+  like slurp( $dir.'/index.html' ), qr/<a href="intermediate_ca\.crt"/, 'the page offers it';
+
+  ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->() );
+  is $code, 0, 'the same CA without intermediates in its section: exit code 0';
+  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca.mobileconfig, index.html to '.$dir."\n", '... the four files';
+  ok !-e $dir.'/'.$_, '... and '.$_.' is no longer offered' for qw( intermediate_ca.pem intermediate_ca.crt ca_bundle.pem );
+
+  my $missing = $tmp.'/no-such-intermediate.crt';
+  ( $code, $out, $err ) = cli( 'trust', $tmp.'/trust/nothing', '--config', $section->( intermediates => $missing ) );
+  is $code, 1, 'an intermediates file that is not there: exit code 1';
+  like $err, qr/^sick: cannot read CA intermediates '\Q$missing\E': \S.*\n\z/, '... with path and reason';
+  is $out, q{}, '... no claim of success';
+  ok !-e $tmp.'/trust/nothing', '... and nothing written';
 };
 
 subtest 'the program' => sub {

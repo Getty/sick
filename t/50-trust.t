@@ -257,4 +257,285 @@ SKIP: {
   }
 };
 
+#### a CA that signs through an intermediate
+
+# What a device presents that has room for one certificate: the leaf, alone.
+my $leaf    = new_cert( ca => $inter, dir => $tmp, name => 'switch', cn => 'switch.example.internal',
+  san => 'DNS:switch.example.internal,IP:192.0.2.199' );
+my $foreign = new_cert( ca => $other, dir => $tmp, name => 'stranger', cn => 'stranger.example.internal' );
+
+# openssl verify with nothing but the given files to go by: no directory and
+# no store of the system, the way SICK::Bundle keeps them out. Returns
+# ( true or false, what openssl said ).
+my $nowhere = $tmp.'/no-certificates-here';
+mkdir $nowhere or die 'mkdir: '.$!;
+
+sub verifies {
+  my ( $anchors, $cert, @more ) = @_;
+  my @args = ( 'verify', @$anchors );
+  if ( SICK::OpenSSL::major() >= 1 ) {
+    push @args, '-no-CAfile' unless grep { $_ eq '-CAfile' } @$anchors;
+    push @args, '-no-CApath' unless grep { $_ eq '-CApath' } @$anchors;
+  }
+  push @args, '-no-CAstore' if SICK::OpenSSL::major() >= 3;
+  my ( $out, $err, $exit ) = SICK::OpenSSL::run(
+    [ @args, @more, $cert ],
+    env => { SSL_CERT_DIR => $nowhere, SSL_CERT_FILE => $nowhere.'/none.pem' },
+  );
+  return ( $exit == 0 ? 1 : 0, $out.$err );
+}
+
+sub fingerprint_of_der {
+  my ( $path ) = @_;
+  my ( $out ) = SICK::OpenSSL::run( [ 'x509', '-inform', 'der', '-in', $path, '-noout', '-fingerprint', '-sha256' ] );
+  my ($fingerprint) = $out =~ /Fingerprint=([0-9A-Fa-f:]+)/;
+  ( my $plain = lc( $fingerprint || q{} ) ) =~ tr/://d;
+  return $plain;
+}
+
+my $chained     = $tmp.'/site/chained';
+my $inter_facts = SICK::Bundle->new( cert => $inter->{pem} );
+my @with        = qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig index.html );
+my @chained_paths;
+
+subtest 'with an intermediate: seven files' => sub {
+  @chained_paths = SICK::Trust->write( $chained, root_pem => $root->{pem}, intermediates_pem => $inter->{pem}, name => 'Example Internal CA' );
+
+  is_deeply [ SICK::Trust->files(1) ], \@with, 'files(1): the names with one intermediate';
+  is_deeply [ SICK::Trust->files(0) ], [ SICK::Trust->files ], 'files(0) is files()';
+  is_deeply \@chained_paths, [ map { $chained.'/'.$_ } @with ], 'write returns the paths, the page last';
+  is_deeply files_in($chained), [ sort @with ], 'exactly these files are there';
+  is sprintf( '%04o', ( stat $_ )[2] & 07777 ), '0644', $_ =~ s{.*/}{}r.' is readable for everybody' for @chained_paths;
+
+  is raw( $chained.'/'.$_ ), raw( $dir.'/'.$_ ), $_.' is what it is without an intermediate' for qw( root_ca.pem root_ca.crt );
+  is slurp( $chained.'/intermediate_ca.pem' ), $inter->{pem}, 'intermediate_ca.pem is the intermediate certificate';
+  unlike raw( $chained.'/intermediate_ca.crt' ), qr/BEGIN CERTIFICATE/, 'intermediate_ca.crt is not PEM';
+  is fingerprint_of_der( $chained.'/intermediate_ca.crt' ), $inter_facts->fingerprint_sha256, '... but the same certificate in DER';
+  is slurp( $chained.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}, 'ca_bundle.pem is the root followed by the intermediate';
+  unlike join( q{}, map { raw($_) } @chained_paths ), qr/PRIVATE KEY/, 'no key in any of them';
+};
+
+subtest 'a certificate presented alone validates with what was written, and with nothing less' => sub {
+  # Everything openssl gets here is a file SICK::Trust wrote, and the leaf.
+  my ( $ok, $said ) = verifies( [ '-CAfile', $chained.'/ca_bundle.pem' ], $leaf->{cert} );
+  ok $ok, 'ca_bundle.pem as the only CA file: the leaf is accepted' or diag $said;
+
+  ( $ok, $said ) = verifies( [ '-CAfile', $chained.'/root_ca.pem' ], $leaf->{cert} );
+  ok !$ok, 'root_ca.pem alone: the leaf is refused';
+  like $said, qr/unable to get local issuer certificate/, '... because nothing leads to the root';
+
+  ( $ok, $said ) = verifies( [ '-CAfile', $chained.'/root_ca.pem' ], $leaf->{cert}, '-untrusted', $chained.'/intermediate_ca.pem' );
+  ok $ok, 'root_ca.pem as the anchor and intermediate_ca.pem as a mere help: accepted' or diag $said;
+
+  ( $ok, $said ) = verifies( [ '-CAfile', $chained.'/intermediate_ca.pem' ], $leaf->{cert} );
+  ok !$ok, 'intermediate_ca.pem alone is no anchor: refused';
+
+  ( $ok, $said ) = verifies( [ '-CAfile', $chained.'/ca_bundle.pem' ], $foreign->{cert} );
+  ok !$ok, 'the certificate of another CA is refused with the bundle';
+
+  # The system store of a Linux machine: one file per certificate in a
+  # directory, found by the hash of the subject.
+SKIP: {
+    my $store = $tmp.'/system-store';
+    mkdir $store or die 'mkdir: '.$!;
+    spew( $store.'/internal-root-ca.crt',         slurp( $chained.'/root_ca.pem' ) );
+    spew( $store.'/internal-intermediate-ca.crt', slurp( $chained.'/intermediate_ca.pem' ) );
+    my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'rehash', $store ] );
+    skip 'openssl rehash does not work here', 2 if $exit;
+    ( $ok, $said ) = verifies( [ '-CApath', $store ], $leaf->{cert} );
+    ok $ok, 'both files in a certificate directory: accepted' or diag $said;
+    unlink $store.'/internal-intermediate-ca.crt' or die 'unlink: '.$!;
+    SICK::OpenSSL::run( [ 'rehash', $store ] );
+    ( $ok, $said ) = verifies( [ '-CApath', $store ], $leaf->{cert} );
+    ok !$ok, '... the root alone in it: refused';
+  }
+};
+
+subtest 'the profile carries the root as root and the intermediate as a certificate' => sub {
+  my $profile = slurp( $chained.'/root_ca.mobileconfig' );
+  is xml_problem($profile), undef, 'well-formed XML';
+
+  my @payloads = $profile =~ m{<dict>\s*(<key>PayloadCertificateFileName</key>.*?)</dict>}sg;
+  is scalar @payloads, 2, 'two certificate payloads';
+  my %by_type;
+  for my $payload (@payloads) {
+    my ($type) = $payload =~ m{<key>PayloadType</key>\s*<string>([^<]+)</string>};
+    my ($data) = $payload =~ m{<key>PayloadContent</key>\s*<data>\s*(.*?)\s*</data>}s;
+    my ($file) = $payload =~ m{<key>PayloadCertificateFileName</key>\s*<string>([^<]+)</string>};
+    my ($id)   = $payload =~ m{<key>PayloadIdentifier</key>\s*<string>([^<]+)</string>};
+    my ($uuid) = $payload =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>};
+    $by_type{ $type || q{} } = { der => decode_base64( $data || q{} ), file => $file, id => $id, uuid => $uuid };
+  }
+  is_deeply [ sort keys %by_type ], [qw( com.apple.security.pkcs1 com.apple.security.root )],
+    'one com.apple.security.root, one com.apple.security.pkcs1';
+  is $by_type{'com.apple.security.root'}{der}, raw( $chained.'/root_ca.crt' ), 'the root payload is the root certificate in DER';
+  is $by_type{'com.apple.security.pkcs1'}{der}, raw( $chained.'/intermediate_ca.crt' ), 'the other one is the intermediate in DER';
+  is $by_type{'com.apple.security.pkcs1'}{file}, 'intermediate_ca.crt', '... under the name of its file';
+  is $by_type{$_}{id}, $_.'.'.$by_type{$_}{uuid}, 'the identifier of the '.$_.' payload ends in its UUID' for sort keys %by_type;
+  like $profile, qr{<string>Example Internal Intermediate</string>}, 'the intermediate is called by its common name';
+
+  my @uuids = $profile =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
+  is scalar @uuids, 3, 'three UUIDs';
+  like $_, qr/\A[0-9A-F]{8}-[0-9A-F]{4}-5[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}\z/, $_.' has the form of one' for @uuids;
+  my %distinct = map { $_ => 1 } @uuids;
+  is scalar keys %distinct, 3, 'all different';
+
+  # A device that has the profile of the root alone has to take this one as
+  # its successor, not as a second profile.
+  my $alone        = slurp( $dir.'/root_ca.mobileconfig' );
+  my @alone_uuids  = $alone =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
+  my ($alone_id)   = $alone =~ m{<key>PayloadIdentifier</key>\s*<string>(sick\.trust\.[^<]+)</string>};
+  my ($chained_id) = $profile =~ m{<key>PayloadIdentifier</key>\s*<string>(sick\.trust\.[^<]+)</string>};
+  ok defined $alone_id, 'the profile has an identifier of its own';
+  is $chained_id, $alone_id, '... which is the same with and without the intermediate: one replaces the other';
+  is $by_type{'com.apple.security.root'}{uuid}, $alone_uuids[0], 'the root payload is the same payload';
+  isnt $uuids[-1], $alone_uuids[-1], 'the profile as a whole has another UUID: its content is another';
+};
+
+subtest 'the page with an intermediate' => sub {
+  my $page = slurp( $chained.'/index.html' );
+  like $page, qr/\A<!DOCTYPE html>\n<html lang="en">/, 'an HTML page';
+  like $page, qr/<a href="\Q$_\E"/, 'a link to '.$_ for grep { $_ ne 'index.html' } @with;
+  like $page, qr/<h2 id="[a-z]+">[^<]*\Q$_\E/, 'instructions for '.$_ for qw( Firefox Chrome Linux macOS Windows iPhone Android );
+
+  my @references = $page =~ /(?:href|src|action)\s*=\s*"([^"]*)"/g;
+  my %written = map { $_ => 1 } @with;
+  is_deeply [ grep { !/\A#[a-z]+\z/ && !$written{$_} } @references ], [],
+    'every link leads to a section of the page or to a file that was written';
+  my %anchor = map { $_ => 1 } $page =~ /\bid="([a-z]+)"/g;
+  is_deeply [ grep { /\A#/ && !$anchor{ substr $_, 1 } } @references ], [], '... and every section that is linked exists';
+  unlike $page, qr/<(?:script|link|img|iframe|object|embed)\b/i, 'no script, no style sheet, no image from anywhere';
+  unlike $page, qr/url\(|\@import/i, '... and none in the style either';
+  unlike $page, qr/[ \t]\n/, 'no trailing blanks';
+  unlike $page, qr/<!--/, 'no comment, no placeholder left';
+  unlike $page, qr/\n\n\n/, 'no hole where a part was left out';
+
+  ( my $shown = $page ) =~ s/<br>//g;
+  for my $facts ( $facts, $inter_facts ) {
+    my $colons = join ':', map { uc } $facts->fingerprint_sha256 =~ /(..)/g;
+    like $shown, qr/\Q$colons\E/, 'the SHA-256 fingerprint of '.$facts->subject_dn;
+  }
+  like $page, qr/CN=Example Internal Intermediate/, 'the subject of the intermediate';
+
+  # what is to be done where
+  my %section = map { /\A<h2 id="([a-z]+)">/ ? ( $1 => $_ ) : () } split /(?=<h2 id=")/, $page;
+  like $section{ios}, qr/root_ca\.mobileconfig/, 'iPhone: the profile';
+  like $section{ios}, qr/Certificate Trust\s+Settings/, '... and full trust for the root';
+  unlike $section{ios}, qr/href="intermediate_ca/, '... and no second file: the profile has the intermediate';
+  like $section{android}, qr/href="\Q$_\E"/, 'Android: '.$_ for qw( root_ca.crt intermediate_ca.crt );
+  like $section{macos}, qr/add-trusted-cert -d -r trustRoot[^<]*root_ca\.pem/, 'macOS: the root is trusted as a root';
+  like $section{macos}, qr/security add-certificates[^<]*intermediate_ca\.crt/, '... the intermediate is added, not trusted';
+  like $section{windows}, qr/certutil -addstore -f Root root_ca\.crt/, 'Windows: the root into the root store';
+  like $section{windows}, qr/certutil -addstore -f CA intermediate_ca\.crt/, '... the intermediate into the store of intermediates';
+  like $section{windows}, qr/Intermediate Certification Authorities/, '... which the page calls by its name';
+  like $section{linux}, qr{cp intermediate_ca\.pem /usr/local/share/ca-certificates/[a-z-]+\.crt\n[^<]*update-ca-certificates}, 'Debian: both files, then update-ca-certificates';
+  like $section{linux}, qr{cp intermediate_ca\.pem /etc/pki/ca-trust/source/anchors/[a-z-]+\.pem\n[^<]*update-ca-trust}, 'Fedora: both files, then update-ca-trust';
+  like $section{linux}, qr/--cacert ca_bundle\.pem/, 'the bundle for a program that takes one file';
+  like $section{firefox}, qr/href="\Q$_\E"/, 'Firefox: '.$_ for qw( root_ca.pem intermediate_ca.pem );
+  like $section{firefox}, qr/Firefox for Android/, '... and Firefox for Android';
+  like $section{chrome}, qr/href="\Q$_\E"/, 'Chrome on Linux: '.$_ for qw( root_ca.pem intermediate_ca.pem );
+  like $section{chrome}, qr/Intermediate certificates/, '... the intermediate where Chrome keeps intermediates';
+};
+
+subtest 'without an intermediate nothing is different' => sub {
+  my %before = map { $_ => raw( $dir.'/'.$_ ) } SICK::Trust->files;
+  my %cases  = ( 'undef' => undef, 'an empty string' => q{}, 'blank lines' => "\n \n" );
+  for my $case ( sort keys %cases ) {
+    my $target = $tmp.'/none-'.( $case =~ tr/a-z//cdr );
+    my @paths  = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $cases{$case}, name => 'Example Internal CA' );
+    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as intermediates_pem: the four files';
+    is raw( $target.'/'.$_ ), $before{$_}, '... '.$_.' byte for byte what it is without the argument' for SICK::Trust->files;
+  }
+  unlike $before{'index.html'}, qr/intermediate|ca_bundle/i, 'the page of a CA without an intermediate does not speak of one';
+  unlike $before{'root_ca.mobileconfig'}, qr/pkcs1/, '... and its profile has the root alone';
+};
+
+subtest 'writing twice with an intermediate produces the same bytes' => sub {
+  my %before = map { $_ => raw($_) } @chained_paths;
+  sleep 1;
+  SICK::Trust->write( $chained, root_pem => $root->{pem}, intermediates_pem => $inter->{pem}, name => 'Example Internal CA' );
+  is raw($_), $before{$_}, $_ =~ s{.*/}{}r.' is byte for byte the same' for @chained_paths;
+
+  # the root in the file of intermediates, the intermediate twice: the same
+  my $again = $tmp.'/chained-again';
+  SICK::Trust->write( $again, root_pem => $root->{pem}, name => 'Example Internal CA',
+    intermediates_pem => "the chain of the CA\n".$inter->{pem}.$root->{pem}."\n".$inter->{pem} );
+  is_deeply files_in($again), [ sort @with ], 'the root among the intermediates and a certificate given twice count once';
+  is raw( $again.'/'.$_ ), $before{ $chained.'/'.$_ }, $_.' is the same' for @with;
+};
+
+subtest 'several intermediates' => sub {
+  my $issuing = new_ca( dir => $tmp, name => 'issuing', cn => 'Example Internal Issuing CA', issuer => $inter );
+  my $deep    = new_cert( ca => $issuing, dir => $tmp, name => 'deep', cn => 'deep.example.internal' );
+  my $target  = $tmp.'/site/deep';
+  my @names   = qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca_1.pem intermediate_ca_1.crt
+    intermediate_ca_2.pem intermediate_ca_2.crt ca_bundle.pem root_ca.mobileconfig index.html );
+  my @paths = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem}.$issuing->{pem} );
+
+  is_deeply [ SICK::Trust->files(2) ], \@names, 'files(2)';
+  is_deeply \@paths, [ map { $target.'/'.$_ } @names ], 'the paths';
+  is_deeply files_in($target), [ sort @names ], 'the files';
+  is slurp( $target.'/intermediate_ca.pem' ), $inter->{pem}.$issuing->{pem}, 'intermediate_ca.pem has all of them, in the order they were given';
+  is slurp( $target.'/intermediate_ca_1.pem' ), $inter->{pem},   'intermediate_ca_1.pem is the first one alone';
+  is slurp( $target.'/intermediate_ca_2.pem' ), $issuing->{pem}, 'intermediate_ca_2.pem the second';
+  is fingerprint_of_der( $target.'/intermediate_ca_2.crt' ), SICK::Bundle->new( cert => $issuing->{pem} )->fingerprint_sha256,
+    'intermediate_ca_2.crt is the second one in DER';
+  is slurp( $target.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}.$issuing->{pem}, 'ca_bundle.pem has the root and both';
+
+  my ( $ok, $said ) = verifies( [ '-CAfile', $target.'/ca_bundle.pem' ], $deep->{cert} );
+  ok $ok, 'a certificate two steps below the root validates with the bundle' or diag $said;
+  ( $ok ) = verifies( [ '-CAfile', $chained.'/ca_bundle.pem' ], $deep->{cert} );
+  ok !$ok, '... and not with the bundle that lacks the second step';
+
+  my $profile = slurp( $target.'/root_ca.mobileconfig' );
+  is xml_problem($profile), undef, 'the profile is well-formed';
+  is scalar( () = $profile =~ m{<string>com\.apple\.security\.pkcs1</string>}g ), 2, '... with two intermediate payloads';
+  is scalar( () = $profile =~ m{<string>com\.apple\.security\.root</string>}g ), 1, '... and one root';
+  like $profile, qr{<string>intermediate_ca_2\.crt</string>}, '... named like their files';
+
+  my $page    = slurp( $target.'/index.html' );
+  my %written = map { $_ => 1 } @names;
+  my @files   = grep { !/\A#/ } $page =~ /href="([^"]*)"/g;
+  is_deeply [ grep { !$written{$_} } @files ], [], 'the page links to nothing that was not written';
+  like $page, qr/<a href="\Q$_\E"/, '... and to '.$_ for grep { $_ ne 'index.html' } @names;
+  like $page, qr/certutil -addstore -f CA intermediate_ca_1\.crt\ncertutil -addstore -f CA intermediate_ca_2\.crt/,
+    'a command for each of them';
+  unlike $page, qr/[ \t]\n|<!--|\n\n\n/, 'no trailing blanks, no placeholder, no hole';
+};
+
+subtest 'what an earlier write left and this one does not write is removed' => sub {
+  my $target = $tmp.'/site/shrinking';
+  SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem} );
+  spew( $target.'/robots.txt',             "User-agent: *\n" );
+  spew( $target.'/intermediate_ca_7.crt',  "left by a CA with more of them\n" );
+  spew( $target.'/intermediate_ca.pem.bak', "somebody's copy\n" );
+
+  SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem} );
+  is_deeply files_in($target), [ sort @with, 'intermediate_ca.pem.bak', 'robots.txt' ],
+    'with the intermediate: the stale numbered file is gone, files of others stay';
+
+  my @paths = SICK::Trust->write( $target, root_pem => $root->{pem} );
+  is_deeply files_in($target), [ sort SICK::Trust->files, 'intermediate_ca.pem.bak', 'robots.txt' ],
+    'the CA has no intermediate any more: nothing of it is offered any longer';
+  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the four files are returned';
+  is raw( $target.'/index.html' ), raw( $tmp.'/unnamed/index.html' ), '... with the page of a CA without one';
+};
+
+subtest 'intermediates that are none' => sub {
+  my $stranger = new_ca( dir => $tmp, name => 'stranger-inter', cn => 'Intermediate Of Another', issuer => $other );
+  my %bad = (
+    'text that is no PEM'            => [ "not a certificate\n", qr/^intermediates_pem is not a PEM certificate/ ],
+    'an intermediate of another CA'  => [ $stranger->{pem}, qr/^the intermediate certificate 'CN=Intermediate Of Another' does not lead to the root certificate 'CN=Example Internal Root CA'/ ],
+    'another root'                   => [ $other->{pem}, qr/^the intermediate certificate 'CN=Another Root' does not lead to the root certificate/ ],
+    'one good and one of another CA' => [ $inter->{pem}.$stranger->{pem}, qr/^the intermediate certificate 'CN=Intermediate Of Another' does not lead/ ]
+  );
+  for my $case ( sort keys %bad ) {
+    my ( $pem, $message ) = @{ $bad{$case} };
+    my $target = $tmp.'/badinter-'.( $case =~ tr/a-z//cdr );
+    ok !eval { SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $pem ); 1 }, 'dies for '.$case;
+    like $@, $message, '... saying so';
+    ok !-e $target, '... and writes nothing';
+  }
+};
+
 done_testing;

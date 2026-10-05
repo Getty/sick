@@ -52,3 +52,21 @@ Revision history for SICK
     - The example device list no longer sets ROUTER_OS_PASSWORD, which the
       routeros hook of acme.sh does not read (it logs in with an SSH key);
       the env_files example is the API token of the proxmoxve hook
+    - "sick trust" publishes the intermediate certificate as well when the
+      ca section names "intermediates": intermediate_ca.pem,
+      intermediate_ca.crt (DER) and ca_bundle.pem (root and intermediate in
+      one file). A client that installed the root alone kept refusing every
+      device that presents its certificate without the intermediate - a
+      switch with one certificate per slot. The Apple profile carries the
+      root as trusted root and the intermediate as a plain certificate
+      (com.apple.security.pkcs1) and replaces the profile of the root alone;
+      the page says for each platform where root and intermediate go and
+      whether the intermediate takes a trust setting, and has Firefox for
+      Android. Without "intermediates" the four files are what they were,
+      byte for byte
+    - SICK::Trust->write takes intermediates_pem, refuses an intermediate
+      that does not lead to the root, and removes the intermediate files of
+      an earlier call that it no longer writes; SICK::Trust->files takes
+      the number of intermediates
+    - t/e2e/run-lab.sh fetches the new files from the trust page and
+      connects to the switch with nothing but ca_bundle.pem from there

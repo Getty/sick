@@ -109,7 +109,9 @@ C<sick run> in a timer or a cron job.
 
 A certificate of an internal CA only helps on machines that trust that CA.
 C<sick trust> writes the root certificate in the forms clients want and a
-page that explains the installation per platform (L<SICK::Trust>).
+page that explains the installation per platform (L<SICK::Trust>) - and the
+intermediate certificate with it, which a client needs for every device
+that presents its certificate alone.
 
 The F<docker/> directory of the repository puts the three together with
 Docker Compose: a step-ca that sets itself up on first start, SICK on a

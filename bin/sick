@@ -104,6 +104,14 @@ that shows the fingerprint and explains the installation for Firefox,
 Chrome, Linux, macOS, Windows, iOS and Android. Put the directory behind a
 web server and send people the link. See L<SICK::Trust>.
 
+When the C<ca> section names C<intermediates>, they are written as well:
+C<intermediate_ca.pem>, C<intermediate_ca.crt> (DER) and C<ca_bundle.pem>,
+the root and the intermediate in one file. A device that presents its
+certificate without the intermediate - a switch with room for one
+certificate - is refused by a client that knows the root alone. The profile
+then carries the intermediate too, and the page says for each platform
+where it goes.
+
 The CA is called by the C<name> of the C<ca> section, or by the common name
 of its root certificate.
 

@@ -166,7 +166,9 @@ sub intermediates_pem { return undef }
 The intermediate certificates of the CA as PEM, or C<undef> when the issuer
 knows of none - which is what the base class answers. They are no trust
 anchors. L<SICK::Decision> uses them to build the chain from a certificate
-to L</root_pem> when a device presents its certificate without them.
+to L</root_pem> when a device presents its certificate without them, and
+L<SICK::Trust> publishes them next to the root, because the clients of such
+a device are in the same position.
 
 =cut
 

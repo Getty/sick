@@ -18,7 +18,8 @@ ties them together. The core depends on core Perl and `YAML::PP`.
 
 > Status: early, not released. The command line, the `files` and `acmesh`
 > targets, `sick trust` and a Docker Compose setup ([docker/](docker/README.md):
-> step-ca, SICK on a schedule, a page for the root certificate) are here.
+> step-ca, SICK on a schedule, a page for the certificates clients have to
+> trust) are here.
 
 ## A minimal device list
 
@@ -80,8 +81,10 @@ grafana  renewed    missing
 - **`sick trust <directory>`** – writes `root_ca.pem`, `root_ca.crt` (DER),
   `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac) and an
   `index.html` with the fingerprints and the installation steps for Firefox,
-  Chrome, Linux, macOS, Windows, iOS and Android. Put the directory behind a web
-  server and send people the link.
+  Chrome, Linux, macOS, Windows, iOS and Android. With `ca.intermediates` set
+  it adds `intermediate_ca.pem`, `intermediate_ca.crt` and `ca_bundle.pem`.
+  Put the directory behind a web server and send people the link. More
+  [below](#what-clients-have-to-trust).
 
 The list is `--config <file>`, else `$SICK_CONFIG`, else `/etc/sick/sick.yml`.
 
@@ -97,6 +100,61 @@ changes nothing when everything is current.
 ```cron
 17 4 * * *  root  sick run; sick trust /srv/www/trust
 ```
+
+## What clients have to trust
+
+A certificate helps as much as the browsers, phones and tablets that accept
+it. `sick trust` writes what they need, and one page that says where it goes.
+
+| File | |
+|---|---|
+| `root_ca.pem`, `root_ca.crt` | the root certificate, as PEM and as DER – what a client trusts |
+| `intermediate_ca.pem`, `intermediate_ca.crt` | the intermediate certificate – what a client has to know, not to trust |
+| `ca_bundle.pem` | root and intermediate in one PEM file, for programs that take one file: `curl --cacert ca_bundle.pem` |
+| `root_ca.mobileconfig` | a configuration profile for iPhone, iPad and Mac with the root as trusted root and the intermediate as a plain certificate: one installation |
+| `index.html` | fingerprints, downloads and the steps for each platform |
+
+The three files in the middle are there when the `ca` section names
+`intermediates`, and this is why. step-ca signs through its intermediate, and
+a server normally sends that along with its own certificate. A device with
+room for exactly one certificate – a Cisco Small Business switch – presents
+the certificate alone. A client that has installed the root and nothing else
+cannot build the chain and goes on refusing the device:
+
+```text
+$ openssl s_client -connect switch.example.internal:443 -CAfile root_ca.pem -no-CApath -no-CAstore
+Verify return code: 21 (unable to verify the first certificate)
+$ openssl s_client -connect switch.example.internal:443 -CAfile ca_bundle.pem -no-CApath -no-CAstore
+Verify return code: 0 (ok)
+```
+
+So the page tells people to install both, and where each one belongs:
+
+| Platform | Root | Intermediate |
+|---|---|---|
+| iPhone, iPad | the profile, then full trust under *Certificate Trust Settings* | in the same profile; no setting |
+| macOS | the profile, or `security add-trusted-cert` | in the same profile, or `security add-certificates`; no trust setting |
+| Windows | *Trusted Root Certification Authorities* | *Intermediate Certification Authorities* |
+| Android | *Install a certificate → CA certificate* | the same way – Android has one list. Browsers use it, most other apps do not |
+| Linux system store | `update-ca-certificates`, `update-ca-trust` | the same directory, as a file of its own; trusted directly there, such a store knows nothing else |
+| Firefox | *Authorities → Import*, trusted for websites | imported the same way, nothing ticked |
+| Chrome on Linux | certificate manager, as a trusted certificate | certificate manager, under *Intermediate certificates* |
+
+A CA with several intermediates gets `intermediate_ca.pem` with all of them
+and `intermediate_ca_1.pem`, `intermediate_ca_1.crt`, `intermediate_ca_2.pem`
+… for the places that take one certificate at a time. Without
+`ca.intermediates` there are the four files for the root and a page that
+speaks of the root alone. Writing twice produces the same bytes, so the
+command can follow every `sick run`.
+
+What of this has been tried: `openssl` with the bundle, with a directory of
+certificates, and with the root alone (the test suite, and a real switch in
+the lab); the system stores of Debian and Fedora and an NSS database – what
+Firefox keeps its certificates in – with the certificate of that switch
+([docker/README.md](docker/README.md#the-trust-service)). The steps for
+iPhone, iPad, Android, macOS, Windows and the browsers themselves are written
+from the documentation of those platforms and have not been walked through
+on a device yet.
 
 ## With Docker
 
@@ -173,7 +231,9 @@ certificate the CA signs with (step-ca: `certs/intermediate_ca.crt`). A
 step-ca never signs with its root, and many devices present their certificate
 without the intermediate – a switch has room for exactly one. Without
 `ca.intermediates` SICK cannot tell that such a certificate is its own: the
-device stays `foreign-ca` and is renewed on every run.
+device stays `foreign-ca` and is renewed on every run. And `sick trust` has no
+intermediate to hand to the clients, which then
+[refuse the device](#what-clients-have-to-trust) although they trust the root.
 
 Secrets are never in the list, only the paths of the files that hold them. An
 unknown key is an error with its place (`devices.switch: missing 'type'`), not

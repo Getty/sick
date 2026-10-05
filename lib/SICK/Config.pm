@@ -66,7 +66,8 @@ needed is decided by the issuer, see L<SICK::Issuer::StepCA> and
 L<SICK::Issuer::SelfSigned>.
 
 C<name> is optional and for humans only: what the CA is called on the page
-and in the profile C<sick trust> writes (L<SICK::Trust>). Without it the
+and in the profile C<sick trust> writes (L<SICK::Trust>). C<intermediates>
+decides whether that page offers the intermediate certificate, too. Without it the
 common name of the root certificate is used.
 
 =item C<defaults>

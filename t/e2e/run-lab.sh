@@ -5,8 +5,10 @@
 # Builds the image, starts a brand-new step-ca, has SICK put a certificate of
 # that CA onto a Cisco Small Business switch, and checks every link of the
 # chain: the CA sets itself up once and only once, the switch is found due,
-# renewed and then left alone, the trust page serves the root of the CA, the
-# schedule runs, and a stop in the middle of a run leaves no key behind.
+# renewed and then left alone, the trust page serves root and intermediate
+# of the CA - and what it serves is enough for a client to accept the switch,
+# which presents its certificate alone -, the schedule runs, and a stop in
+# the middle of a run leaves no key behind.
 #
 # THIS CHANGES THE SWITCH: its HTTPS certificate is replaced and its running
 # configuration is saved (which saves everything unsaved on it). And it
@@ -361,33 +363,70 @@ show <<<"$log"
 expect 'the entrypoint announces the schedule' 'entrypoint: sick run --verbose every 20s \(20s\)' "$log"
 [ "$(grep -Ec "^$device +unchanged +ok" <<<"$log")" -ge 2 ] || fail 'fewer than two scheduled runs with the switch unchanged'
 pass 'two scheduled runs, the switch unchanged in both'
-[ "$(grep -c '^wrote root_ca.pem, root_ca.crt, root_ca.mobileconfig, index.html to /srv/trust' <<<"$log")" -ge 2 ] \
-  || fail 'sick trust did not run after every run'
-pass 'sick trust after each of them'
+[ "$(grep -c '^wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to /srv/trust' <<<"$log")" -ge 2 ] \
+  || fail 'sick trust did not run after every run, or did not write the intermediate'
+pass 'sick trust after each of them: root, intermediate, bundle, profile and page'
 expect 'the pause is the interval' 'entrypoint: next run in 20s' "$log"
 
-step 'the trust page serves the root of the CA'
+step 'the trust page serves what a client needs: root, intermediate, bundle, profile'
 base=http://localhost:$trust_port
-for file in index.html root_ca.pem root_ca.crt root_ca.mobileconfig; do
+trust_files='index.html root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig'
+for file in $trust_files; do
   head=$(curl -fsS -o "$work/trust-$file" -D - "$base/$file" | tr -d '\r') || fail "GET $base/$file"
   printf '%s  %s  %s bytes\n' "$base/$file" "$(grep -i '^content-type:' <<<"$head" | tr -s ' ')" "$(stat -c %s "$work/trust-$file")" | show
 done
 curl -fsS -o /dev/null "$base/" || fail "GET $base/"
-pass 'index.html (also as /), root_ca.pem, root_ca.crt and root_ca.mobileconfig are served'
-served=$(openssl x509 -in "$work/trust-root_ca.pem" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')
+pass "index.html (also as /) and ${trust_files#index.html } are served"
+sha256_of() { openssl x509 "$@" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f'; }
+served=$(sha256_of -in "$work/trust-root_ca.pem")
 note "SHA-256 of the served root_ca.pem: $served"
 [ "$served" = "$fingerprint" ] || fail "the served root has another fingerprint than the CA ($fingerprint)"
 pass 'root_ca.pem has the fingerprint of the root of the CA'
-[ "$(openssl x509 -inform DER -in "$work/trust-root_ca.crt" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')" = "$fingerprint" ] \
-  || fail 'root_ca.crt is not the same certificate in DER'
+[ "$(sha256_of -inform DER -in "$work/trust-root_ca.crt")" = "$fingerprint" ] || fail 'root_ca.crt is not the same certificate in DER'
 pass 'root_ca.crt is the same certificate in DER'
+intermediate=$(in_ca step certificate fingerprint /home/step/certs/intermediate_ca.crt | tr -d '\r\n')
+[[ $intermediate =~ ^[0-9a-f]{64}$ ]] || fail 'cannot read the fingerprint of the intermediate'
+note "SHA-256 of the intermediate of the CA: $intermediate"
+[ "$(sha256_of -in "$work/trust-intermediate_ca.pem")" = "$intermediate" ] || fail 'the served intermediate_ca.pem is not the intermediate of the CA'
+[ "$(sha256_of -inform DER -in "$work/trust-intermediate_ca.crt")" = "$intermediate" ] || fail 'intermediate_ca.crt is not the same certificate in DER'
+pass 'intermediate_ca.pem is the intermediate of the CA, intermediate_ca.crt the same in DER'
+[ "$(grep -c 'BEGIN CERTIFICATE' "$work/trust-ca_bundle.pem")" -eq 2 ] || fail 'ca_bundle.pem does not hold two certificates'
+cmp -s "$work/trust-ca_bundle.pem" <(cat "$work/trust-root_ca.pem" "$work/trust-intermediate_ca.pem") \
+  || fail 'ca_bundle.pem is not the served root followed by the served intermediate'
+pass 'ca_bundle.pem is the two of them in one file'
+refuse 'no key is served' 'PRIVATE KEY' "$(cat "$work"/trust-*.pem "$work/trust-index.html" "$work/trust-root_ca.mobileconfig")"
 grep -q 'com.apple.security.root' "$work/trust-root_ca.mobileconfig" || fail 'root_ca.mobileconfig is no root certificate profile'
+grep -q 'com.apple.security.pkcs1' "$work/trust-root_ca.mobileconfig" || fail 'root_ca.mobileconfig does not carry the intermediate'
 colons=$(sed 's/../&:/g; s/:$//' <<<"$fingerprint" | tr 'a-f' 'A-F')
 # the page breaks the fingerprint into two lines
 sed 's/<br>//g' "$work/trust-index.html" | grep -qi -e "$fingerprint" -e "$colons" || fail 'index.html does not show the fingerprint'
-pass 'the profile carries a root certificate, the page shows the fingerprint'
+grep -q 'href="intermediate_ca.crt"' "$work/trust-index.html" || fail 'index.html does not offer the intermediate'
+pass 'the profile carries the root and the intermediate, the page shows the fingerprint and offers both'
 expect 'the profile is served as a configuration profile' 'application/x-apple-aspen-config' \
   "$(curl -fsS -o /dev/null -D - "$base/root_ca.mobileconfig")"
+
+step 'a client that has what the page serves, and nothing else, accepts the switch'
+# What a browser does: connect, take what the switch sends, and build the
+# chain from what is installed - here one file from the trust page, with
+# the certificate stores of this machine kept out.
+if [[ $host =~ ^[0-9.]+$ || $host == *:* ]]; then name_check=(-verify_ip "$host"); else name_check=(-verify_hostname "$host"); fi
+verdict() {
+  { openssl s_client -connect "$host:443" ${sni:+-servername "$sni"} -CAfile "$1" -no-CApath -no-CAstore \
+      "${name_check[@]}" </dev/null 2>/dev/null || true; } | grep -m 1 'Verify return code:' | sed 's/^ *//' || true
+}
+note "openssl s_client -connect $host:443 -CAfile ca_bundle.pem -no-CApath -no-CAstore ${name_check[*]}"
+with_bundle=$(verdict "$work/trust-ca_bundle.pem")
+show <<<"$with_bundle"
+expect 'with ca_bundle.pem from the trust page: the chain is built and the name fits' '^Verify return code: 0 \(ok\)$' "$with_bundle"
+note 'the same with -CAfile root_ca.pem'
+with_root=$(verdict "$work/trust-root_ca.pem")
+show <<<"$with_root"
+if [ "$sent" -eq 1 ]; then
+  refuse 'with root_ca.pem alone it is refused: the switch sends no intermediate, the client has to have it' '^Verify return code: 0 ' "$with_root"
+  expect '... and for that reason, not for another' 'Verify return code: (20|21) ' "$with_root"
+else
+  note "the switch sends $sent certificates: the root alone may do here"
+fi
 
 #### 7. a stop in the middle of a run
 

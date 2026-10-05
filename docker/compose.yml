@@ -80,7 +80,8 @@ services:
       # where a new key exists for a moment: memory only
       - /tmp:mode=0700,size=16m
 
-  # The page of "sick trust": root certificate, Apple profile, instructions.
+  # The page of "sick trust": root and intermediate certificate, Apple
+  # profile, instructions.
   trust:
     image: busybox:${BUSYBOX_VERSION:-1.37}
     restart: unless-stopped
