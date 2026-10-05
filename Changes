@@ -1,0 +1,21 @@
+Revision history for SICK
+
+{{$NEXT}}
+    - Initial release
+    - SICK::Config: the device list (YAML) with the ca, defaults and devices
+      sections; unknown keys are an error with their path, type-specific
+      keys of a device end up in its options; read_secret reads a secret
+      from a file and never puts its content into a message
+    - SICK::Bundle: certificate, chain and key as PEM plus what openssl
+      reads from the certificate - names (DNS and IP SANs, the CN without
+      SANs), validity, SHA-256 fingerprint, subject and issuer DN,
+      is_issued_by
+    - SICK::Issuer with SICK::Issuer::StepCA (the step CLI against a JWK
+      provisioner of step-ca) and SICK::Issuer::SelfSigned (plain openssl,
+      for tests and for trying things out)
+    - SICK::Target: base class and plugin loader for device types
+      ("cisco-sb" loads SICK::Target::CiscoSB), default presented_cert over
+      TLS; SICK::Target::Files writes PEM files and runs a reload command
+    - SICK::Decision: renew or not - missing, foreign-ca, names, expiring
+    - X.509 handling goes through the openssl command line, started without
+      a shell; runtime dependencies are core Perl plus YAML::PP

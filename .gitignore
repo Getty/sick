@@ -1,0 +1,15 @@
+SICK-*
+.build/
+cover_db/
+
+# Claude Code — commit: skills/, agents/, rules/, settings.json
+# Ignore: local overrides, credentials, session data
+.claude/*.local.*
+.claude/local/
+.claude/.credentials.json
+.claude/statsig/
+.claude/todos/
+.claude/projects/
+
+# Claude Code worktrees (claude --worktree / isolated agents) -- never commit
+/.claude/worktrees/

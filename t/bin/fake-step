@@ -1,0 +1,138 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use JSON::PP;
+
+# A stand-in for the step command line, for t/21-issuer-stepca.t.
+#
+# It knows "ca certificate" and "ca sign" with the flags the real step
+# defines for them, records every call as one line of JSON, and hands out
+# the files of a test CA instead of talking to one.
+#
+#   FAKE_STEP_LOG       file the calls are appended to
+#   FAKE_STEP_FIXTURES  directory with fullchain.pem and key.pem (for
+#                       "ca certificate") and signed.pem (for "ca sign")
+#   FAKE_STEP_EXIT      exit with this code instead, after printing
+#   FAKE_STEP_STDERR    this text to standard error
+#
+# The content of the password file is never read, let alone recorded.
+
+my %FLAGS = (
+  common => {
+    '--ca-url'                    => 1,
+    '--root'                      => 1,
+    '--provisioner'               => 1,
+    '--issuer'                    => 1,
+    '--provisioner-password-file' => 1,
+    '--not-before'                => 1,
+    '--not-after'                 => 1,
+    '--set'                       => 1,
+    '--set-file'                  => 1,
+    '--token'                     => 1,
+    '--context'                   => 1,
+    '--password-file'             => 1,
+    '--force'                     => 0,
+    '-f'                          => 0,
+    '--offline'                   => 0
+  },
+  certificate => { '--san' => 1, '--kty' => 1, '--curve' => 1, '--crv' => 1, '--size' => 1 },
+  sign        => {}
+);
+my %POSITIONALS = ( certificate => 3, sign => 2 );
+
+sub fail {
+  my ( $message, $code ) = @_;
+  print STDERR $message, "\n";
+  exit( defined $code ? $code : 1 );
+}
+
+sub mode_of { my @stat = stat $_[0]; return @stat ? sprintf( '%04o', $stat[2] & 07777 ) : undef }
+
+sub copy {
+  my ( $from, $to ) = @_;
+  open my $in, '<', $from or fail( 'fake-step: cannot read '.$from.': '.$! );
+  my $content = do { local $/; <$in> };
+  open my $out, '>', $to or fail( 'fake-step: cannot write '.$to.': '.$! );
+  print {$out} $content;
+  close $out or fail( 'fake-step: cannot write '.$to.': '.$! );
+}
+
+my @argv = @ARGV;
+my %call = ( argv => [@argv], umask => sprintf( '%04o', umask ) );
+
+fail('fake-step: only "ca certificate" and "ca sign" are implemented')
+  unless @argv >= 2 && $argv[0] eq 'ca' && exists $POSITIONALS{ $argv[1] };
+my $command = $argv[1];
+my @rest    = @argv[ 2 .. $#argv ];
+my %known   = ( %{ $FLAGS{common} }, %{ $FLAGS{$command} } );
+
+my ( %flag, @positional );
+while (@rest) {
+  my $arg = shift @rest;
+  unless ( $arg =~ /\A-/ ) {
+    push @positional, $arg;
+    next;
+  }
+  my ( $name, $value ) = $arg =~ /\A(--?[^=]+)=(.*)\z/s ? ( $1, $2 ) : ( $arg, undef );
+  ( my $shown = $name ) =~ s/\A-+//;
+  fail( 'flag provided but not defined: -'.$shown ) unless exists $known{$name};
+  if ( $known{$name} ) {
+    $value = shift @rest unless defined $value;
+    fail( 'flag needs an argument: -'.$shown ) unless defined $value;
+    push @{ $flag{$name} }, $value;
+  }
+  else {
+    $flag{$name} = [1];
+  }
+}
+
+fail( 'too '.( @positional < $POSITIONALS{$command} ? 'few' : 'many' ).' positional arguments were provided' )
+  unless @positional == $POSITIONALS{$command};
+
+$call{command}    = $command;
+$call{flags}      = \%flag;
+$call{positional} = \@positional;
+
+if ( my $password_file = $flag{'--provisioner-password-file'} && $flag{'--provisioner-password-file'}[0] ) {
+  $call{password_file_readable} = -r $password_file ? 1 : 0;
+}
+
+my $fixtures = $ENV{FAKE_STEP_FIXTURES};
+
+if ( !$ENV{FAKE_STEP_EXIT} ) {
+  fail('fake-step: FAKE_STEP_FIXTURES is not set') unless defined $fixtures;
+  if ( $command eq 'certificate' ) {
+    my ( $subject, $cert, $key ) = @positional;
+    copy( $fixtures.'/fullchain.pem', $cert );
+    copy( $fixtures.'/key.pem',       $key );
+    ( my $dir = $key ) =~ s{/[^/]+\z}{};
+    $call{key_file} = $key;
+    $call{key_mode} = mode_of($key);
+    $call{dir}      = $dir;
+    $call{dir_mode} = mode_of($dir);
+  }
+  else {
+    my ( $csr, $cert ) = @positional;
+    open my $in, '<', $csr or fail( 'fake-step: cannot read '.$csr.': '.$! );
+    my $request = do { local $/; <$in> };
+    $call{csr_is_pem} = $request =~ /BEGIN (?:NEW )?CERTIFICATE REQUEST/ ? 1 : 0;
+    copy( $fixtures.'/signed.pem', $cert );
+    ( my $dir = $cert ) =~ s{/[^/]+\z}{};
+    $call{dir}      = $dir;
+    $call{dir_mode} = mode_of($dir);
+    $call{csr_mode} = mode_of($csr);
+  }
+}
+
+if ( defined $ENV{FAKE_STEP_LOG} ) {
+  open my $log, '>>', $ENV{FAKE_STEP_LOG} or fail( 'fake-step: cannot write log: '.$! );
+  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
+  close $log;
+}
+
+if ( $ENV{FAKE_STEP_EXIT} ) {
+  print STDERR $ENV{FAKE_STEP_STDERR} if defined $ENV{FAKE_STEP_STDERR};
+  exit $ENV{FAKE_STEP_EXIT};
+}
+
+exit 0;

@@ -1,0 +1,28 @@
+# The device list of the design document, with neutral names and addresses.
+# Secrets never live in here, only the paths of the files that hold them.
+ca:
+  url: https://ca.example.internal:9000
+  root: /etc/sick/root_ca.crt          # root certificate, to verify the CA
+  provisioner: sick
+  password_file: /etc/sick/provisioner.pw
+defaults:
+  lifetime: 397d                          # Apple accepts at most 825 days from private CAs
+  renew_before: 30d
+  key: rsa2048                            # lowest common denominator of old devices
+devices:
+  switch:
+    type: cisco-sb                        # -> SICK::Target::CiscoSB
+    host: 192.0.2.199
+    names: [switch.example.internal, Switch.HQ.Example.Org, 192.0.2.199]
+    credentials: /etc/sick/switch.cred    # file: line 1 user, line 2 password
+  router:
+    type: acmesh                          # built in: hands over to an acme.sh hook
+    hook: routeros
+    names: [router.example.internal]
+    env: { ROUTER_OS_HOST: router.example.internal, ROUTER_OS_USERNAME: sick }
+    env_files: { ROUTER_OS_PASSWORD: /etc/sick/router.pw }
+  grafana:
+    type: files                           # built in: write files, run a command
+    names: [grafana.example.internal]
+    dir: /srv/certs/grafana
+    reload: "docker restart grafana"
