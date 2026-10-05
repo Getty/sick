@@ -33,6 +33,8 @@ our $VERSION = '0.001';
 
     sub root_pem { ... }
 
+    sub intermediates_pem { ... }    # optional
+
 =head1 DESCRIPTION
 
 An issuer turns a request into a L<SICK::Bundle>. SICK is not a CA and does
@@ -152,6 +154,19 @@ The root certificate of the CA as PEM: what L<SICK::Decision> checks
 presented certificates against and what clients have to trust.
 
 All three have to be implemented by a subclass.
+
+=cut
+
+sub intermediates_pem { return undef }
+
+=method intermediates_pem
+
+    my $pem = $issuer->intermediates_pem;    # or undef
+
+The intermediate certificates of the CA as PEM, or C<undef> when the issuer
+knows of none - which is what the base class answers. They are no trust
+anchors. L<SICK::Decision> uses them to build the chain from a certificate
+to L</root_pem> when a device presents its certificate without them.
 
 =cut
 

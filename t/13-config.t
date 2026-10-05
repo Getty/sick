@@ -43,6 +43,7 @@ subtest 'the example of the design document loads' => sub {
     {
       url           => 'https://ca.example.internal:9000',
       root          => '/etc/sick/root_ca.crt',
+      intermediates => '/etc/sick/intermediate_ca.crt',
       provisioner   => 'sick',
       password_file => '/etc/sick/provisioner.pw'
     },
@@ -51,7 +52,7 @@ subtest 'the example of the design document loads' => sub {
     'defaults with durations in seconds';
 
   my @devices = $config->devices;
-  is_deeply [ map { $_->name } @devices ], [qw( switch router grafana )], 'devices in the order of the file';
+  is_deeply [ map { $_->name } @devices ], [qw( switch router hypervisor grafana )], 'devices in the order of the file';
   isa_ok $_, 'SICK::Device' for @devices;
 
   my $switch = $config->device('switch');
@@ -75,11 +76,26 @@ subtest 'the example of the design document loads' => sub {
   is $router->host, undef, 'no host when the entry has none';
   is_deeply $router->options,
     {
-      hook      => 'routeros',
-      env       => { ROUTER_OS_HOST => 'router.example.internal', ROUTER_OS_USERNAME => 'sick' },
-      env_files => { ROUTER_OS_PASSWORD => '/etc/sick/router.pw' }
+      hook => 'routeros',
+      env  => {
+        ROUTER_OS_HOST     => 'router.example.internal',
+        ROUTER_OS_USERNAME => 'sick',
+        ROUTER_OS_SSH_CMD  => 'ssh -i /etc/sick/router.key',
+        ROUTER_OS_SCP_CMD  => 'scp -i /etc/sick/router.key'
+      }
     },
     'nested options survive';
+
+  my $hypervisor = $config->device('hypervisor');
+  is $hypervisor->host, 'pve.example.internal', 'host as given';
+  is $hypervisor->port, 8006,                   'port as given';
+  is_deeply $hypervisor->options,
+    {
+      hook      => 'proxmoxve',
+      env       => { DEPLOY_PROXMOXVE_USER => 'sick', DEPLOY_PROXMOXVE_API_TOKEN_NAME => 'sick' },
+      env_files => { DEPLOY_PROXMOXVE_API_TOKEN_KEY => '/etc/sick/pve.token' }
+    },
+    'settings in env, the secret as the path of a file in env_files';
 
   is_deeply $config->device('grafana')->options, { dir => '/srv/certs/grafana', reload => 'docker restart grafana' },
     'options of the files device';
@@ -178,6 +194,8 @@ subtest 'unknown keys are errors' => sub {
   my $config = SICK::Config->load_string( "ca:\n  type: selfsigned\n  dir: /var/lib/sick/ca\n  step: /opt/step\n".$minimal, 'list.yml' );
   is_deeply $config->ca, { type => 'selfsigned', dir => '/var/lib/sick/ca', step => '/opt/step' },
     'type, dir and step are known in ca';
+  $config = SICK::Config->load_string( "ca:\n  root: /etc/sick/root_ca.crt\n  intermediates: /etc/sick/intermediate_ca.crt\n".$minimal, 'list.yml' );
+  is $config->ca->{intermediates}, '/etc/sick/intermediate_ca.crt', '... and so is intermediates';
 };
 
 subtest 'the name of the CA' => sub {

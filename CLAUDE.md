@@ -40,5 +40,18 @@ lib/SICK/Target.pm             base + plugin loader; Target/Files.pm
 lib/SICK/Bundle.pm             cert + chain + key, facts via openssl
 lib/SICK/OpenSSL.pm, Command.pm, Temp.pm, Names.pm, Duration.pm   plumbing
 t/NN-*.t                       10s core, 20s issuers, 30s targets and decision
-t/bin/fake-step                stand-in for the step CLI
+t/bin/fake-step                stand-in for the step CLI, modelled on step 0.30.2
+docker/                        compose.yml (ca, sick, trust), Dockerfile, init-ca.sh, entrypoint.sh
+t/e2e/run-lab.sh               the Docker setup against a real switch; changes the switch
 ```
+
+## Docker
+
+- The image is built from the directory above this checkout: it needs
+  `../sick-target-ciscosb` as well. `docker/Dockerfile.dockerignore` is an allow list.
+- No Docker on the development machine: build and run on a Docker host
+  (`t/e2e/run-lab.sh` there). `prove` never starts a container.
+- Secrets reach containers as files in volumes. Nothing secret in the
+  environment, in an image layer, in `docker/README.md` or in the e2e script.
+- `docker/README.md` ends with the transcript of an e2e run. Names and addresses
+  in it are neutral; keep it that way when it is refreshed.

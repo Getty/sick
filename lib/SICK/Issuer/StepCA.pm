@@ -18,6 +18,7 @@ our $VERSION = '0.001';
     my $issuer = SICK::Issuer::StepCA->new(
       url           => 'https://ca.example.internal:9000',
       root          => '/etc/sick/root_ca.crt',
+      intermediates => '/etc/sick/intermediate_ca.crt',
       provisioner   => 'sick',
       password_file => '/etc/sick/provisioner.pw',
     );
@@ -33,6 +34,7 @@ In the device list:
     ca:
       url: https://ca.example.internal:9000
       root: /etc/sick/root_ca.crt
+      intermediates: /etc/sick/intermediate_ca.crt
       provisioner: sick
       password_file: /etc/sick/provisioner.pw
 
@@ -49,15 +51,27 @@ without a shell. The password is handed over as the path of its file and
 never appears on a command line, in the environment or in a message.
 
 The provisioner has to allow the lifetimes that are asked for; step-ca
-grants 24 hours unless its C<maxTLSCertDuration> claim is raised.
+grants 24 hours unless its C<maxTLSCertDuration> claim is raised
+(C<step ca provisioner update sick --x509-max-dur 19800h>).
+
+A step-ca never signs with its root: every certificate comes from its
+intermediate, and what C<step> writes is the certificate followed by that
+intermediate. A device that stores one certificate per slot presents the
+certificate alone, and nothing leads from there to the root. Name the
+intermediate certificate of the CA as L</intermediates> - step-ca keeps it
+in F<certs/intermediate_ca.crt>, next to F<certs/root_ca.crt> - and SICK
+recognizes such a certificate as its own.
+
+The command lines are verified against C<step> 0.30.2 and a step-ca 0.30.2.
 
 =cut
 
-sub attributes          { qw( url root provisioner password_file step ) }
+sub attributes          { qw( url root intermediates provisioner password_file step ) }
 sub required_attributes { qw( url root provisioner password_file ) }
 
 sub url           { $_[0]->{url} }
 sub root          { $_[0]->{root} }
+sub intermediates { $_[0]->{intermediates} }
 sub provisioner   { $_[0]->{provisioner} }
 sub password_file { $_[0]->{password_file} }
 sub step          { defined $_[0]->{step} && length $_[0]->{step} ? $_[0]->{step} : 'step' }
@@ -69,7 +83,16 @@ Required. The URL of the step-ca, C<https://ca.example.internal:9000>.
 =attr root
 
 Required. Path of the root certificate of the CA. C<step> uses it to verify
-the CA, L</root_pem> returns its content.
+the CA, L</root_pem> returns its content. The file holds this one
+certificate and nothing else: C<step> refuses a file with more than one PEM
+block.
+
+=attr intermediates
+
+Optional. Path of a file with the intermediate certificate of the CA, or
+several of them. C<step> does not get to see it; it is what
+L</intermediates_pem> returns. Set it whenever a device presents its
+certificate without the chain.
 
 =attr provisioner
 
@@ -123,17 +146,28 @@ Runs
       <first name> <cert file> <key file>
 
 and returns the result as a L<SICK::Bundle> with the key; what C<step>
-writes after the certificate itself (the intermediate) is the chain.
+writes after the certificate itself (the intermediate) is the chain. The
+key comes unencrypted, RSA keys as PKCS#1 (C<BEGIN RSA PRIVATE KEY>), EC
+keys as SEC 1 (C<BEGIN EC PRIVATE KEY>). step-ca starts the validity one
+minute in the past; the certificate ends C<lifetime> from now.
+
+C<--not-after> takes a point in time or a duration in the units of Go,
+hours at most - C<397d> is refused -, which is why the lifetime is handed
+over in seconds.
 
 Certificate and key are written into a private temporary directory
 (L<SICK::Temp>, files not readable for anybody else) that is gone when
 C<issue> returns or dies.
 
-Croaks with C<< step failed (exit <N>): <stderr> >> when C<step> does not
-succeed - the CA refusing the lifetime or the password included, in the
-words of C<step> -, with C<< cannot run 'step': <reason> >> when it is not
-installed, and with C<< cannot read secret file '<path>': <reason> >> when
-the password file is missing or unreadable.
+Croaks with C<< step failed (exit <N>): <what step said> >> when C<step>
+does not succeed - the CA refusing the lifetime
+(C<requested duration of ... is more than the authorized maximum certificate
+duration of ...>) or a wrong password (C<failed to decrypt JWE: invalid
+password>) included, in the words of C<step>. Its progress lines, its
+colours and its hint at C<STEPDEBUG> are left out. Croaks with
+C<< cannot run 'step': <reason> >> when it is not installed, and with
+C<< cannot read secret file '<path>': <reason> >> when the password file is
+missing or unreadable.
 
 =cut
 
@@ -181,23 +215,53 @@ Fails like L</issue>.
 
 sub root_pem {
   my ( $self ) = @_;
-  my $root = eval { SICK::Bundle->from_files( cert => $self->root ) };
-  return $root->fullchain if $root;
-  my $error = $@;
-  $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
-  $error =~ s/\Acannot read certificate file/cannot read CA root/;
-  $error =~ s/\Acert is not a PEM certificate/CA root '${\ $self->root}' is not a PEM certificate/;
-  croak $error;
+  my $root = $self->_certificates( $self->root, 'CA root' );
+  croak 'CA root \''.$self->root.'\' holds more than one certificate; step needs the root alone'
+    .' - name the intermediate certificate as ca.intermediates'
+    if defined $root->chain;
+  return $root->cert;
 }
 
 =method root_pem
 
-The content of the L</root> file: the PEM certificates in it. Croaks with
-C<< cannot read CA root '<path>': <reason> >> when it cannot be read.
+The certificate in the L</root> file as PEM. Croaks with
+C<< cannot read CA root '<path>': <reason> >> when it cannot be read, and
+when the file holds more than one certificate: C<step> would refuse it
+(C<contains more than one PEM encoded block>), and the intermediate has a
+place of its own.
+
+=cut
+
+sub intermediates_pem {
+  my ( $self ) = @_;
+  my $path = $self->intermediates;
+  return undef unless defined $path && length $path;
+  return $self->_certificates( $path, 'CA intermediates' )->fullchain;
+}
+
+=method intermediates_pem
+
+The certificates in the L</intermediates> file as PEM, C<undef> when none
+is configured. Croaks with
+C<< cannot read CA intermediates '<path>': <reason> >> when the file
+cannot be read.
 
 =cut
 
 #### internals
+
+# The certificates of a file of the ca section, as a bundle; errors in the
+# words of the device list.
+sub _certificates {
+  my ( $self, $path, $what ) = @_;
+  my $bundle = eval { SICK::Bundle->from_files( cert => $path ) };
+  return $bundle if $bundle;
+  my $error = $@;
+  $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  $error =~ s/\Acannot read certificate file/cannot read $what/;
+  $error =~ s/\Acert is not a PEM certificate/$what '$path' is not a PEM certificate/;
+  croak $error;
+}
 
 sub _common_args {
   my ( $self, $spec ) = @_;
@@ -227,9 +291,19 @@ sub _step {
   my ( $self, @args ) = @_;
   my ( $out, $err, $exit ) = SICK::Command::run( [ $self->step, @args ], umask => 077 );
   return $out unless $exit;
-  $err =~ s/\A\s+//;
-  $err =~ s/\s+\z//;
-  croak 'step failed (exit '.$exit.'): '.$err;
+  croak 'step failed (exit '.$exit.'): '.$self->_said($err);
+}
+
+# What step has to say, out of what it prints. On standard error it reports
+# its progress ("<check mark> Provisioner: sick (JWK) [kid: ...]") in
+# colour, terminal or not, and ends a failure with a hint for its developers.
+sub _said {
+  my ( $self, $err ) = @_;
+  $err = q{} unless defined $err;
+  $err =~ s/\e\[[0-9;?]*[ -\/]*[@-~]//g;
+  my @lines = grep { /\S/ && !/\A\s*\xe2\x9c\x94/ && !/\ARe-run with STEPDEBUG=1/ } split /\r?\n/, $err;
+  s/\A\s+//, s/\s+\z// for @lines;
+  return @lines ? join( "\n", @lines ) : 'it did not say why';
 }
 
 1;

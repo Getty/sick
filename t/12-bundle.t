@@ -122,6 +122,19 @@ subtest 'is_issued_by' => sub {
   ok $bare->is_issued_by( $root->{pem}.$inter->{pem} ), 'true when the intermediate comes with the CA';
   ok !$chained->is_issued_by( $foreign->{pem} ), 'the chain does not make a foreign CA ours';
 
+  # what a device that sends its certificate alone needs: the intermediates
+  # of the CA as a second argument, helping but not trusted
+  ok $bare->is_issued_by( $root->{pem}, $inter->{pem} ), 'true with the intermediates handed over';
+  ok $bare->is_issued_by( $root->{pem}, $foreign->{pem}.$inter->{pem} ), '... also among others';
+  ok $bundle->is_issued_by( $root->{pem}, $inter->{pem} ), '... and they do no harm where none is needed';
+  ok $bare->is_issued_by( $root->{pem}, undef ) == 0, 'undef is no intermediates';
+  ok !$bare->is_issued_by( $root->{pem}, q{} ),        '... and so is the empty string';
+  ok !$bare->is_issued_by( $foreign->{pem}, $inter->{pem} ), 'intermediates are no trust anchors: the chain has to end at the CA';
+  ok !$bare->is_issued_by( $foreign->{pem}, $inter->{pem}.$root->{pem} ), '... even with the real root among them';
+  my $lived = eval { $bare->is_issued_by( $root->{pem}, 'nonsense' ); 1 };
+  ok !$lived, 'dies for intermediates that are no certificates';
+  like $@, qr/^is_issued_by: the intermediates are not PEM certificates/, '... saying so';
+
   my $ok = eval { $bundle->is_issued_by('nonsense'); 1 };
   ok !$ok, 'dies without a CA certificate';
   like $@, qr/^is_issued_by needs the PEM certificate of a CA/, '... saying so';

@@ -40,7 +40,7 @@ run looks at every device and changes only those whose certificate is
 missing, from another CA, for other names or about to expire.
 
     # /etc/cron.d/sick
-    17 4 * * *  root  sick run && sick trust /srv/www/trust
+    17 4 * * *  root  sick run; sick trust /srv/www/trust
 
 =head1 COMMANDS
 

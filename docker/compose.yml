@@ -1,0 +1,102 @@
+# SICK with its own CA: step-ca, sick on a schedule, and a page that hands
+# the root certificate to clients. See README.md next to this file.
+#
+#   cp docker/sick.example.yml docker/sick.yml    # then edit: your devices
+#   mkdir docker/secrets                          # credentials of the devices
+#   docker compose -f docker/compose.yml up -d --build
+#
+# Settings come from the environment or from an .env file next to this file;
+# every one has a default.
+
+name: sick
+
+services:
+
+  # The CA. The official image; init-ca.sh makes the CA at the first start.
+  ca:
+    image: smallstep/step-ca:${STEP_VERSION:-0.30.2}
+    restart: unless-stopped
+    # root for init-ca.sh only, which starts step-ca as the user "step"
+    user: "0:0"
+    entrypoint: ["/bin/bash", "/usr/local/bin/init-ca.sh"]
+    command: []
+    environment:
+      SICK_CA_NAME: ${SICK_CA_NAME:-SICK Internal CA}
+      SICK_CA_DNS: ${SICK_CA_DNS:-}
+      SICK_CA_MAX_LIFETIME: ${SICK_CA_MAX_LIFETIME:-19800h}
+      SICK_CA_ALLOW_DNS: ${SICK_CA_ALLOW_DNS:-}
+      SICK_CA_ALLOW_IP: ${SICK_CA_ALLOW_IP:-}
+    volumes:
+      - ca:/home/step
+      - handover:/handover
+      - ./init-ca.sh:/usr/local/bin/init-ca.sh:ro
+    ports:
+      - "${SICK_CA_PORT:-9000}:9000"
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/home/step/certs/root_ca.crt"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+
+  # SICK: "sick run" every SICK_INTERVAL, "sick trust" after every run.
+  sick:
+    image: ${SICK_IMAGE:-sick:local}
+    build:
+      # the directory that holds the checkouts "sick" and "sick-target-ciscosb"
+      context: ${SICK_BUILD_CONTEXT:-../..}
+      dockerfile: sick/docker/Dockerfile
+      args:
+        STEP_VERSION: ${STEP_VERSION:-0.30.2}
+        SICK_FROM: ${SICK_FROM:-local}
+    restart: unless-stopped
+    depends_on:
+      ca:
+        condition: service_healthy
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+    environment:
+      SICK_INTERVAL: ${SICK_INTERVAL:-1d}
+      SICK_RUN_OPTIONS: ${SICK_RUN_OPTIONS---verbose}
+    volumes:
+      # the device list and the secrets it names: yours, read-only
+      - type: bind
+        source: ${SICK_CONFIG_FILE:-./sick.yml}
+        target: /etc/sick/sick.yml
+        read_only: true
+        bind:
+          create_host_path: false    # a missing list is an error, not a new directory
+      - ${SICK_SECRETS_DIR:-./secrets}:/etc/sick/secrets:ro
+      # root_ca.crt, intermediate_ca.crt and provisioner.pw, from the ca service
+      - handover:/etc/sick/ca:ro
+      # known_hosts of ssh, and whatever a device type wants to keep
+      - state:/var/lib/sick
+      - trust:/srv/trust
+    tmpfs:
+      # where a new key exists for a moment: memory only
+      - /tmp:mode=0700,size=16m
+
+  # The page of "sick trust": root certificate, Apple profile, instructions.
+  trust:
+    image: busybox:${BUSYBOX_VERSION:-1.37}
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command: ["httpd", "-f", "-v", "-p", "8080", "-h", "/srv/trust", "-c", "/etc/httpd.conf"]
+    volumes:
+      - trust:/srv/trust:ro
+      - ./trust-httpd.conf:/etc/httpd.conf:ro
+    ports:
+      - "${SICK_TRUST_PORT:-8080}:8080"
+
+volumes:
+  ca:        # the CA: keys, configuration, database. Back this up.
+  handover:  # what the ca service hands to the sick service
+  state:     # known_hosts
+  trust:     # output of "sick trust"

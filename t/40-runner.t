@@ -81,6 +81,15 @@ my %switch;   # how they are told to behave
     return $self->SUPER::deploy($bundle);
   }
 
+  package SICK::Target::Bare;    # presents its certificate alone, like a switch with one slot
+  our @ISA = ('SICK::Target::Files');
+
+  sub presented_cert {
+    my ( $self ) = @_;
+    my $bundle = $self->SUPER::presented_cert or return undef;
+    return SICK::Bundle->new( cert => $bundle->cert );
+  }
+
   package SICK::Target::Slow;    # needs a few looks until it shows the new certificate
   our @ISA = ('SICK::Target::Files');
   sub verify_timeout { 20 }
@@ -100,7 +109,7 @@ my %switch;   # how they are told to behave
     return $switch{slow_old};
   }
 }
-$INC{ 'SICK/Target/'.$_.'.pm' } = __FILE__ for qw( Lazy Fragile Keeper Slow );
+$INC{ 'SICK/Target/'.$_.'.pm' } = __FILE__ for qw( Lazy Fragile Keeper Bare Slow );
 
 # an issuer that refuses the way a CA does
 {
@@ -374,16 +383,59 @@ subtest 'what step says reaches the user' => sub {
     step          => $step,
   );
   local $ENV{FAKE_STEP_EXIT}   = 1;
-  local $ENV{FAKE_STEP_STDERR} = "The request was forbidden by the certificate authority:\nrequested duration of 9528h0m0s is more than the authorized maximum certificate duration of 24h1m0s.\n";
+  local $ENV{FAKE_STEP_STDERR} = "The request was forbidden by the certificate authority: requested duration of 9528h1m0s is more than the authorized maximum certificate duration of 24h1m0s.\nRe-run with STEPDEBUG=1 for more info.\n";
 
   my $runner = runner( "devices:\n".device_yaml('stepped'), issuer => $refusing );
   my @results = $runner->run;
   is_deeply brief(@results), [ [ 'stepped', 'failed', 'missing' ] ], 'failed';
-  like $results[0]{error},
-    qr/^issuing failed: step failed \(exit 1\): The request was forbidden by the certificate authority:\nrequested duration of 9528h0m0s is more than the authorized maximum/,
-    'the error is what step printed';
+  is $results[0]{error},
+    'issuing failed: step failed (exit 1): The request was forbidden by the certificate authority: requested duration of 9528h1m0s is more than the authorized maximum certificate duration of 24h1m0s.',
+    'the error is what step said - one line, without its progress report';
   unlike $results[0]{error}, qr/\Q$marker\E/, '... and has no password in it';
   ok !-e $tmp.'/stepped', 'the device is untouched';
+  is_deeply leftovers(), [], 'no temporary directory is left';
+};
+
+subtest 'a CA that signs through an intermediate, a device that presents its certificate alone' => sub {
+  # step-ca and a switch: the certificate comes from the intermediate, and
+  # the device shows the certificate and nothing else
+  my $step = $tmp.'/step';
+  my $root  = new_ca( dir => $tmp, name => 'chain-root',  cn => 'Chain Root' );
+  my $inter = new_ca( dir => $tmp, name => 'chain-inter', cn => 'Chain Intermediate', issuer => $root );
+  my $leaf  = new_cert( ca => $inter, dir => $tmp, name => 'chain-leaf', cn => 'chained.example.internal',
+    san => 'DNS:chained.example.internal', days => 90 );
+  my $fixtures = $tmp.'/chain-fixtures';
+  mkdir $fixtures or die 'mkdir: '.$!;
+  spew( $fixtures.'/fullchain.pem', $leaf->{cert_pem}.$inter->{pem} );
+  spew( $fixtures.'/key.pem',       $leaf->{key_pem} );
+  local $ENV{FAKE_STEP_FIXTURES} = $fixtures;
+
+  my %ca = (
+    url           => 'https://ca.example.internal:9000',
+    root          => $root->{cert},
+    provisioner   => 'sick',
+    password_file => $tmp.'/provisioner.pw',
+    step          => $step,
+  );
+  my $list = "devices:\n".device_yaml( 'chained', type => 'bare' );
+  local $now = time;
+
+  my $without = runner( $list, issuer => SICK::Issuer->from_ca(%ca) );
+  is_deeply brief( $without->run ), [ [ 'chained', 'renewed', 'missing' ] ], 'first run: renewed';
+  is( SICK::Target->class_for('bare')->new( device => $without->config->device('chained') )->presented_cert->chain,
+    undef, 'the device presents the certificate alone' );
+  is_deeply brief( $without->run ), [ [ 'chained', 'renewed', 'foreign-ca' ] ],
+    'without ca.intermediates the second run does not recognize it: foreign-ca, renewed again, every time';
+
+  my $with = runner( $list, issuer => SICK::Issuer->from_ca( %ca, intermediates => $inter->{cert} ) );
+  is_deeply brief( $with->run ), [ [ 'chained', 'unchanged', 'ok' ] ], 'with ca.intermediates: unchanged';
+  my ($state) = $with->check;
+  is $state->{reason}, 'ok', '... and check agrees';
+
+  my $missing = runner( $list, issuer => SICK::Issuer->from_ca( %ca, intermediates => $tmp.'/no-such-intermediate.crt' ) );
+  my @results = $missing->run;
+  is_deeply brief(@results), [ [ 'chained', 'failed', 'error' ] ], 'an intermediates file that cannot be read fails the device';
+  like $results[0]{error}, qr/^cannot read CA intermediates '\Q$tmp\E\/no-such-intermediate\.crt': \S/, '... with path and reason';
   is_deeply leftovers(), [], 'no temporary directory is left';
 };
 

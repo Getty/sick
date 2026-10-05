@@ -1,0 +1,4 @@
+# yours: the device list, its secrets and your settings
+/sick.yml
+/secrets/
+/.env

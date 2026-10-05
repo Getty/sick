@@ -2,7 +2,8 @@
 # Secrets never live in here, only the paths of the files that hold them.
 ca:
   url: https://ca.example.internal:9000
-  root: /etc/sick/root_ca.crt          # root certificate, to verify the CA
+  root: /etc/sick/root_ca.crt                    # root certificate, to verify the CA
+  intermediates: /etc/sick/intermediate_ca.crt   # for devices that present their certificate alone
   provisioner: sick
   password_file: /etc/sick/provisioner.pw
 defaults:
@@ -17,10 +18,21 @@ devices:
     credentials: /etc/sick/switch.cred    # file: line 1 user, line 2 password
   router:
     type: acmesh                          # built in: hands over to an acme.sh hook
-    hook: routeros
+    hook: routeros                        # this hook logs in with ssh and scp, by key
     names: [router.example.internal]
-    env: { ROUTER_OS_HOST: router.example.internal, ROUTER_OS_USERNAME: sick }
-    env_files: { ROUTER_OS_PASSWORD: /etc/sick/router.pw }
+    env:
+      ROUTER_OS_HOST: router.example.internal
+      ROUTER_OS_USERNAME: sick
+      ROUTER_OS_SSH_CMD: ssh -i /etc/sick/router.key
+      ROUTER_OS_SCP_CMD: scp -i /etc/sick/router.key
+  hypervisor:
+    type: acmesh
+    hook: proxmoxve                       # this one wants an API token: a secret, so a file
+    host: pve.example.internal
+    port: 8006
+    names: [pve.example.internal]
+    env: { DEPLOY_PROXMOXVE_USER: sick, DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick }
+    env_files: { DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/pve.token }
   grafana:
     type: files                           # built in: write files, run a command
     names: [grafana.example.internal]

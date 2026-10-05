@@ -76,6 +76,23 @@ subtest 'foreign-ca' => sub {
   is $decision->{renew},  1,            'renew';
   is $decision->{reason}, 'foreign-ca', 'reason foreign-ca';
   is $decision->{detail}, 'issued by CN=Factory Default CA', 'detail names the issuer';
+
+  # a switch fills the fields of a subject it was not given with blanks:
+  # C=\ \ ,OU=\ ,O=\ ,CN=sw1.example.internal in the notation of RFC 2253
+  my $blanks = new_ca( dir => $tmp, name => 'blanks', cn => 'sw1.example.internal/O= /OU= /C=  ' );
+  my $cert   = presented( ca => $blanks, cn => 'web.example.internal', san => 'DNS:web.example.internal,IP:192.0.2.7' );
+  like $cert->issuer_dn, qr/\\ /, 'an issuer with fields of blanks: the bundle has the name as openssl writes it';
+  $decision = decide( $web, $cert );
+  is $decision->{reason}, 'foreign-ca', '... is a foreign CA';
+  is $decision->{detail}, 'issued by CN=sw1.example.internal', '... and the detail leaves the blank fields out';
+  unlike $decision->{detail}, qr/\\/, '... with no backslash in it, let alone at the end';
+
+  is SICK::Decision::_readable_dn('O=Example Org,CN=Example Issuing CA'), 'O=Example Org,CN=Example Issuing CA',
+    'an ordinary name stays as it is';
+  is SICK::Decision::_readable_dn('CN=Smith\\, John,O=\\ Padded\\ '), 'CN=Smith\\, John,O=Padded',
+    'an escaped comma separates nothing, blanks at the edges go';
+  is SICK::Decision::_readable_dn('C=\\ \\ ,O=\\ '), '(a name of blanks)', 'a name of nothing but blanks';
+  is SICK::Decision::_readable_dn(q{}), '(no name)', 'an empty name';
 };
 
 subtest 'names' => sub {
@@ -180,8 +197,19 @@ subtest 'intermediates' => sub {
 
   my $bare = SICK::Bundle->new( cert => $leaf->{cert_pem} );
   is decide( $web, $bare )->{reason}, 'foreign-ca', 'a device that does not: the root alone cannot vouch for it';
-  is decide( $web, $bare, root_pem => $root->{pem}.$inter->{pem} )->{reason}, 'ok',
-    '... unless root_pem carries the intermediate';
+  is decide( $web, $bare, intermediates_pem => $inter->{pem} )->{reason}, 'ok',
+    '... until the intermediates of the CA are handed over';
+  is decide( $web, $with_chain, intermediates_pem => $inter->{pem} )->{reason}, 'ok',
+    '... which do no harm when the device sends them as well';
+  is decide( $web, $web_cert, intermediates_pem => $inter->{pem} )->{reason}, 'ok',
+    '... or when the root signed directly';
+  is decide( $web, $bare, intermediates_pem => undef )->{reason}, 'foreign-ca', 'undef is no intermediates';
+
+  my $other = new_ca( dir => $tmp, name => 'inter-foreign', cn => 'Decision Intermediate', issuer => $foreign );
+  is decide( $web, $bare, intermediates_pem => $other->{pem} )->{reason}, 'foreign-ca',
+    'the intermediate of another CA does not help, same name or not';
+  is decide( $web, $bare, root_pem => $foreign->{pem}, intermediates_pem => $inter->{pem}.$root->{pem} )->{reason},
+    'foreign-ca', 'intermediates are not trusted: only root_pem is the anchor';
 };
 
 subtest 'arguments' => sub {
@@ -193,6 +221,9 @@ subtest 'arguments' => sub {
   $ok = eval { SICK::Decision::evaluate( device => $web, presented => $web_cert ); 1 };
   ok !$ok, 'dies without root_pem';
   like $@, qr/^evaluate needs root_pem/, '... saying so';
+  $ok = eval { SICK::Decision::evaluate( device => $web, presented => $web_cert, root_pem => $root->{pem}, intermediates_pem => [] ); 1 };
+  ok !$ok, 'dies for intermediates that are no text';
+  like $@, qr/^evaluate: intermediates_pem must be PEM text/, '... saying so';
 };
 
 done_testing;

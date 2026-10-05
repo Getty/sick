@@ -1,0 +1,39 @@
+# Device list for the Compose setup in this directory. Copy it to sick.yml
+# and replace the devices by yours. The ca section fits the setup as it is.
+#
+# Paths are those inside the sick container:
+#
+#   /etc/sick/ca/        root_ca.crt, intermediate_ca.crt and provisioner.pw,
+#                        handed over by the ca service
+#   /etc/sick/secrets/   your secrets directory (SICK_SECRETS_DIR, ./secrets)
+#   /var/lib/sick/       the state volume
+ca:
+  name: Example Internal CA                 # what the trust page calls the CA
+  url: https://ca:9000
+  root: /etc/sick/ca/root_ca.crt
+  intermediates: /etc/sick/ca/intermediate_ca.crt
+  provisioner: sick
+  password_file: /etc/sick/ca/provisioner.pw
+defaults:
+  lifetime: 397d
+  renew_before: 30d
+  key: rsa2048
+devices:
+  switch:
+    type: cisco-sb                          # SICK-Target-CiscoSB
+    host: 192.0.2.10
+    names: [switch.example.internal, 192.0.2.10]
+    credentials: /etc/sick/secrets/switch.cred    # line 1 user, line 2 password
+    legacy_algorithms: true                 # old firmware, old SSH
+    host_key_check: accept-new              # the first connection pins the host key
+  hypervisor:
+    type: acmesh                            # a deploy hook of acme.sh
+    hook: proxmoxve
+    host: pve.example.internal
+    port: 8006
+    names: [pve.example.internal]
+    env:
+      DEPLOY_PROXMOXVE_USER: sick
+      DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick
+    env_files:
+      DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/secrets/pve.token

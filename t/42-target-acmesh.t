@@ -115,8 +115,8 @@ subtest 'the class' => sub {
 
 subtest 'validate' => sub {
   my $good = target(
-    env       => { ROUTER_OS_HOST => 'router.example.internal', ROUTER_OS_USERNAME => 'sick' },
-    env_files => { ROUTER_OS_PASSWORD => '/etc/sick/router.pw' },
+    env       => { DEPLOY_PROXMOXVE_USER => 'sick', DEPLOY_PROXMOXVE_API_TOKEN_NAME => 'sick' },
+    env_files => { DEPLOY_PROXMOXVE_API_TOKEN_KEY => '/etc/sick/pve.token' },
     home      => '/var/lib/sick/acme',
   );
   is $good->validate, $good, 'hook, env, env_files, acme_sh and home are the options';

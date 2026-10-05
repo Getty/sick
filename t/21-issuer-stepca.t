@@ -6,6 +6,7 @@ use File::Temp qw( tempdir );
 use JSON::PP;
 use lib 't/lib';
 
+use SICK::Bundle;
 use SICK::Issuer::StepCA;
 use SICK::OpenSSL;
 use Test::SICK::PKI qw( new_ca new_cert new_csr slurp spew );
@@ -86,6 +87,50 @@ subtest 'construction' => sub {
   is $issuer->root_pem, $root->{pem}, 'root_pem is the content of the root file';
 };
 
+subtest 'intermediates' => sub {
+  is $issuer->intermediates,     undef, 'no intermediates unless configured';
+  is $issuer->intermediates_pem, undef, '... and intermediates_pem is undef then';
+
+  my $with = SICK::Issuer::StepCA->new( %ca, intermediates => $inter->{cert} );
+  is $with->intermediates,     $inter->{cert}, 'the path as given';
+  is $with->intermediates_pem, $inter->{pem},  'intermediates_pem is the content of the file';
+  is $with->root_pem,          $root->{pem},   '... and root_pem stays the root alone';
+
+  my $second = new_ca( dir => $tmp, name => 'inter2', cn => 'Fake Step Intermediate 2', issuer => $root );
+  my $both   = spew( $tmp.'/intermediates.pem', $inter->{pem}."\n".$second->{pem} );
+  is( SICK::Issuer::StepCA->new( %ca, intermediates => $both )->intermediates_pem,
+    $inter->{pem}.$second->{pem}, 'a file with several intermediates' );
+
+  my $missing = $tmp.'/missing-intermediate.crt';
+  my $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $missing )->intermediates_pem; 1 };
+  ok !$ok, 'intermediates_pem dies when the file is missing';
+  like $@, qr/^cannot read CA intermediates '\Q$missing\E': \S/, '... with path and reason';
+
+  $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $password_file )->intermediates_pem; 1 };
+  ok !$ok, 'intermediates_pem dies when the file holds no certificate';
+  like $@, qr/^CA intermediates '\Q$password_file\E' is not a PEM certificate/, '... saying so';
+  unlike $@, qr/\Q$secret\E/, '... without showing the file';
+
+  # the leaf alone, as a switch presents it
+  my $alone = SICK::Bundle->new( cert => $leaf->{cert_pem} );
+  ok !$alone->is_issued_by( $with->root_pem ), 'the certificate alone does not lead to the root';
+  ok $alone->is_issued_by( $with->root_pem, $with->intermediates_pem ), '... with the intermediates it does';
+};
+
+subtest 'a root file with the intermediate in it' => sub {
+  # what step itself says to such a file: "error decoding <file>: contains
+  # more than one PEM encoded block"
+  my $bundle = spew( $tmp.'/root-and-intermediate.pem', $root->{pem}.$inter->{pem} );
+  my $crowded = SICK::Issuer::StepCA->new( %ca, root => $bundle );
+  my $ok = eval { $crowded->root_pem; 1 };
+  ok !$ok, 'root_pem dies';
+  like $@, qr/^CA root '\Q$bundle\E' holds more than one certificate; step needs the root alone/, '... saying why';
+  like $@, qr/ca\.intermediates/, '... and where the intermediate belongs';
+  $ok = eval { $crowded->issue( {%spec} ); 1 };
+  ok !$ok, 'issue dies the same way';
+  is scalar( () = calls() ), 0, '... before step is called';
+};
+
 subtest 'issue: the command line' => sub {
   my $bundle = $issuer->issue( {%spec} );
   my ( $raw, @calls ) = calls();
@@ -152,14 +197,16 @@ subtest 'issue: the files in between' => sub {
 };
 
 subtest 'the CA refuses' => sub {
-  local $ENV{FAKE_STEP_EXIT}   = 7;
-  local $ENV{FAKE_STEP_STDERR} = "The request was forbidden by the certificate authority:\nrequested duration of 9528h0m0s is more than the authorized maximum certificate duration of 24h1m0s\n";
+  # the words of step 0.30.2; its progress lines come in front of them
+  local $ENV{FAKE_STEP_EXIT}   = 1;
+  local $ENV{FAKE_STEP_STDERR} = "The request was forbidden by the certificate authority: requested duration of 9528h1m0s is more than the authorized maximum certificate duration of 24h1m0s.\nRe-run with STEPDEBUG=1 for more info.\n";
 
   my $ok = eval { $issuer->issue( {%spec} ); 1 };
   my $error = $@;
   ok !$ok, 'issue dies';
-  like $error, qr/^step failed \(exit 7\): The request was forbidden by the certificate authority:/, 'step failed (exit N): <stderr>';
-  like $error, qr/more than the authorized maximum certificate duration/, '... with all of what step said';
+  like $error, qr/^step failed \(exit 1\): The request was forbidden by the certificate authority: requested duration of 9528h1m0s is more than the authorized maximum certificate duration of 24h1m0s\. at /,
+    'step failed (exit N): what step said, and nothing else';
+  unlike $error, qr/\e|\xe2\x9c\x94|Provisioner|STEPDEBUG/, '... without its colours, its progress lines and its hint';
   unlike $error, qr/\Q$secret\E/, '... and no password';
 
   my ( $raw, $call ) = calls();
@@ -171,16 +218,21 @@ subtest 'the CA refuses' => sub {
     san => 'DNS:switch.example.internal,DNS:switch.hq.example.org,IP:192.0.2.199' );
   $ok = eval { $issuer->sign( $request->{csr_pem}, {%spec} ); 1 };
   ok !$ok, 'sign dies';
-  like $@, qr/^step failed \(exit 7\): The request was forbidden/, '... the same way';
+  like $@, qr/^step failed \(exit 1\): The request was forbidden/, '... the same way';
+  calls();
+
+  local $ENV{FAKE_STEP_STDERR} = q{};
+  $ok = eval { $issuer->issue( {%spec} ); 1 };
+  like $@, qr/^step failed \(exit 1\): it did not say why at /, 'a step that fails with nothing but progress lines';
   calls();
 };
 
 subtest 'a wrong password' => sub {
   local $ENV{FAKE_STEP_EXIT}   = 1;
-  local $ENV{FAKE_STEP_STDERR} = "error decrypting provisioner key: failed to decrypt JWE: square/go-jose: error in cryptographic primitive\n";
+  local $ENV{FAKE_STEP_STDERR} = "failed to decrypt JWE: invalid password\n";
   my $ok = eval { $issuer->issue( {%spec} ); 1 };
   ok !$ok, 'issue dies';
-  like $@, qr/^step failed \(exit 1\): error decrypting provisioner key/, '... with the words of step';
+  like $@, qr/^step failed \(exit 1\): failed to decrypt JWE: invalid password at /, '... with the words of step';
   calls();
 };
 

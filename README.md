@@ -17,7 +17,8 @@ the device list, the decision, the connections to the devices and the run that
 ties them together. The core depends on core Perl and `YAML::PP`.
 
 > Status: early, not released. The command line, the `files` and `acmesh`
-> targets and `sick trust` are here; the Docker setup is being built.
+> targets, `sick trust` and a Docker Compose setup ([docker/](docker/README.md):
+> step-ca, SICK on a schedule, a page for the root certificate) are here.
 
 ## A minimal device list
 
@@ -26,6 +27,7 @@ ties them together. The core depends on core Perl and `YAML::PP`.
 ca:
   url: https://ca.example.internal:9000
   root: /etc/sick/root_ca.crt
+  intermediates: /etc/sick/intermediate_ca.crt
   provisioner: sick
   password_file: /etc/sick/provisioner.pw
 devices:
@@ -93,8 +95,23 @@ SICK is no daemon. Renewal is `sick run` in a timer or a cron job; a run
 changes nothing when everything is current.
 
 ```cron
-17 4 * * *  root  sick run && sick trust /srv/www/trust
+17 4 * * *  root  sick run; sick trust /srv/www/trust
 ```
+
+## With Docker
+
+[docker/](docker/README.md) is the whole thing in three containers: a step-ca
+that sets itself up at the first start, SICK on a schedule, and a small web
+server for the page of `sick trust`.
+
+```bash
+cd docker
+cp sick.example.yml sick.yml    # your devices
+docker compose up -d --build
+```
+
+Its README has the settings, what to know about the CA it makes, and the
+transcript of a run against a real switch.
 
 ## Installation
 
@@ -139,7 +156,7 @@ it behind.
 
 | Section | Keys |
 |---|---|
-| `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `provisioner`, `password_file`, `step`, `dir` |
+| `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `intermediates`, `provisioner`, `password_file`, `step`, `dir` |
 | `defaults` | `lifetime` (`397d`), `renew_before` (`30d`), `key` (`rsa2048`) |
 | `devices.<name>` | `type` and `names` (required), `host`, `port` (`443`), `lifetime`, `renew_before`, `key`, plus the options of the type |
 
@@ -148,6 +165,15 @@ Durations are a number with a unit: `397d`, `12h`, `45m`, `90s`. Key types are
 addresses as IP SANs. `host` and `port` are where SICK looks at the certificate;
 without `host` it is the first name. `ca.name` is what the CA is called on the
 page of `sick trust`.
+
+`ca.root` is the root certificate of the CA and nothing else: it is what `step`
+verifies the CA with, what a certificate has to lead back to, and what
+`sick trust` hands to clients. `ca.intermediates` is the intermediate
+certificate the CA signs with (step-ca: `certs/intermediate_ca.crt`). A
+step-ca never signs with its root, and many devices present their certificate
+without the intermediate – a switch has room for exactly one. Without
+`ca.intermediates` SICK cannot tell that such a certificate is its own: the
+device stays `foreign-ca` and is renewed on every run.
 
 Secrets are never in the list, only the paths of the files that hold them. An
 unknown key is an error with its place (`devices.switch: missing 'type'`), not
@@ -272,8 +298,10 @@ What the core expects of a target:
 
 - **`step-ca`** – `step ca certificate` / `step ca sign` against a JWK
   provisioner. The provisioner has to allow the lifetimes you ask for; step-ca
-  grants 24 hours unless its `maxTLSCertDuration` is raised. The password is
+  grants 24 hours unless its `maxTLSCertDuration` is raised
+  (`step ca provisioner update sick --x509-max-dur 19800h`). The password is
   handed to `step` as the path of its file and never appears on a command line.
+  Verified against step 0.30.2 and step-ca 0.30.2.
 - **`selfsigned`** – a throwaway CA in a directory, made with plain `openssl`.
   For tests and for trying SICK out, not for real devices.
 

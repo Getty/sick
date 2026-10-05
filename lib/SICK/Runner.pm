@@ -39,7 +39,9 @@ The one place where the parts meet. For every device of the list:
 =item 1. B<Check>
 
 The target of the device type says which certificate the device presents
-(L<SICK::Target/presented_cert>) and L<SICK::Decision> judges it. A device
+(L<SICK::Target/presented_cert>) and L<SICK::Decision> judges it against
+the root of the issuer, with the help of its intermediate certificates
+(L<SICK::Issuer/intermediates_pem>). A device
 that does not answer is C<unreachable>: nothing is known about it, and
 nothing is done to it.
 
@@ -293,6 +295,14 @@ sub _root_pem {
   return $self->{root_pem};
 }
 
+# Asked for with every look: an issuer may answer undef, and a file that
+# cannot be read is reported for every device.
+sub _intermediates_pem {
+  my ( $self ) = @_;
+  return undef unless $self->issuer->can('intermediates_pem');
+  return $self->issuer->intermediates_pem;
+}
+
 sub _target {
   my ( $self, $device ) = @_;
   my $name   = $device->name;
@@ -306,13 +316,15 @@ sub _target {
 sub _look {
   my ( $self, $device ) = @_;
   my $target    = $self->_target($device);
-  my $root_pem  = $self->_root_pem;
-  my $presented = $target->presented_cert;
-  my $decision  = SICK::Decision::evaluate(
-    device    => $device,
-    presented => $presented,
-    root_pem  => $root_pem,
-    now       => $self->{now}->(),
+  my $root_pem      = $self->_root_pem;
+  my $intermediates = $self->_intermediates_pem;
+  my $presented     = $target->presented_cert;
+  my $decision      = SICK::Decision::evaluate(
+    device            => $device,
+    presented         => $presented,
+    root_pem          => $root_pem,
+    intermediates_pem => $intermediates,
+    now               => $self->{now}->(),
   );
   return ( $target, $presented, $decision );
 }

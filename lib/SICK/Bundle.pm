@@ -248,9 +248,12 @@ certificate. The signature is not checked.
 =cut
 
 sub is_issued_by {
-  my ( $self, $ca_pem ) = @_;
+  my ( $self, $ca_pem, $intermediates_pem ) = @_;
   my @anchors = $self->_cert_blocks($ca_pem);
   croak 'is_issued_by needs the PEM certificate of a CA' unless @anchors;
+  my @between = $self->_cert_blocks($intermediates_pem);
+  croak 'is_issued_by: the intermediates are not PEM certificates'
+    if defined $intermediates_pem && $intermediates_pem =~ /\S/ && !@between;
 
   my $tmp     = SICK::Temp->dir;
   my $ca_file = $tmp->write( 'ca.pem',   join( q{}, @anchors ), 0644 );
@@ -262,8 +265,10 @@ sub is_issued_by {
   my @args = ( 'verify', '-no_check_time', '-CAfile', $ca_file );
   push @args, '-no-CApath'  if SICK::OpenSSL::major() >= 1;
   push @args, '-no-CAstore' if SICK::OpenSSL::major() >= 3;
-  push @args, '-untrusted', $tmp->write( 'chain.pem', $self->chain, 0644 )
-    if defined $self->chain;
+  # What helps to build the chain and is trusted for nothing: what the
+  # device sent along, and what the caller knows the CA signs through.
+  my $untrusted = join q{}, ( defined $self->chain ? $self->chain : () ), @between;
+  push @args, '-untrusted', $tmp->write( 'chain.pem', $untrusted, 0644 ) if length $untrusted;
   push @args, $cert;
 
   my ( $out, $err, $exit ) = SICK::OpenSSL::run(
@@ -275,12 +280,20 @@ sub is_issued_by {
 
 =method is_issued_by
 
-    my $bool = $bundle->is_issued_by($ca_pem);
+    my $bool = $bundle->is_issued_by($root_pem);
+    my $bool = $bundle->is_issued_by( $root_pem, $intermediates_pem );
 
 True when C<openssl verify> builds a chain from the certificate to the given
-CA, using the chain of the bundle for the steps in between. C<$ca_pem> is
-the root certificate; it may contain further trusted certificates, for
-example the intermediate of a CA whose devices do not send it along.
+CA. C<$root_pem> is the trust anchor: the root certificate.
+
+The steps in between come from the chain of the bundle and from
+C<$intermediates_pem>, the intermediate certificates of the CA as PEM
+(optional). The second source is for the certificate a device I<presents>:
+many devices - switches with one certificate per slot, for instance - send
+the certificate alone, and a CA like step-ca never signs with its root.
+Intermediates only help to build the chain. They are not trusted by
+themselves: a chain that does not end at C<$root_pem> fails, whatever is in
+there.
 
 Only the signatures count: the validity period is not checked, so an expired
 certificate of this CA is still issued by it. The trust store of the system

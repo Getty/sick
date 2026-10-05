@@ -13,6 +13,7 @@ A device list is the whole configuration:
     ca:
       url: https://ca.example.internal:9000
       root: /etc/sick/root_ca.crt
+      intermediates: /etc/sick/intermediate_ca.crt
       provisioner: sick
       password_file: /etc/sick/provisioner.pw
     defaults:
@@ -109,6 +110,10 @@ C<sick run> in a timer or a cron job.
 A certificate of an internal CA only helps on machines that trust that CA.
 C<sick trust> writes the root certificate in the forms clients want and a
 page that explains the installation per platform (L<SICK::Trust>).
+
+The F<docker/> directory of the repository puts the three together with
+Docker Compose: a step-ca that sets itself up on first start, SICK on a
+schedule, and a small web server for the page of C<sick trust>.
 
 The core distribution depends on core Perl and L<YAML::PP>, nothing else.
 The programs it calls - C<openssl>, C<step>, C<acme.sh> - are prerequisites

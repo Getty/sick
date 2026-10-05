@@ -1,0 +1,7 @@
+# The build context is the directory above the checkouts and may hold a lot
+# more than them. Nothing but what the Dockerfile copies gets in.
+*
+!sick/lib
+!sick/bin/sick
+!sick/docker/entrypoint.sh
+!sick-target-ciscosb/lib

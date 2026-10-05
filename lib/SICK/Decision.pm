@@ -14,10 +14,11 @@ our $VERSION = '0.001';
     use SICK::Decision;
 
     my $decision = SICK::Decision::evaluate(
-      device    => $device,                    # SICK::Device
-      presented => $target->presented_cert,    # SICK::Bundle or undef
-      root_pem  => $issuer->root_pem,
-      now       => time,
+      device            => $device,                      # SICK::Device
+      presented         => $target->presented_cert,      # SICK::Bundle or undef
+      root_pem          => $issuer->root_pem,
+      intermediates_pem => $issuer->intermediates_pem,   # or undef
+      now               => time,
     );
 
     if ( $decision->{renew} ) {
@@ -38,14 +39,15 @@ sub evaluate {
   my $device = $arg{device};
   croak 'evaluate needs a device' unless ref $device && eval { $device->can('names') };
   croak 'evaluate needs root_pem' unless defined $arg{root_pem} && length $arg{root_pem};
+  croak 'evaluate: intermediates_pem must be PEM text' if ref $arg{intermediates_pem};
   my $now       = defined $arg{now} ? $arg{now} : time;
   my $presented = $arg{presented};
 
   return _answer( 1, 'missing', 'the device presents no certificate' )
     unless defined $presented;
 
-  return _answer( 1, 'foreign-ca', 'issued by '.$presented->issuer_dn )
-    unless $presented->is_issued_by( $arg{root_pem} );
+  return _answer( 1, 'foreign-ca', 'issued by '._readable_dn( $presented->issuer_dn ) )
+    unless $presented->is_issued_by( $arg{root_pem}, $arg{intermediates_pem} );
 
   my ( $want_dns, $want_ip ) = SICK::Names::split_names( $device->names );
   my @differences = (
@@ -66,10 +68,11 @@ sub evaluate {
 =func evaluate
 
     my $decision = SICK::Decision::evaluate(
-      device    => $device,
-      presented => $bundle_or_undef,
-      root_pem  => $pem,
-      now       => $epoch,
+      device            => $device,
+      presented         => $bundle_or_undef,
+      root_pem          => $pem,
+      intermediates_pem => $pem_or_undef,
+      now               => $epoch,
     );
 
 Returns C<< { renew => 0|1, reason => $reason, detail => $text } >>. The
@@ -84,8 +87,13 @@ C<presented> is C<undef>: the device has no certificate to show.
 =item C<foreign-ca>
 
 The certificate is not issued by the CA of C<root_pem>
-(L<SICK::Bundle/is_issued_by>). C<root_pem> may hold the intermediate next
-to the root, for devices that do not send it along.
+(L<SICK::Bundle/is_issued_by>): no chain of signatures leads from it to that
+root. The chain is built from what the device sent along and from
+C<intermediates_pem>, the intermediate certificates of the CA
+(L<SICK::Issuer/intermediates_pem>). A CA like step-ca signs with an
+intermediate, and a device that presents its certificate alone would be
+C<foreign-ca> forever without them. C<detail> names the issuer; parts of
+its name that hold nothing but blanks are left out.
 
 =item C<names>
 
@@ -118,6 +126,24 @@ answer" is not "no certificate" (see L<SICK::Target/presented_cert>).
 sub _answer {
   my ( $renew, $reason, $detail ) = @_;
   return { renew => $renew, reason => $reason, detail => $detail };
+}
+
+# An RFC 2253 name for a table cell: without the relative names whose value
+# is nothing but blanks (some devices fill every field of a subject they
+# were not given, "C=\ \ ,O=\ "), and without the backslash in front of a
+# blank that stays.
+sub _readable_dn {
+  my ( $dn ) = @_;
+  return '(no name)' unless defined $dn && $dn =~ /\S/;
+  my @shown;
+  for my $rdn ( $dn =~ /((?:\\.|[^\\,])+)/sg ) {
+    my ( $type, $value ) = $rdn =~ /\A\s*([^=]+)=(.*)\z/s or next;
+    $value =~ s/\\ / /g;
+    $value =~ s/\A\s+//;
+    $value =~ s/\s+\z//;
+    push @shown, $type.'='.$value if length $value;
+  }
+  return @shown ? join( ',', @shown ) : '(a name of blanks)';
 }
 
 sub _difference {

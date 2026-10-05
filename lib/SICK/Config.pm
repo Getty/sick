@@ -18,7 +18,7 @@ our $VERSION = '0.001';
 
     my $config = SICK::Config->load('/etc/sick/sick.yml');
 
-    $config->ca;                 # { url => ..., root => ..., provisioner => ..., password_file => ... }
+    $config->ca;                 # { url => ..., root => ..., intermediates => ..., provisioner => ..., ... }
     $config->defaults;           # { lifetime => 34300800, renew_before => 2592000, key => 'rsa2048' }
 
     for my $device ( $config->devices ) {
@@ -36,6 +36,7 @@ The device list is the only configuration SICK has:
     ca:
       url: https://ca.example.internal:9000
       root: /etc/sick/root_ca.crt
+      intermediates: /etc/sick/intermediate_ca.crt
       provisioner: sick
       password_file: /etc/sick/provisioner.pw
     defaults:
@@ -59,9 +60,10 @@ The device list is the only configuration SICK has:
 =item C<ca>
 
 Where certificates come from. C<type> is C<step-ca> (the default) or
-C<selfsigned>; the other keys are C<url>, C<root>, C<provisioner>,
-C<password_file>, C<step> and C<dir>. Which of them are needed is decided by
-the issuer, see L<SICK::Issuer::StepCA> and L<SICK::Issuer::SelfSigned>.
+C<selfsigned>; the other keys are C<url>, C<root>, C<intermediates>,
+C<provisioner>, C<password_file>, C<step> and C<dir>. Which of them are
+needed is decided by the issuer, see L<SICK::Issuer::StepCA> and
+L<SICK::Issuer::SelfSigned>.
 
 C<name> is optional and for humans only: what the CA is called on the page
 and in the profile C<sick trust> writes (L<SICK::Trust>). Without it the
@@ -95,7 +97,7 @@ All scalars are read as plain text, so C<mode_key: 0600> stays C<0600>.
 =cut
 
 my @TOP_KEYS     = qw( ca defaults devices );
-my @CA_KEYS      = qw( type name url root provisioner password_file step dir );
+my @CA_KEYS      = qw( type name url root intermediates provisioner password_file step dir );
 my @DEFAULT_KEYS = qw( lifetime renew_before key );
 my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key );
 my @KEY_TYPES    = qw( rsa2048 rsa3072 rsa4096 ec256 );
