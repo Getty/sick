@@ -1,0 +1,130 @@
+# One Pod, three containers, as in docker/compose.yml: they share the volumes,
+# and "ca" is a name for localhost, so the device list reads the same.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sick
+  labels: { app: sick }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }        # the CA volume has one writer
+  selector:
+    matchLabels: { app: sick }
+  template:
+    metadata:
+      labels: { app: sick }
+    spec:
+      terminationGracePeriodSeconds: 30
+      hostAliases:
+        - ip: 127.0.0.1
+          hostnames: [ca]
+      containers:
+        # The CA. The official image; init-ca.sh makes the CA at the first
+        # start and starts step-ca as the user "step".
+        - name: ca
+          image: smallstep/step-ca:0.30.2
+          command: ["/bin/bash", "/usr/local/bin/init-ca.sh"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+            - { name: SICK_CA_NAME, value: "SICK Test CA" }
+            - { name: SICK_CA_DNS, value: "" }
+            - { name: SICK_CA_MAX_LIFETIME, value: "19800h" }
+          ports:
+            - { name: ca, containerPort: 9000 }
+          startupProbe:
+            exec:
+              command: [step, ca, health, --ca-url, "https://localhost:9000", --root, /home/step/certs/root_ca.crt]
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [step, ca, health, --ca-url, "https://localhost:9000", --root, /home/step/certs/root_ca.crt]
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 256Mi }
+          volumeMounts:
+            - { name: ca, mountPath: /home/step }
+            - { name: handover, mountPath: /handover }
+            - { name: scripts, mountPath: /usr/local/bin/init-ca.sh, subPath: init-ca.sh, readOnly: true }
+        # SICK: "sick run" every SICK_INTERVAL, "sick trust" after every run.
+        # It ends and is restarted until the CA has handed over its files.
+        - name: sick
+          image: sick:local
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          env:
+            - { name: SICK_INTERVAL, value: "1d" }
+            - { name: SICK_RUN_OPTIONS, value: "--verbose" }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/sick/sick.yml, subPath: sick.yml, readOnly: true }
+            - { name: secrets, mountPath: /etc/sick/secrets, readOnly: true }
+            - { name: handover, mountPath: /etc/sick/ca, readOnly: true }
+            - { name: state, mountPath: /var/lib/sick }
+            - { name: trust, mountPath: /srv/trust }
+            - { name: tmp, mountPath: /tmp }
+        # The page of "sick trust".
+        - name: trust
+          image: busybox:1.37
+          command: [httpd, -f, -v, -p, "8080", -h, /srv/trust, -c, /etc/httpd.conf]
+          securityContext:
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: trust, containerPort: 8080 }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          volumeMounts:
+            - { name: trust, mountPath: /srv/trust, readOnly: true }
+            - { name: scripts, mountPath: /etc/httpd.conf, subPath: httpd.conf, readOnly: true }
+      volumes:
+        - name: ca
+          persistentVolumeClaim: { claimName: sick-ca }
+        - name: state
+          persistentVolumeClaim: { claimName: sick-state }
+        # what the CA hands to SICK; written again at every start
+        - name: handover
+          emptyDir: {}
+        # output of "sick trust"
+        - name: trust
+          emptyDir: {}
+        # where a new key exists for a moment: memory only
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 16Mi }
+        - name: config
+          configMap: { name: sick-config }
+        - name: scripts
+          configMap: { name: sick-scripts }
+        # credentials of the devices: a Secret you make yourself, or none
+        - name: secrets
+          secret: { secretName: sick-secrets, optional: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ca
+spec:
+  selector: { app: sick }
+  ports:
+    - { name: ca, port: 9000, targetPort: ca }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trust
+spec:
+  selector: { app: sick }
+  ports:
+    - { name: trust, port: 8080, targetPort: trust }

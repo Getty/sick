@@ -1,0 +1,9 @@
+# What a test environment keeps: the CA and SICK's state. Apply once; removing
+# k8s/test leaves it alone.
+#
+#   kubectl apply -k k8s/daten
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-sick
+resources:
+  - volumes.yaml

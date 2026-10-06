@@ -1,0 +1,25 @@
+# SICK with its own CA as a test environment on Kubernetes: step-ca, sick on
+# a schedule and the trust page - the Compose setup of docker/ in one Pod.
+#
+#   kubectl apply -k k8s/daten     # once: the volumes that stay
+#   kubectl apply -k k8s/test      # start
+#   kubectl delete -k k8s/test     # stop; CA and state are kept
+#
+# The image "sick:local" is the one docker/Dockerfile builds; name yours with
+# "images:" in an overlay. See k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-sick
+resources:
+  - sick.yaml
+configMapGenerator:
+  # the device list
+  - name: sick-config
+    files:
+      - sick.yml
+  # copies of docker/init-ca.sh and docker/trust-httpd.conf; t/60-k8s.t
+  # fails when they differ from the originals
+  - name: sick-scripts
+    files:
+      - init-ca.sh
+      - httpd.conf=trust-httpd.conf

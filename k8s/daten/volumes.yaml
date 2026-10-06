@@ -1,0 +1,21 @@
+# The CA: keys, configuration, database. Whoever has this volume has the CA.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sick-ca
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+# known_hosts of ssh, and what a device of type "files" is given.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sick-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

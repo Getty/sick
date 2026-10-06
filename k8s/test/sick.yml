@@ -1,0 +1,15 @@
+# Device list of the test environment. One device that needs nothing but the
+# volume: its certificate lands in /var/lib/sick/probe. Replace it by yours,
+# or let an overlay replace the ConfigMap "sick-config".
+ca:
+  name: SICK Test CA
+  url: https://ca:9000
+  root: /etc/sick/ca/root_ca.crt
+  intermediates: /etc/sick/ca/intermediate_ca.crt
+  provisioner: sick
+  password_file: /etc/sick/ca/provisioner.pw
+devices:
+  probe:
+    type: files
+    names: [probe.example.internal]
+    dir: /var/lib/sick/probe
