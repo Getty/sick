@@ -1,0 +1,31 @@
+---
+class: standard
+completed: 2026-10-10T16:06:23Z
+created: 2026-10-10T06:04:05Z
+depends_on:
+- 4
+- 7
+- 8
+id: 9
+priority: medium
+started: 2026-10-10T16:06:23Z
+status: done
+tags:
+- stack
+- moo
+title: Convert SICK::CLI to Moo
+updated: 2026-10-10T16:06:34Z
+---
+
+SICK::CLI (309 lines) and bin/sick: check, run, trust.
+
+Done when:
+- Moo class;
+- the command line is unchanged: commands, options, the tables, the exit codes 0 / 1 / 2 (t/41-cli.t);
+- --config, then $SICK_CONFIG, then /etc/sick/sick.yml.
+
+Getopt::Long stays in this card. Whether the command line moves to MooX::Cmd or MooX::Options is the maintainer s decision and has its own card in the backlog.
+
+sick-worker: CLI converted (Moo; out/err/env attributes with builders, false args get the default as before; commands dispatched as methods). prove -lr t 172 PASS no skips; Cisco PASS; dzil test PASS (release test skipped). e2e not run: my operating rules forbid starting containers. Tree commit-ready, not moved.
+
+Committed as 6e00e02
