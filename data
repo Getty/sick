@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-10T23:35:53Z
+created: 2026-10-10T23:19:45Z
+id: 46
+priority: high
+started: 2026-10-10T23:20:42Z
+status: done
+tags:
+- acme
+- p6
+title: 'P6a ACME provisioner: serverAuth only, lifetimes chosen for the recovery budget'
+updated: 2026-10-10T23:36:05Z
+---
+
+init-ca.sh sets the ACME provisioner's template (serverAuth only) and lifetimes at every start: default 30 days (720h), max 90 days (2160h), both settable (SICK_CA_ACME_*); a short value for tests. Decision 2026-10-10 (orchestrator): ACME clients renew at about two thirds, so a 30-day certificate leaves about 10 days for a CA outage, matching chapter 1. Part of P6 (k16); binding 'done when': docs/roadmap.md, section P6.
+
+sick-worker: started. Plan: apply_settings in init-ca.sh also sets ACME provisioner 'acme' (template serverAuth only, min/default/max from SICK_CA_ACME_*), validated as Go durations with min<=default<=max; compose.yml, README, k8s copy; assertions plus a real ACME order in t/e2e/ca-ceremony.sh.
+
+sick-worker: init-ca.sh, compose.yml, README, k8s copy done; t/e2e/ca-ceremony.sh extended (step 7: ca.json, real ACME order via step http-01, EKU serverAuth only, 720h and 10m lifetimes, unchanged on restart, refusals) - ALL PASSED. Running the other e2e scripts and prove.
+
+sick-worker: ca-ceremony ALL PASSED (101 PASS), ca-recovery ALL PASSED, prove -lr t green without skips. ca-rollover and run-local were still running at handback: their results are not recorded, so the card stays in-progress until they are rerun.
+
+Committed as d0ef1f5
