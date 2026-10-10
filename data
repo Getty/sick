@@ -1,0 +1,25 @@
+---
+class: standard
+completed: 2026-10-10T21:25:52Z
+created: 2026-10-10T15:57:00Z
+id: 27
+priority: low
+started: 2026-10-10T21:00:13Z
+status: done
+tags:
+- pki
+- finding
+- decision
+title: 'Decide: a device whose deploy keeps failing gets a new certificate every run'
+updated: 2026-10-10T21:26:04Z
+---
+
+Finding from k7. A failed deploy or verification throws the issued certificate away; the next run issues again. Load on the CA and a growing number of valid certificates whose keys were never deployed (passive revocation cannot help, they simply live until expiry). Options: back off per device, revoke the discarded certificate (step ca revoke), or keep the candidate (means keeping a key). Related: _verify compares only the leaf fingerprint from SICK's own vantage point (one SNI name), not the chain the device sends or its other names - consistent with the design, worth stating in the handbook. Done when: decision recorded, implemented, tested.
+
+sick-worker: started. Decision by orchestrator: back-off per device (min(2^(n-1)h,24h)), --force overrides, no revocation (key only ever in SICK::Temp).
+
+sick-worker: implemented. Back-off min(2^(n-1)h,24h) per device for every failure after the decision to renew (csr, CA incl. CA down, key check, deploy, verify); deferred = exit 1; --force ignores; unchanged/renewed reset; unreachable/error change nothing. No revocation, reasoning in Runner POD, bin/sick, README. Note: with a daily timer the back-off only bites after ~5 failures and at 24h cap can skip every other day (timing coin-flip) - orchestrator to decide on a grace.
+
+sick-worker: grace of 15 min (orchestrator's decision): due when now >= next_attempt - 15 min; POD, README, bin/sick; tested in t/40 with the injected clock.
+
+Committed as 4499a46
