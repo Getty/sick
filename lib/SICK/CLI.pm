@@ -43,8 +43,9 @@ Commands:
   check    Show which certificate every device presents. Changes nothing.
   run      Renew what is due: check, issue, deploy, check again.
   trust    Write the certificates clients have to know - the root, and the
-           intermediate when the CA has one -, an Apple configuration
-           profile and a page with instructions into a directory.
+           intermediate and further roots when the CA has them -, an Apple
+           configuration profile and a page with instructions into a
+           directory.
 
 Options:
   -c, --config <file>  The device list. Default: $SICK_CONFIG, otherwise
@@ -226,9 +227,10 @@ sub _trust {
   my @files = eval {
     SICK::Trust->write(
       $args[0],
-      root_pem          => $issuer->root_pem,
-      intermediates_pem => $issuer->intermediates_pem,
-      name              => $config->ca_name,
+      root_pem             => $issuer->root_pem,
+      intermediates_pem    => $issuer->intermediates_pem,
+      additional_roots_pem => $issuer->additional_roots_pem,
+      name                 => $config->ca_name,
     );
   };
   return $self->_fail( $self->_message($@) ) unless @files;

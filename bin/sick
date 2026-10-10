@@ -112,6 +112,12 @@ certificate - is refused by a client that knows the root alone. The profile
 then carries the intermediate too, and the page says for each platform
 where it goes.
 
+During a replacement of the root, C<additional_roots> in the C<ca> section
+names the further roots - the next one before the switch, the previous one
+after it. They are written as C<root_ca_2.pem>, C<root_ca_2.crt> and so on,
+join the root in C<ca_bundle.pem> and the profile, and the page names the
+current root and lists the others.
+
 The CA is called by the C<name> of the C<ca> section, or by the common name
 of its root certificate.
 

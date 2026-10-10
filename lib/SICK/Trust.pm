@@ -20,8 +20,9 @@ our $VERSION = '0.001';
     my @files = SICK::Trust->write(
       '/srv/www/trust',
       root_pem          => $issuer->root_pem,
-      intermediates_pem => $issuer->intermediates_pem,    # or undef
-      name              => 'Example Internal CA',
+      intermediates_pem    => $issuer->intermediates_pem,       # or undef
+      additional_roots_pem => $issuer->additional_roots_pem,    # or undef
+      name                 => 'Example Internal CA',
     );
 
 On the command line:
@@ -70,6 +71,24 @@ place that keeps it without trust - Firefox and Chrome on Linux with nothing
 ticked, the store of intermediates of Windows, the keychain of macOS, the
 profile.
 
+While the CA replaces its root, clients have to trust more than one root
+for a while: the next one before the switch, the previous one after it
+(L<SICK::Issuer/additional_roots>). Each of these additional roots is
+published in the order it was given:
+
+    root_ca_2.pem          the first additional root as PEM
+    root_ca_2.crt          the same as DER
+    root_ca_3.pem, ...     the next one, and so on
+    ca_bundle.pem          the current root, the additional roots and the
+                           intermediates, in that order
+
+The profile carries each of them as a trusted root, and the page names the
+current root - the one in F<root_ca.pem> - lists the others with their
+fingerprints, says that they are roots of the same organisation during a
+replacement, to be installed the same way, and that the one no longer listed
+is to be removed once the replacement is over. Without additional roots
+nothing on the page or in the profile speaks of them.
+
 With more than one intermediate, F<intermediate_ca.pem> holds all of them
 in the order they were given, and each one has files of its own for the
 programs that take a single certificate: F<intermediate_ca_1.pem>,
@@ -90,9 +109,10 @@ Only certificates are published. No key is here and none ever was.
 my @FIRST = qw( root_ca.pem root_ca.crt );
 my @LAST  = qw( root_ca.mobileconfig index.html );
 
-# What write puts into a directory when the CA has intermediates - and what
-# it takes away again when the CA has fewer of them than last time.
-my $CHAIN_FILE = qr/\A(?:intermediate_ca(?:_[0-9]+)?\.(?:pem|crt)|ca_bundle\.pem)\z/;
+# What write puts into a directory when the CA has intermediates or
+# additional roots - and what it takes away again when the CA has fewer of
+# them than last time.
+my $CHAIN_FILE = qr/\A(?:intermediate_ca(?:_[0-9]+)?\.(?:pem|crt)|root_ca_[0-9]+\.(?:pem|crt)|ca_bundle\.pem)\z/;
 
 # The files of each single intermediate, without their extension.
 sub _single {
@@ -100,14 +120,23 @@ sub _single {
   return $count == 1 ? ('intermediate_ca') : map { 'intermediate_ca_'.$_ } 1 .. $count;
 }
 
+# The files of each additional root, without their extension: the current
+# root is root_ca, the first additional one root_ca_2.
+sub _additional {
+  my ( $count ) = @_;
+  return map { 'root_ca_'.$_ } 2 .. $count + 1;
+}
+
 sub files {
-  my ( $class, $count ) = @_;
+  my ( $class, $count, $roots ) = @_;
   $count = 0 unless defined $count && !ref $count && $count =~ /\A[0-9]+\z/;
-  return ( @FIRST, @LAST ) unless $count;
+  $roots = 0 unless defined $roots && !ref $roots && $roots =~ /\A[0-9]+\z/;
+  return ( @FIRST, @LAST ) unless $count || $roots;
   return (
     @FIRST,
+    ( map { ( $_.'.pem', $_.'.crt' ) } _additional($roots) ),
     ( $count > 1 ? 'intermediate_ca.pem' : () ),
-    ( map { ( $_.'.pem', $_.'.crt' ) } _single($count) ),
+    ( $count ? map { ( $_.'.pem', $_.'.crt' ) } _single($count) : () ),
     'ca_bundle.pem',
     @LAST,
   );
@@ -117,22 +146,25 @@ sub files {
 
     my @names = SICK::Trust->files;                   # a CA without intermediates
     my @names = SICK::Trust->files($intermediates);   # with that many
+    my @names = SICK::Trust->files( $intermediates, $additional_roots );
 
 The names of the files, in the order they are written: four without
-intermediates, seven with one. The page comes last, so that it never links
-to a file that is not there yet.
+intermediates, seven with one; the files of the additional roots come right
+after those of the root. The page comes last, so that it never links to a
+file that is not there yet.
 
 =cut
 
 sub write {
   my ( $class, $dir, %arg ) = @_;
   croak 'SICK::Trust->write needs a directory' unless defined $dir && !ref $dir && length $dir;
-  my @unknown = sort grep { !/\A(?:root_pem|intermediates_pem|name)\z/ } keys %arg;
+  my @unknown = sort grep { !/\A(?:root_pem|intermediates_pem|additional_roots_pem|name)\z/ } keys %arg;
   croak 'SICK::Trust->write: unknown argument \''.$unknown[0].'\'' if @unknown;
 
   my $root  = $class->_root( $arg{root_pem} );
   my $der   = $class->_der( $root, 'root' );
   my @chain = $class->_intermediates( $root, $arg{intermediates_pem} );
+  my @extra = $class->_additional_roots( $root, $arg{additional_roots_pem} );
 
   my $name = $arg{name};
   $name = $root->common_name unless defined $name && !ref $name && $name =~ /\S/;
@@ -153,46 +185,26 @@ sub write {
   croak 'the DER form of the root certificate does not have its fingerprint'
     unless sha256_hex($der) eq $fact{sha256};
 
-  my @single = _single( scalar @chain );
-  my @intermediates;
-  for my $i ( 0 .. $#chain ) {
-    my $cert     = $chain[$i];
-    my $cert_der = $class->_der( $cert, 'intermediate' );
-    croak 'the DER form of an intermediate certificate does not have its fingerprint'
-      unless sha256_hex($cert_der) eq $cert->fingerprint_sha256;
-    my $label = $cert->common_name;
-    $label = q{} unless defined $label;
-    $label =~ s/[\x00-\x1f\x7f]+/ /g;
-    $label =~ s/\A\s+//;
-    $label =~ s/\s+\z//;
-    push @intermediates, {
-      pem_file  => $single[$i].'.pem',
-      der_file  => $single[$i].'.crt',
-      pem       => $cert->cert,
-      der       => $cert_der,
-      label     => length $label ? $label : $name.' intermediate',
-      sha256    => $cert->fingerprint_sha256,
-      sha1      => sha1_hex($cert_der),
-      subject   => $cert->subject_dn,
-      not_after => strftime( '%Y-%m-%d %H:%M UTC', gmtime $cert->not_after )
-    };
-  }
+  my @single        = _single( scalar @chain );
+  my @intermediates = map { $class->_published( $chain[$_], 'intermediate', $single[$_], $name.' intermediate' ) } 0 .. $#chain;
+  my @additional    = _additional( scalar @extra );
+  my @roots         = map { $class->_published( $extra[$_], 'additional root', $additional[$_], $name.' root' ) } 0 .. $#extra;
 
   my %content = (
     'root_ca.pem'          => $root->cert,
     'root_ca.crt'          => $der,
-    'root_ca.mobileconfig' => $class->_profile( $der, %fact, intermediates => \@intermediates ),
-    'index.html'           => $class->_page( %fact, intermediates => \@intermediates )
+    'root_ca.mobileconfig' => $class->_profile( $der, %fact, intermediates => \@intermediates, roots => \@roots ),
+    'index.html'           => $class->_page( %fact, intermediates => \@intermediates, roots => \@roots )
   );
-  if (@intermediates) {
+  if ( @intermediates || @roots ) {
     $content{'intermediate_ca.pem'} = join q{}, map { $_->{pem} } @intermediates;
-    $content{'ca_bundle.pem'}       = $root->cert.$content{'intermediate_ca.pem'};
-    for my $intermediate (@intermediates) {
-      $content{ $intermediate->{pem_file} } = $intermediate->{pem};
-      $content{ $intermediate->{der_file} } = $intermediate->{der};
+    $content{'ca_bundle.pem'}       = join q{}, $root->cert, map { $_->{pem} } @roots, @intermediates;
+    for my $cert ( @roots, @intermediates ) {
+      $content{ $cert->{pem_file} } = $cert->{pem};
+      $content{ $cert->{der_file} } = $cert->{der};
     }
   }
-  my @files = $class->files( scalar @intermediates );
+  my @files = $class->files( scalar @intermediates, scalar @roots );
 
   unless ( Path::Tiny::path($dir)->is_dir ) {
     eval { Path::Tiny::path($dir)->mkdir( { mode => 0755 } ); 1 }
@@ -207,9 +219,10 @@ sub write {
 
     my @paths = SICK::Trust->write(
       $directory,
-      root_pem          => $pem,
-      intermediates_pem => $pem,    # optional
-      name              => $display_name,
+      root_pem             => $pem,
+      intermediates_pem    => $pem,    # optional
+      additional_roots_pem => $pem,    # optional
+      name                 => $display_name,
     );
 
 Writes the files into C<$directory>, which is created when it is missing,
@@ -229,19 +242,34 @@ the others if need be: this page tells people to install what it offers,
 so a certificate of some other CA is refused and not published. The root
 itself and a certificate that is given twice are passed over.
 
+C<additional_roots_pem> is what L<SICK::Issuer/additional_roots_pem>
+returns: further root certificates as PEM, during a replacement of the
+root, or C<undef> (or nothing but blanks) when there are none - the files
+are then exactly what they are without the argument. Each has to be a
+self-signed CA certificate; the root itself and a certificate that is given
+twice are passed over.
+
 C<name> is what the CA is called on the page and in the profile; without
 it, the common name of the root certificate.
 
-The files with the intermediates belong to this module (F<ca_bundle.pem>
-and everything called F<intermediate_ca.pem>, F<intermediate_ca.crt>,
-F<intermediate_ca_E<lt>nE<gt>.pem> or F<intermediate_ca_E<lt>nE<gt>.crt>):
-those an earlier call left in the directory and this one does not write
-are removed, so that a directory never offers the intermediate of a CA
-that has none any more. Nothing else in the directory is touched.
+The files with the intermediates and the additional roots belong to this
+module (F<ca_bundle.pem> and everything called F<intermediate_ca.pem>,
+F<intermediate_ca.crt>, F<intermediate_ca_E<lt>nE<gt>.pem>,
+F<intermediate_ca_E<lt>nE<gt>.crt>, F<root_ca_E<lt>nE<gt>.pem> or
+F<root_ca_E<lt>nE<gt>.crt>): those an earlier call left in the directory
+and this one does not write are removed, so that a directory never offers
+the intermediate of a CA that has none any more, nor a root whose
+replacement is over. Nothing else in the directory is touched.
 
 Croaks when C<root_pem> holds no root certificate or more than one, with
 C<< the intermediate certificate '<subject>' does not lead to the root
 certificate '<subject>' >> for an intermediate that is none of this CA,
+with C<< the intermediate certificate '<subject>' is not a CA certificate
+(basicConstraints does not say CA:TRUE) >> for one that leads to the root
+but is no CA - a device certificate of the root, which an issuer other than
+L<SICK::Issuer::StepCA> does not stop on its way here, with
+C<< the additional root certificate '<subject>' is not a self-signed CA
+certificate >> for an additional root that is none,
 and with C<< cannot write '<path>': <reason> >> when a file cannot be
 written. Nothing is written when the certificates are not in order.
 
@@ -265,7 +293,7 @@ sub _root {
 }
 
 # The certificates of intermediates_pem that are not the root, each one
-# once, each one leading to the root.
+# once, each one a CA and leading to the root.
 sub _intermediates {
   my ( $class, $root, $pem ) = @_;
   return unless defined $pem && !ref $pem && $pem =~ /\S/;
@@ -279,8 +307,53 @@ sub _intermediates {
     croak 'the intermediate certificate \''.$cert->subject_dn.'\' does not lead to the root certificate \''
       .$root->subject_dn.'\''
       unless !$cert->is_self_signed && $cert->is_issued_by( $root->cert, $all );
+    croak 'the intermediate certificate \''.$cert->subject_dn
+      .'\' is not a CA certificate (basicConstraints does not say CA:TRUE)'
+      unless $cert->is_ca;
   }
   return @chain;
+}
+
+# The certificates of additional_roots_pem that are not the root, each one
+# once, each one a root of its own: self-signed, of a CA.
+sub _additional_roots {
+  my ( $class, $root, $pem ) = @_;
+  return unless defined $pem && !ref $pem && $pem =~ /\S/;
+  my @blocks = $pem =~ /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/sg;
+  croak 'additional_roots_pem is not a PEM certificate' unless @blocks;
+
+  my %seen  = ( $root->fingerprint_sha256 => 1 );
+  my @roots = grep { !$seen{ $_->fingerprint_sha256 }++ } map { SICK::Bundle->new( cert => $_ ) } @blocks;
+  for my $cert (@roots) {
+    croak 'the additional root certificate \''.$cert->subject_dn.'\' is not a self-signed CA certificate'
+      unless $cert->is_self_signed && $cert->is_ca && $cert->signs_itself;
+  }
+  return @roots;
+}
+
+# What the page and the profile need of a certificate other than the root:
+# its files (without extension in $file), its forms and its facts.
+sub _published {
+  my ( $class, $cert, $what, $file, $fallback ) = @_;
+  my $der = $class->_der( $cert, $what );
+  croak 'the DER form of an '.$what.' certificate does not have its fingerprint'
+    unless sha256_hex($der) eq $cert->fingerprint_sha256;
+  my $label = $cert->common_name;
+  $label = q{} unless defined $label;
+  $label =~ s/[\x00-\x1f\x7f]+/ /g;
+  $label =~ s/\A\s+//;
+  $label =~ s/\s+\z//;
+  return {
+    pem_file  => $file.'.pem',
+    der_file  => $file.'.crt',
+    pem       => $cert->cert,
+    der       => $der,
+    label     => length $label ? $label : $fallback,
+    sha256    => $cert->fingerprint_sha256,
+    sha1      => sha1_hex($der),
+    subject   => $cert->subject_dn,
+    not_after => strftime( '%Y-%m-%d %H:%M UTC', gmtime $cert->not_after )
+  };
 }
 
 sub _der {
@@ -393,15 +466,21 @@ sub _profile {
   my ( $class, $der, %fact ) = @_;
   my $name  = _escape( $fact{name} );
   my @chain = @{ $fact{intermediates} || [] };
+  my @roots = @{ $fact{roots} || [] };
 
   # The identifier is what a device knows a profile by: it stays with the
   # root, so that the profile with the intermediate replaces the one
   # without. The UUID is that of this very content.
   my $profile_id   = _uuid( 'profile', $fact{sha256} );
-  my $profile_uuid = _uuid( 'profile', join q{ }, $fact{sha256}, map { $_->{sha256} } @chain );
+  my $profile_uuid = _uuid( 'profile', join q{ }, $fact{sha256}, map { $_->{sha256} } @roots, @chain );
   my $also         = !@chain ? q{}
     : @chain == 1 ? '. The intermediate certificate comes with it.'
     :               '. The '.@chain.' intermediate certificates come with it.';
+  $also = ( @roots == 1
+    ? '. For the time of a root replacement the further root certificate comes with it'
+    : '. For the time of a root replacement the '.@roots.' further root certificates come with it' )
+    .( length $also ? $also : '.' )
+    if @roots;
 
   my $payloads = _payload(
     type        => 'com.apple.security.root',
@@ -411,6 +490,14 @@ sub _profile {
     name        => $name,
     uuid        => _uuid( 'payload', $fact{sha256} ),
   );
+  $payloads .= _payload(
+    type        => 'com.apple.security.root',
+    file        => $_->{der_file},
+    der         => $_->{der},
+    description => 'Adds a further root certificate of '.$name.', for the time of a root replacement.',
+    name        => _escape( $_->{label} ),
+    uuid        => _uuid( 'payload', $_->{sha256} ),
+  ) for @roots;
   $payloads .= _payload(
     type        => 'com.apple.security.pkcs1',
     file        => $_->{der_file},
@@ -523,9 +610,9 @@ HTML
     ( $many
       ? '  <li>'.$link->('intermediate_ca.pem').' <span class="soft">&ndash; '.( @chain == 2 ? 'both' : 'all '.@chain )
         .' intermediate certificates in one file (PEM). Tools.</span></li>'."\n"
-      : () ),
-    '  <li>'.$link->('ca_bundle.pem').' <span class="soft">&ndash; the root and '.$the
-      .' in one file (PEM). Programs that take one file with their CAs, see <a href="#linux">Linux</a>.</span></li>'."\n";
+      : () );
+  $part->{BUNDLE} = '  <li>'.$link->('ca_bundle.pem').' <span class="soft">&ndash; the root and '.$the
+    .' in one file (PEM). Programs that take one file with their CAs, see <a href="#linux">Linux</a>.</span></li>'."\n";
 
   $part->{IOS} = <<"HTML";
 <p class="soft">The profile holds $the as well, as a plain certificate, so this one installation also covers the
@@ -585,6 +672,84 @@ HTML
   return;
 }
 
+# What the page says when the CA is replacing its root: the current root is
+# named as such, the others are listed with their fingerprints and files,
+# and the commands get a line for each. Called after _chain_parts, whose
+# words it extends.
+sub _roots_parts {
+  my ( $class, $t, $part, $roots, $count ) = @_;
+  my @roots = @$roots;
+  my $the   = !$count ? q{} : $count > 1 ? 'the intermediates' : 'the intermediate';
+  my @pem   = map { $_->{pem_file} } @roots;
+  my @der   = map { $_->{der_file} } @roots;
+  my $link  = sub { '<a href="'.$_[0].'" download>'.$_[0].'</a>' };
+  my $store = sub { my ( $file ) = @_; ( my $name = $file ) =~ s/\Aroot_ca_([0-9]+)\.pem\z/internal-root-ca-$1/; $name };
+
+  $t->{profile_holds} = ' with '.( @roots == 1 ? 'both roots' : 'all '.( @roots + 1 ).' roots' )
+    .( $count ? ' and '.$the : q{} );
+  $t->{terminal}     = $count ? 'the roots as PEM and '.$the.' as DER' : 'with the PEM files';
+  $t->{mac_more}     = join( q{}, map { "\nsudo security add-trusted-cert -d -r trustRoot \\\n  -k /Library/Keychains/System.keychain ".$_ } @pem )
+    .$t->{mac_more};
+  $t->{windows_more} = join( q{}, map { "\ncertutil -addstore -f Root ".$_ } @der ).$t->{windows_more};
+  $t->{check_more}   = join( q{}, map { "\nopenssl x509 -in ".$_.' -noout -fingerprint -sha256' } @pem ).$t->{check_more};
+
+  $part->{CURRENT} = <<'HTML';
+<p>This authority is replacing its root certificate, and for that time this page lists more than one. This is the
+<strong>current root</strong>, the one the certificates here lead to today:</p>
+HTML
+
+  $part->{ROOTS} = <<'HTML';
+<p>The further root certificates below are roots of the same organisation during a replacement: the next one before
+the switch, the previous one after it. Install them the same way as the current root, after the same comparison of the
+fingerprint. Once the replacement is over, remove the one that is no longer listed on this page.</p>
+HTML
+  $part->{ROOTS} .= join q{}, map {
+    my $subject = _escape( $_->{subject} );
+    my $sha1    = _colons( $_->{sha1} );
+    ( my $sha256 = _colons( $_->{sha256} ) ) =~ s/\A(.{47}):/$1:<br>/;
+    <<"HTML" } @roots;
+<dl>
+  <dt>Further root certificate</dt><dd>$subject</dd>
+  <dt>SHA-256 fingerprint</dt><dd class="mono">$sha256</dd>
+  <dt>SHA-1 fingerprint</dt><dd class="mono">$sha1</dd>
+  <dt>Valid until</dt><dd>$_->{not_after}</dd>
+</dl>
+HTML
+  $part->{ROOTS} .= "\n";
+
+  $part->{ROOTDOWNLOADS} = join q{}, map {
+    '  <li>'.$link->( $_->{der_file} ).' <span class="soft">&ndash; '._escape( $_->{label} )
+      .', a further root certificate, binary (DER). Windows, Android.</span></li>'."\n"
+      .'  <li>'.$link->( $_->{pem_file} ).' <span class="soft">&ndash; the same as text (PEM). Linux, Firefox, macOS, tools.</span></li>'."\n"
+  } @roots;
+
+  $part->{BUNDLE} = '  <li>'.$link->('ca_bundle.pem').' <span class="soft">&ndash; the current root'
+    .( $count ? ', ' : ' and ' ).( @roots == 1 ? 'the further root' : 'the further roots' )
+    .( $count ? ' and '.$the : q{} )
+    .' in one file (PEM). Programs that take one file with their CAs'
+    .( $count ? ', see <a href="#linux">Linux</a>' : q{} ).'.</span></li>'."\n";
+
+  $part->{IOS} = ( defined $part->{IOS} ? $part->{IOS} : q{} )
+    .( @roots == 1
+    ? '<p class="soft">The profile holds the further root as well. Switch on full trust for it in the same place,'
+    : '<p class="soft">The profile holds the further roots as well. Switch on full trust for each of them in the same place,' )
+    ."\nwhere ".( @roots == 1 ? 'it is' : 'they are' ).' listed by '.( @roots == 1 ? 'its name' : 'their names' ).".</p>\n";
+
+  $part->{LINUXROOTS} = '<p>Each further root goes in under a name of its own, so that it does not replace the current'
+    .' one. Debian, Ubuntu and relatives:</p>'."\n"
+    .'<pre>'.join( q{}, map { 'sudo cp '.$_.' /usr/local/share/ca-certificates/'.$store->($_).".crt\n" } @pem )
+    ."sudo update-ca-certificates</pre>\n"
+    ."<p>Fedora, RHEL, Rocky and relatives:</p>\n"
+    .'<pre>'.join( q{}, map { 'sudo cp '.$_.' /etc/pki/ca-trust/source/anchors/'.$store->($_).".pem\n" } @pem )
+    ."sudo update-ca-trust</pre>\n"
+    ."<p>With <code>p11-kit</code>:</p>\n"
+    .'<pre>'.join( "\n", map { 'sudo trust anchor --store '.$_ } @pem )."</pre>\n"
+    .'<p class="soft">Once the replacement is over, delete the file of the root this page no longer lists and run the'
+    ."\nupdate again; with <code>p11-kit</code>, <code>sudo trust anchor --remove</code> and that file.</p>\n";
+
+  return;
+}
+
 sub _page {
   my ( $class, %fact ) = @_;
   my $name    = _escape( $fact{name} );
@@ -608,6 +773,7 @@ sub _page {
   );
   my %part;
   $class->_chain_parts( \%t, \%part, @{ $fact{intermediates} } ) if @{ $fact{intermediates} || [] };
+  $class->_roots_parts( \%t, \%part, $fact{roots}, scalar @{ $fact{intermediates} || [] } ) if @{ $fact{roots} || [] };
 
   my $html = <<"HTML";
 <!DOCTYPE html>
@@ -656,6 +822,7 @@ certificate authority. Your browser warns about them until this device trusts th
 of that authority. Install it once and the warnings are gone.</p>
 
 <!--INTRO-->
+<!--CURRENT-->
 <dl>
   <dt>Certificate</dt><dd>$subject</dd>
   <dt>SHA-256 fingerprint</dt><dd class="mono">$sha256_html</dd>
@@ -668,12 +835,15 @@ of that authority. Install it once and the warnings are gone.</p>
 the fingerprint your device shows during the installation with the one above, and when you reached this
 page over a connection you have no reason to trust, ask the person who runs the authority for it.</p>
 
+<!--ROOTS-->
 <!--FACTS-->
 <h2 id="download">Download</h2>
 <ul class="downloads">
   <li><a href="root_ca.crt" download>root_ca.crt</a> <span class="soft">&ndash; binary (DER). Windows, Android.</span></li>
   <li><a href="root_ca.pem" download>root_ca.pem</a> <span class="soft">&ndash; text (PEM). Linux, Firefox, macOS, tools.</span></li>
+<!--ROOTDOWNLOADS-->
 <!--DOWNLOADS-->
+<!--BUNDLE-->
   <li><a href="root_ca.mobileconfig">root_ca.mobileconfig</a> <span class="soft">&ndash; configuration profile$t{profile_holds}. iPhone, iPad, Mac.</span></li>
 </ul>
 
@@ -741,6 +911,7 @@ sudo update-ca-certificates</pre>
 sudo update-ca-trust</pre>
 <p>Arch and others with <code>p11-kit</code>:</p>
 <pre>sudo trust anchor --store root_ca.pem</pre>
+<!--LINUXROOTS-->
 <p>Check the fingerprint of what you downloaded before you install it:</p>
 <pre>openssl x509 -in root_ca.pem -noout -fingerprint -sha256$t{check_more}</pre>
 <p class="soft">That covers <code>curl</code>, <code>git</code>, <code>wget</code> and most programs. Browsers keep

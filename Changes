@@ -118,3 +118,12 @@ Revision history for SICK
       provisioner "sick", hands the password to the sick service and reloads
       step-ca; t/e2e/ca-recovery.sh proves an isolated restore drill and the
       rotation.
+    - ca.additional_roots: further root certificates during a root
+      replacement (the next root before the switch, the previous one after
+      it), checked like ca.root; sick trust publishes them as
+      root_ca_2.pem/.crt..., in ca_bundle.pem after the root, in the profile
+      as trusted roots, and on the page next to the current root. step and
+      the judgement of devices do not use them.
+    - sick trust refuses an intermediate that is not a CA certificate
+      (CA:TRUE), naming its subject, instead of publishing a device
+      certificate of the root as intermediate.

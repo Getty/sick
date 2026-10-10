@@ -551,4 +551,219 @@ subtest 'intermediates that are none' => sub {
   }
 };
 
+subtest 'a certificate that is no CA is no intermediate' => sub {
+  # with an issuer other than StepCA nothing else stops a leaf of the root
+  my $root_leaf = new_cert( ca => $root, dir => $tmp, name => 'root-leaf', cn => 'leaf.example.internal' );
+  for my $case ( [ 'a leaf of the root', $root_leaf->{cert_pem} ], [ 'a leaf next to the intermediate', $inter->{pem}.$root_leaf->{cert_pem} ] ) {
+    my ( $what, $pem ) = @$case;
+    my $target = $tmp.'/badinter-noca-'.( $what =~ tr/a-z//cdr );
+    ok !eval { SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $pem ); 1 }, 'dies for '.$what;
+    like $@, qr/^the intermediate certificate 'CN=leaf\.example\.internal' is not a CA certificate \(basicConstraints does not say CA:TRUE\)/,
+      '... naming its subject and the reason';
+    ok !-e $target, '... and writes nothing';
+  }
+};
+
+#### a replacement of the root: further roots next to the current one
+
+my $next      = new_ca( dir => $tmp, name => 'next', cn => 'Example Internal Root CA 2' );
+my $previous  = new_ca( dir => $tmp, name => 'previous', cn => 'Example Internal Root CA 0' );
+my $next_leaf = new_cert( ca => $next, dir => $tmp, name => 'renewed', cn => 'renewed.example.internal',
+  san => 'DNS:renewed.example.internal' );
+my $next_facts     = SICK::Bundle->new( cert => $next->{pem} );
+my $previous_facts = SICK::Bundle->new( cert => $previous->{pem} );
+my $rollover       = $tmp.'/site/rollover';
+my @rollover_names = qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt ca_bundle.pem root_ca.mobileconfig index.html );
+my @rollover_paths;
+
+subtest 'with an additional root: its files and the bundle' => sub {
+  @rollover_paths = SICK::Trust->write( $rollover, root_pem => $root->{pem}, additional_roots_pem => $next->{pem},
+    name => 'Example Internal CA' );
+
+  is_deeply [ SICK::Trust->files( 0, 1 ) ], \@rollover_names, 'files(0, 1): the names with one additional root';
+  is_deeply [ SICK::Trust->files( 1, 0 ) ], [ SICK::Trust->files(1) ], 'files(1, 0) is files(1)';
+  is_deeply \@rollover_paths, [ map { $rollover.'/'.$_ } @rollover_names ], 'write returns the paths, the page last';
+  is_deeply files_in($rollover), [ sort @rollover_names ], 'exactly these files are there';
+  is sprintf( '%04o', ( stat $_ )[2] & 07777 ), '0644', $_ =~ s{.*/}{}r.' is readable for everybody' for @rollover_paths;
+
+  is raw( $rollover.'/'.$_ ), raw( $dir.'/'.$_ ), $_.' is the current root, as without an additional one' for qw( root_ca.pem root_ca.crt );
+  is slurp( $rollover.'/root_ca_2.pem' ), $next->{pem}, 'root_ca_2.pem is the additional root';
+  unlike raw( $rollover.'/root_ca_2.crt' ), qr/BEGIN CERTIFICATE/, 'root_ca_2.crt is not PEM';
+  is fingerprint_of_der( $rollover.'/root_ca_2.crt' ), $next_facts->fingerprint_sha256, '... but the same certificate in DER';
+  is slurp( $rollover.'/ca_bundle.pem' ), $root->{pem}.$next->{pem}, 'ca_bundle.pem is the current root followed by the additional one';
+
+  my ( $ok, $said ) = verifies( [ '-CAfile', $rollover.'/ca_bundle.pem' ], $next_leaf->{cert} );
+  ok $ok, 'a certificate of the next root validates with the bundle' or diag $said;
+  ( $ok, $said ) = verifies( [ '-CAfile', $rollover.'/root_ca_2.pem' ], $next_leaf->{cert} );
+  ok $ok, '... and with root_ca_2.pem' or diag $said;
+  ( $ok ) = verifies( [ '-CAfile', $rollover.'/root_ca.pem' ], $next_leaf->{cert} );
+  ok !$ok, 'a client with the current root alone refuses it';
+
+  my $target = $tmp.'/site/rollover-chained';
+  my @names  = qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt root_ca_3.pem root_ca_3.crt
+    intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig index.html );
+  my @paths = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem},
+    additional_roots_pem => $next->{pem}.$previous->{pem} );
+  is_deeply [ SICK::Trust->files( 1, 2 ) ], \@names, 'files(1, 2): the roots first, then the intermediate';
+  is_deeply \@paths, [ map { $target.'/'.$_ } @names ], '... and that is what write returns';
+  is_deeply files_in($target), [ sort @names ], '... and what is there';
+  is slurp( $target.'/root_ca_2.pem' ), $next->{pem},     'root_ca_2.pem is the first additional root';
+  is slurp( $target.'/root_ca_3.pem' ), $previous->{pem}, 'root_ca_3.pem the second';
+  is slurp( $target.'/ca_bundle.pem' ), $root->{pem}.$next->{pem}.$previous->{pem}.$inter->{pem},
+    'ca_bundle.pem: the current root, the additional ones in their order, then the intermediate';
+  is slurp( $target.'/intermediate_ca.pem' ), $inter->{pem}, 'intermediate_ca.pem is the intermediate alone';
+  ( $ok, $said ) = verifies( [ '-CAfile', $target.'/ca_bundle.pem' ], $leaf->{cert} );
+  ok $ok, 'the leaf under the intermediate still validates with the bundle' or diag $said;
+  unlike join( q{}, map { raw($_) } @rollover_paths, @paths ), qr/PRIVATE KEY/, 'no key in any of them';
+};
+
+subtest 'the profile carries each additional root as a root' => sub {
+  my $profile = slurp( $rollover.'/root_ca.mobileconfig' );
+  is xml_problem($profile), undef, 'well-formed XML';
+
+  my @payloads = $profile =~ m{<dict>\s*(<key>PayloadCertificateFileName</key>.*?)</dict>}sg;
+  is scalar @payloads, 2, 'two certificate payloads';
+  my %by_file;
+  for my $payload (@payloads) {
+    my ($type) = $payload =~ m{<key>PayloadType</key>\s*<string>([^<]+)</string>};
+    my ($data) = $payload =~ m{<key>PayloadContent</key>\s*<data>\s*(.*?)\s*</data>}s;
+    my ($file) = $payload =~ m{<key>PayloadCertificateFileName</key>\s*<string>([^<]+)</string>};
+    my ($name) = $payload =~ m{<key>PayloadDisplayName</key>\s*<string>([^<]+)</string>};
+    $by_file{ $file || q{} } = { type => $type, der => decode_base64( $data || q{} ), name => $name };
+  }
+  is_deeply [ sort keys %by_file ], [qw( root_ca.crt root_ca_2.crt )], 'one for root_ca.crt, one for root_ca_2.crt';
+  is $by_file{$_}{type}, 'com.apple.security.root', $_.' is a com.apple.security.root' for sort keys %by_file;
+  is $by_file{$_}{der}, raw( $rollover.'/'.$_ ), '... '.$_.' carries that file' for sort keys %by_file;
+  is $by_file{'root_ca_2.crt'}{name}, 'Example Internal Root CA 2', 'the additional root is called by its common name';
+  like $profile, qr{<key>PayloadDescription</key>\s*<string>Makes this device trust[^<]*root replacement[^<]*</string>},
+    'the description of the profile speaks of the replacement';
+
+  my ($alone_id)    = slurp( $dir.'/root_ca.mobileconfig' ) =~ m{<string>(sick\.trust\.[^<]+)</string>};
+  my ($rollover_id) = $profile =~ m{<string>(sick\.trust\.[^<]+)</string>};
+  is $rollover_id, $alone_id, 'the identifier stays with the current root: this profile replaces the one without';
+  my @uuids = $profile =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
+  my %distinct = map { $_ => 1 } @uuids;
+  is scalar keys %distinct, 3, 'three UUIDs, all different';
+  isnt $uuids[-1], ( slurp( $dir.'/root_ca.mobileconfig' ) =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g )[-1],
+    'the profile as a whole has another UUID than the one without';
+
+  my $chained_profile = slurp( $tmp.'/site/rollover-chained/root_ca.mobileconfig' );
+  is xml_problem($chained_profile), undef, 'with two additional roots and an intermediate: well-formed';
+  is scalar( () = $chained_profile =~ m{<string>com\.apple\.security\.root</string>}g ), 3, '... three roots';
+  is scalar( () = $chained_profile =~ m{<string>com\.apple\.security\.pkcs1</string>}g ), 1, '... and the intermediate';
+};
+
+subtest 'the page with an additional root' => sub {
+  my $page = slurp( $rollover.'/index.html' );
+  like $page, qr/\A<!DOCTYPE html>\n<html lang="en">/, 'an HTML page';
+  like $page, qr/<a href="\Q$_\E"/, 'a link to '.$_ for grep { $_ ne 'index.html' } @rollover_names;
+  my @references = $page =~ /(?:href|src|action)\s*=\s*"([^"]*)"/g;
+  my %written = map { $_ => 1 } @rollover_names;
+  is_deeply [ grep { !/\A#[a-z]+\z/ && !$written{$_} } @references ], [],
+    'every link leads to a section of the page or to a file that was written';
+  my %anchor = map { $_ => 1 } $page =~ /\bid="([a-z]+)"/g;
+  is_deeply [ grep { /\A#/ && !$anchor{ substr $_, 1 } } @references ], [], '... and every section that is linked exists';
+  unlike $page, qr/[ \t]\n|<!--|\n\n\n/, 'no trailing blanks, no placeholder, no hole';
+  unlike $page, qr/intermediate/i, 'no word about an intermediate the CA does not have';
+  like $page, qr/the current root and the further root in one file/, 'the bundle says what it holds';
+
+  ( my $shown = $page ) =~ s/<br>//g;
+  for my $facts ( $facts, $next_facts ) {
+    my $colons = join ':', map { uc } $facts->fingerprint_sha256 =~ /(..)/g;
+    like $shown, qr/\Q$colons\E/, 'the SHA-256 fingerprint of '.$facts->subject_dn;
+  }
+  like $page, qr/CN=Example Internal Root CA 2/, 'the subject of the additional root';
+  like $page, qr/<strong>current root<\/strong>[^<]*<\/p>\n<dl>\n  <dt>Certificate<\/dt><dd>CN=Example Internal Root CA<\/dd>/,
+    'the page says which one is the current root';
+  ( my $text = $page ) =~ s/\s+/ /g;
+  like $text, qr/roots of the same organisation during a replacement/, 'what the further roots are';
+  like $text, qr/install them the same way as the current root/i, '... how to install them';
+  like $text, qr/remove the one that is no longer listed on this page/, '... and what to do once the replacement is over';
+
+  my %section = map { /\A<h2 id="([a-z]+)">/ ? ( $1 => $_ ) : () } split /(?=<h2 id=")/, $page;
+  like $section{macos},   qr/add-trusted-cert -d -r trustRoot[^<]*root_ca\.pem\nsudo security add-trusted-cert -d -r trustRoot \\\n  -k \S+ root_ca_2\.pem/,
+    'macOS: the additional root is trusted as a root';
+  like $section{windows}, qr/certutil -addstore -f Root root_ca\.crt\ncertutil -addstore -f Root root_ca_2\.crt/,
+    'Windows: the additional root into the root store';
+  like $section{linux},   qr/openssl x509 -in root_ca_2\.pem -noout -fingerprint -sha256/, 'Linux: its fingerprint can be checked';
+  like $section{linux},   qr/internal-root-ca-2/, '... and it gets a file of its own in the system store';
+  like $section{ios},     qr/full trust for it in the same place/, 'iPhone: full trust for the further root of the profile';
+
+  my $chained_page = slurp( $tmp.'/site/rollover-chained/index.html' );
+  unlike $chained_page, qr/[ \t]\n|<!--|\n\n\n/, 'with an intermediate as well: no trailing blanks, no placeholder, no hole';
+  ( $shown = $chained_page ) =~ s/<br>//g;
+  for my $facts ( $facts, $next_facts, $previous_facts, $inter_facts ) {
+    my $colons = join ':', map { uc } $facts->fingerprint_sha256 =~ /(..)/g;
+    like $shown, qr/\Q$colons\E/, '... the SHA-256 fingerprint of '.$facts->subject_dn;
+  }
+  like $chained_page, qr/full trust for each of them in the same place/, '... full trust for each further root on the iPhone';
+  like $chained_page, qr/the current root, the further roots and the intermediate in one file/, '... and the bundle says what it holds';
+  like $chained_page, qr/certutil -addstore -f Root root_ca\.crt\ncertutil -addstore -f Root root_ca_2\.crt\ncertutil -addstore -f Root root_ca_3\.crt\ncertutil -addstore -f CA intermediate_ca\.crt/,
+    '... the roots into the root store, then the intermediate into its own';
+};
+
+subtest 'without an additional root nothing is different' => sub {
+  my %cases = ( 'undef' => undef, 'an empty string' => q{}, 'blank lines' => "\n \n", 'the root itself' => $root->{pem} );
+  for my $case ( sort keys %cases ) {
+    my $target = $tmp.'/noroots-'.( $case =~ tr/a-z//cdr );
+    my @paths  = SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $cases{$case}, name => 'Example Internal CA' );
+    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as additional_roots_pem: the four files';
+    is raw( $target.'/'.$_ ), raw( $dir.'/'.$_ ), '... '.$_.' byte for byte what it is without the argument' for SICK::Trust->files;
+
+    my $chained_target = $target.'-chained';
+    SICK::Trust->write( $chained_target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem},
+      additional_roots_pem => $cases{$case}, name => 'Example Internal CA' );
+    is raw( $chained_target.'/'.$_ ), raw( $chained.'/'.$_ ), '... with an intermediate: '.$_.' the same as without the argument' for @with;
+  }
+  unlike raw( $dir.'/index.html' ), qr/current root|root_ca_2|further root/i, 'the page of a CA with one root does not speak of others';
+};
+
+subtest 'writing twice with an additional root produces the same bytes' => sub {
+  my %before = map { $_ => raw($_) } @rollover_paths;
+  sleep 1;
+  SICK::Trust->write( $rollover, root_pem => $root->{pem}, additional_roots_pem => $next->{pem}, name => 'Example Internal CA' );
+  is raw($_), $before{$_}, $_ =~ s{.*/}{}r.' is byte for byte the same' for @rollover_paths;
+
+  my $again = $tmp.'/rollover-again';
+  SICK::Trust->write( $again, root_pem => $root->{pem}, name => 'Example Internal CA',
+    additional_roots_pem => "the next root\n".$next->{pem}.$root->{pem}."\n".$next->{pem} );
+  is_deeply files_in($again), [ sort @rollover_names ], 'the current root among them and a root given twice count once';
+  is raw( $again.'/'.$_ ), $before{ $rollover.'/'.$_ }, $_.' is the same' for @rollover_names;
+};
+
+subtest 'the files of additional roots go when the replacement is over' => sub {
+  my $target = $tmp.'/site/replaced';
+  SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $next->{pem}.$previous->{pem} );
+  spew( $target.'/robots.txt',       "User-agent: *\n" );
+  spew( $target.'/root_ca_9.crt',    "left by a replacement with more roots\n" );
+  spew( $target.'/root_ca_2.pem.bak', "somebody's copy\n" );
+
+  SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $next->{pem} );
+  is_deeply files_in($target), [ sort @rollover_names, 'robots.txt', 'root_ca_2.pem.bak' ],
+    'one additional root less: root_ca_3 and the stale numbered file are gone, files of others stay';
+
+  my @paths = SICK::Trust->write( $target, root_pem => $root->{pem} );
+  is_deeply files_in($target), [ sort SICK::Trust->files, 'robots.txt', 'root_ca_2.pem.bak' ],
+    'the key is removed again: no additional root and no bundle is offered any longer';
+  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the four files are returned';
+  is raw( $target.'/'.$_ ), raw( $tmp.'/unnamed/'.$_ ), '... '.$_.' that of a CA with one root' for SICK::Trust->files;
+};
+
+subtest 'additional roots that are none' => sub {
+  my $root_leaf = new_cert( ca => $root, dir => $tmp, name => 'root-leaf-2', cn => 'leaf2.example.internal' );
+  my %bad = (
+    'text that is no PEM' => [ "not a certificate\n", qr/^additional_roots_pem is not a PEM certificate/ ],
+    'an intermediate'     => [ $inter->{pem}, qr/^the additional root certificate 'CN=Example Internal Intermediate' is not a self-signed CA certificate/ ],
+    'a leaf'              => [ $root_leaf->{cert_pem}, qr/^the additional root certificate 'CN=leaf2\.example\.internal' is not a self-signed CA certificate/ ],
+    'one good, one not'   => [ $next->{pem}.$inter->{pem}, qr/^the additional root certificate 'CN=Example Internal Intermediate' is not/ ]
+  );
+  for my $case ( sort keys %bad ) {
+    my ( $pem, $message ) = @{ $bad{$case} };
+    my $target = $tmp.'/badroot-'.( $case =~ tr/a-z//cdr );
+    ok !eval { SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $pem ); 1 }, 'dies for '.$case;
+    like $@, $message, '... saying so';
+    ok !-e $target, '... and writes nothing';
+  }
+};
+
 done_testing;

@@ -63,9 +63,17 @@ The device list is the only configuration SICK has:
 
 Where certificates come from. C<type> is C<step-ca> (the default) or
 C<selfsigned>; the other keys are C<url>, C<root>, C<intermediates>,
-C<provisioner>, C<password_file>, C<step> and C<dir>. Which of them are
-needed is decided by the issuer, see L<SICK::Issuer::StepCA> and
-L<SICK::Issuer::SelfSigned>.
+C<additional_roots>, C<provisioner>, C<password_file>, C<step> and C<dir>.
+Which of them are needed is decided by the issuer, see
+L<SICK::Issuer::StepCA> and L<SICK::Issuer::SelfSigned>.
+
+All of them are plain values but C<additional_roots>: a list of paths of
+further root certificates during a replacement of the root, for every type
+of CA (L<SICK::Issuer/additional_roots>). Croaks with
+C<ca.additional_roots: must be a list of paths> for anything else, with
+C<< ca.additional_roots: '<path>' is listed twice >> and with
+C<< ca.additional_roots: '<path>' is ca.root >>; whether the files hold
+roots is checked when they are read.
 
 C<name> is optional and for humans only: what the CA is called on the page
 and in the profile C<sick trust> writes (L<SICK::Trust>). C<intermediates>
@@ -100,7 +108,7 @@ All scalars are read as plain text, so C<mode_key: 0600> stays C<0600>.
 =cut
 
 my @TOP_KEYS     = qw( ca defaults devices );
-my @CA_KEYS      = qw( type name url root intermediates provisioner password_file step dir );
+my @CA_KEYS      = qw( type name url root intermediates additional_roots provisioner password_file step dir );
 my @DEFAULT_KEYS = qw( lifetime renew_before key );
 my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key );
 my @KEY_TYPES    = qw( rsa2048 rsa3072 rsa4096 ec256 );
@@ -162,7 +170,7 @@ has path => ( is => 'ro', isa => Str, required => 1 );
 # reported by the checks below, with its place in the list.
 has _data => ( is => 'ro', init_arg => 'data', required => 1 );
 
-has ca       => ( is => 'lazy', isa => HashRef[ Maybe[Str] ], init_arg => undef );
+has ca       => ( is => 'lazy', isa => HashRef[ Maybe[ Str | ArrayRef[Str] ] ], init_arg => undef );
 has defaults => ( is => 'lazy', isa => HashRef[Str],          init_arg => undef );
 has _devices => ( is => 'lazy', isa => ArrayRef[ InstanceOf['SICK::Device'] ], init_arg => undef );
 has _by_name => ( is => 'lazy', isa => HashRef[ InstanceOf['SICK::Device'] ],  init_arg => undef );
@@ -195,7 +203,8 @@ The file the list was loaded from.
 
 =attr ca
 
-Hash reference with the C<ca> section as written: plain strings.
+Hash reference with the C<ca> section as written: plain strings, and
+C<additional_roots> as a reference to a copy of its list.
 
 =method ca_name
 
@@ -312,7 +321,7 @@ sub _build_ca {
   my ( $self ) = @_;
   my $ca = $self->_section( 'ca', $self->_data->{ca} );
   $self->_unknown( 'ca', $ca, @CA_KEYS );
-  for my $key ( sort keys %$ca ) {
+  for my $key ( sort grep { $_ ne 'additional_roots' } keys %$ca ) {
     $self->_fail( 'ca.'.$key, 'must be a plain value' ) if ref $ca->{$key};
   }
   if ( exists $ca->{name} ) {
@@ -321,7 +330,22 @@ sub _build_ca {
     $self->_fail( 'ca.name', 'must be one line of at most 100 characters' )
       if $name =~ /[\x00-\x1f\x7f]/ || length $name > 100;
   }
-  return { %$ca };
+  return { %$ca, ( defined $ca->{additional_roots} ? ( additional_roots => $self->_additional_roots($ca) ) : () ) };
+}
+
+# A list of paths, each one once, none of them the root.
+sub _additional_roots {
+  my ( $self, $ca ) = @_;
+  my $list = $ca->{additional_roots};
+  $self->_fail( 'ca.additional_roots', 'must be a list of paths' )
+    unless ref $list eq 'ARRAY' && !grep { !defined $_ || ref $_ || !length $_ } @$list;
+  my %seen;
+  for my $path (@$list) {
+    $self->_fail( 'ca.additional_roots', '\''.$path.'\' is listed twice' ) if $seen{$path}++;
+    $self->_fail( 'ca.additional_roots', '\''.$path.'\' is ca.root' )
+      if defined $ca->{root} && $path eq $ca->{root};
+  }
+  return [@$list];
 }
 
 sub _build_defaults {

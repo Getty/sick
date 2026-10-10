@@ -84,7 +84,9 @@ grafana  renewed    missing
   `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac) and an
   `index.html` with the fingerprints and the installation steps for Firefox,
   Chrome, Linux, macOS, Windows, iOS and Android. With `ca.intermediates` set
-  it adds `intermediate_ca.pem`, `intermediate_ca.crt` and `ca_bundle.pem`.
+  it adds `intermediate_ca.pem`, `intermediate_ca.crt` and `ca_bundle.pem`,
+  with `ca.additional_roots` set `root_ca_2.pem`, `root_ca_2.crt` … and
+  `ca_bundle.pem`.
   Put the directory behind a web server and send people the link. More
   [below](#what-clients-have-to-trust).
 
@@ -111,6 +113,7 @@ it. `sick trust` writes what they need, and one page that says where it goes.
 | File | |
 |---|---|
 | `root_ca.pem`, `root_ca.crt` | the root certificate, as PEM and as DER – what a client trusts |
+| `root_ca_2.pem`, `root_ca_2.crt`, … | the further roots of a root replacement (`ca.additional_roots`), each as PEM and as DER – trusted like the root for the time of the replacement |
 | `intermediate_ca.pem`, `intermediate_ca.crt` | the intermediate certificate – what a client has to know, not to trust |
 | `ca_bundle.pem` | root and intermediate in one PEM file, for programs that take one file: `curl --cacert ca_bundle.pem` |
 | `root_ca.mobileconfig` | a configuration profile for iPhone, iPad and Mac with the root as trusted root and the intermediate as a plain certificate: one installation |
@@ -166,6 +169,18 @@ and `intermediate_ca_1.pem`, `intermediate_ca_1.crt`, `intermediate_ca_2.pem`
 `ca.intermediates` there are the four files for the root and a page that
 speaks of the root alone. Writing twice produces the same bytes, so the
 command can follow every `sick run`.
+
+While the root itself is replaced, clients have to trust two roots for a
+while: the next one before the switch, so that they accept what the CA
+issues after it, and the previous one after the switch, until every device
+has its certificate from the new root. `ca.additional_roots` lists them, and
+`sick trust` publishes each as `root_ca_2.pem` and `root_ca_2.crt`,
+`root_ca_3.pem` … in the order of the list. `ca_bundle.pem` then holds the
+current root, the additional ones and the intermediates, in that order; the
+profile carries each as a trusted root; and the page names the current root,
+lists the others with their fingerprints and says to remove the one that is
+no longer listed once the replacement is over. When the key goes out of the
+list again, the next `sick trust` takes their files away.
 
 What of this has been tried: `openssl` with the bundle, with a directory of
 certificates, and with the root alone (the test suite, and a real switch in
@@ -245,7 +260,7 @@ it behind.
 
 | Section | Keys |
 |---|---|
-| `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `intermediates`, `provisioner`, `password_file`, `step`, `dir` |
+| `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `intermediates`, `additional_roots`, `provisioner`, `password_file`, `step`, `dir` |
 | `defaults` | `lifetime` (`397d`), `renew_before` (`30d`), `key` (`rsa2048`) |
 | `devices.<name>` | `type` and `names` (required), `host`, `port` (`443`), `lifetime`, `renew_before`, `key`, plus the options of the type |
 
@@ -265,6 +280,23 @@ without the intermediate – a switch has room for exactly one. Without
 device stays `foreign-ca` and is renewed on every run. And `sick trust` has no
 intermediate to hand to the clients, which then
 [refuse the device](#what-clients-have-to-trust) although they trust the root.
+
+`ca.additional_roots` is a list of paths of further root certificates, for
+the time of a root replacement: the next root before the switch, the previous
+one after it (either issuer type). Each file holds one self-signed CA
+certificate, and none is the root of the CA. They are published by
+`sick trust` and nothing else: `step` does not see them, and a device is not
+judged by them – a device whose certificate leads to an additional root only
+is `foreign-ca` and gets a new certificate, which after a switch is the
+re-issue under the new root.
+
+```yaml
+ca:
+  root: /etc/sick/root_ca.crt
+  intermediates: /etc/sick/intermediate_ca.crt
+  additional_roots:
+    - /etc/sick/root_ca_previous.crt
+```
 
 Secrets are never in the list, only the paths of the files that hold them. An
 unknown key is an error with its place (`devices.switch: missing 'type'`), not

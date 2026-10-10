@@ -3,14 +3,22 @@ package SICK::Issuer;
 
 use Moo;
 use Carp qw( croak );
+use SICK::Bundle;
 use SICK::Names;
 use SICK::OpenSSL;
+use Types::Standard qw( ArrayRef Str );
 use namespace::autoclean;
+
+# The key of the ca section that every issuer knows. Declared in a BEGIN
+# block: the two issuers below extend this class while the rest of this file
+# is not compiled yet, and take the attributes it has at that moment.
+BEGIN { has additional_roots => ( is => 'ro', isa => ArrayRef[Str], default => sub { [] } ) }
 
 # The two issuers of from_ca. Each extends this class, which is a Moo class
 # from the line above on, while the rest of this file is not compiled yet.
-# So: no has here, and no method modifier in a subclass that would wrap a
-# method of this class - either would be lost when this file loads first.
+# So: no has here outside of the BEGIN block above, and no method modifier
+# in a subclass that would wrap a method of this class - either would be
+# lost when this file loads first.
 use SICK::Issuer::SelfSigned;
 use SICK::Issuer::StepCA;
 
@@ -77,11 +85,23 @@ my %KEY = (
 sub attributes          { () }
 sub required_attributes { () }
 
+=attr additional_roots
+
+Optional, for every issuer. A list of paths of further root certificates
+that clients should trust B<during a replacement of the root>: the next
+root before the switch, the previous one after it. They are published by
+C<sick trust> next to the root (L<SICK::Trust>) and used for nothing else:
+C<step> does not see them, and L<SICK::Decision> does not judge a device by
+them. A device whose certificate leads to an additional root only is
+C<foreign-ca> and is renewed - after a switch that is the re-issue under the
+new root. See L</additional_roots_pem>.
+
 =method attributes
 
 The constructor arguments a subclass knows, the names of its C<has>
-declarations for the C<ca> section. The base class has none. Any other key
-is an error (see L</new>).
+declarations for the C<ca> section. The base class has none of its own;
+L</additional_roots> is known to every issuer and need not be listed. Any
+other key is an error (see L</new>).
 
 =method required_attributes
 
@@ -124,7 +144,11 @@ around BUILDARGS => sub {
   my ( $orig, $class, @args ) = @_;
   my %arg = %{ $class->$orig(@args) };
   delete @arg{qw( type name )};
-  my %known = map { $_ => 1 } $class->attributes;
+  croak 'ca.additional_roots: must be a list of paths'
+    if defined $arg{additional_roots}
+    && !( ref $arg{additional_roots} eq 'ARRAY'
+      && !grep { !defined $_ || ref $_ || !length $_ } @{ $arg{additional_roots} } );
+  my %known = map { $_ => 1 } 'additional_roots', $class->attributes;
   my @unknown = sort grep { !$known{$_} } keys %arg;
   croak 'ca: unknown key \''.$unknown[0].'\' for '.$class if @unknown;
   for my $required ( $class->required_attributes ) {
@@ -142,8 +166,10 @@ around BUILDARGS => sub {
 Takes the C<ca> section of the device list. C<type> is what selected the
 class and C<name> is for humans (L<SICK::Config/ca_name>); both are ignored
 here. Croaks with C<< ca: missing '<key>' >> when a
-required attribute is not given and with C<< ca: unknown key '<key>' ... >>
-for one the class does not know. An optional key that is empty or C<undef>
+required attribute is not given, with C<< ca: unknown key '<key>' ... >>
+for one the class does not know and with
+C<ca.additional_roots: must be a list of paths> when L</additional_roots>
+is something else. An optional key that is empty or C<undef>
 counts as not given, so its default applies.
 
 =cut
@@ -189,6 +215,54 @@ anchors. L<SICK::Decision> uses them to build the chain from a certificate
 to L</root_pem> when a device presents its certificate without them, and
 L<SICK::Trust> publishes them next to the root, because the clients of such
 a device are in the same position.
+
+=cut
+
+sub additional_roots_pem {
+  my ( $self ) = @_;
+  my @paths = @{ $self->additional_roots };
+  return undef unless @paths;
+  my $root = SICK::Bundle->new( cert => $self->root_pem );
+  my ( @pem, %seen );
+  for my $path (@paths) {
+    my $cert = $self->_certificates( $path, 'ca.additional_roots' );
+    my $what = 'ca.additional_roots \''.$path.'\'';
+    croak $what.' holds more than one certificate; name each root as an entry of its own'
+      if defined $cert->chain;
+    my $reason = $self->_not_a_root($cert);
+    croak $what.' is not a self-signed CA certificate: '.$reason if defined $reason;
+    croak $what.' is the root of this CA ('.$root->subject_dn.'); list only the next or the previous root'
+      if $cert->fingerprint_sha256 eq $root->fingerprint_sha256;
+    croak $what.' is the same certificate as \''.$seen{ $cert->fingerprint_sha256 }.'\''
+      if defined $seen{ $cert->fingerprint_sha256 };
+    $seen{ $cert->fingerprint_sha256 } = $path;
+    push @pem, $cert->cert;
+  }
+  return join q{}, @pem;
+}
+
+=method additional_roots_pem
+
+    my $pem = $issuer->additional_roots_pem;    # or undef
+
+The certificates of L</additional_roots> as PEM, in the order of the list,
+or C<undef> when there are none. What L<SICK::Trust> publishes as further
+roots; nothing else in SICK looks at them.
+
+Each file has to hold one self-signed CA certificate that is not the root
+of this CA (L</root_pem>), and no certificate may be listed twice. Croaks
+with C<< cannot read ca.additional_roots '<path>': <reason> >> when a file
+cannot be read, like L</root_pem> when the root is not in order, and with
+
+    ca.additional_roots '<path>' is not a PEM certificate
+    ca.additional_roots '<path>' holds more than one certificate; name each
+      root as an entry of its own
+    ca.additional_roots '<path>' is not a self-signed CA certificate: <reason>
+    ca.additional_roots '<path>' is the root of this CA (<subject>); list only
+      the next or the previous root
+    ca.additional_roots '<path>' is the same certificate as '<path>'
+
+the reason being one of those of L<SICK::Issuer::StepCA/root_pem>.
 
 =cut
 
@@ -271,5 +345,31 @@ its common name when it has none. For issuers whose CA takes the names from
 the request and not from the spec.
 
 =cut
+
+#### internals
+
+# The certificates of a file of the ca section, as a bundle; errors in the
+# words of the device list.
+sub _certificates {
+  my ( $self, $path, $what ) = @_;
+  my $bundle = eval { SICK::Bundle->from_files( cert => $path ) };
+  return $bundle if $bundle;
+  my $error = $@;
+  $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  $error =~ s/\Acannot read certificate file/cannot read $what/;
+  $error =~ s/\Acert is not a PEM certificate/$what '$path' is not a PEM certificate/;
+  croak $error;
+}
+
+# Why a certificate is no root - self-signed by name and by signature, of a
+# CA -, or undef when it is one.
+sub _not_a_root {
+  my ( $self, $cert ) = @_;
+  return
+      !$cert->is_self_signed ? 'issued by '.$cert->issuer_dn
+    : !$cert->is_ca          ? 'basicConstraints does not say CA:TRUE'
+    : !$cert->signs_itself   ? 'its signature does not verify with its own key'
+    :                          undef;
+}
 
 1;

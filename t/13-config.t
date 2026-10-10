@@ -216,6 +216,35 @@ subtest 'the name of the CA' => sub {
     qr/^list\.yml: ca\.name: must be one line of at most 100 characters/, 'a name that is too long';
 };
 
+subtest 'additional roots of a root replacement' => sub {
+  my $config = SICK::Config->load_string(
+    "ca:\n  root: /etc/sick/root_ca.crt\n  additional_roots:\n    - /etc/sick/root_ca_next.crt\n    - /etc/sick/root_ca_old.crt\n".$minimal,
+    'list.yml' );
+  is_deeply $config->ca->{additional_roots}, [ '/etc/sick/root_ca_next.crt', '/etc/sick/root_ca_old.crt' ],
+    'additional_roots is a list of paths, in the order of the file';
+  is $config->ca->{root}, '/etc/sick/root_ca.crt', '... next to the root, which stays a plain value';
+  is_deeply( SICK::Config->load_string( "ca:\n  additional_roots: []\n".$minimal, 'list.yml' )->ca->{additional_roots}, [],
+    'an empty list is no root at all' );
+  is( SICK::Config->load_string( "ca:\n  type: selfsigned\n  dir: /var/lib/sick/ca\n  additional_roots: [/etc/sick/r2.crt]\n".$minimal, 'list.yml' )
+    ->ca->{type}, 'selfsigned', 'the key is known whatever the type of the CA' );
+
+  my $list = "ca:\n  root: /etc/sick/root_ca.crt\n  additional_roots: ";
+  like error_of( $list."/etc/sick/root_ca_next.crt\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: must be a list of paths/, 'a single path that is no list';
+  like error_of( $list."{ next: /etc/sick/root_ca_next.crt }\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: must be a list of paths/, 'a mapping';
+  like error_of( $list."[ /etc/sick/a.crt, [ /etc/sick/b.crt ] ]\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: must be a list of paths/, 'a list inside the list';
+  like error_of( $list."[ /etc/sick/a.crt, '' ]\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: must be a list of paths/, 'an empty entry';
+  like error_of( $list."[ /etc/sick/a.crt, /etc/sick/a.crt ]\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: '\/etc\/sick\/a\.crt' is listed twice/, 'a path given twice';
+  like error_of( $list."[ /etc/sick/root_ca.crt ]\n".$minimal ),
+    qr/^list\.yml: ca\.additional_roots: '\/etc\/sick\/root_ca\.crt' is ca\.root/, 'the root itself';
+  like error_of( "ca:\n  root: [ /etc/sick/a.crt ]\n".$minimal ),
+    qr/^list\.yml: ca\.root: must be a plain value/, 'every other key of ca stays a plain value';
+};
+
 subtest 'invalid values' => sub {
   my $device = "devices:\n  ant:\n    type: files\n    names: [ant.example.internal]\n";
 

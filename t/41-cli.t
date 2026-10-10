@@ -310,6 +310,21 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   like $err, qr/^sick: cannot read ca\.intermediates '\Q$missing\E': \S.*\n\z/, '... with path and reason';
   is $out, q{}, '... no claim of success';
   ok !-e $tmp.'/trust/nothing', '... and nothing written';
+
+  # a root replacement: the next root is published, and only there
+  my $next = new_ca( dir => $pki, name => 'next', cn => 'Example Internal Root CA 2' );
+  ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->( additional_roots => '[ '.$next->{cert}.' ]' ) );
+  is $code, 0, 'a section with additional_roots: exit code 0';
+  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca_2.pem, root_ca_2.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to '.$dir."\n",
+    '... the additional root and the bundle as well';
+  is slurp( $dir.'/root_ca.pem' ),   $root->{pem}, 'root_ca.pem stays the root of the section';
+  is slurp( $dir.'/root_ca_2.pem' ), $next->{pem}, 'root_ca_2.pem is the additional root';
+
+  ( $code, $out, $err ) = cli( 'trust', $tmp.'/trust/selfroot', '--config', $section->( additional_roots => '[ '.$inter->{cert}.' ]' ) );
+  is $code, 1, 'an additional root that is none: exit code 1';
+  like $err, qr/^sick: ca\.additional_roots '\Q$inter->{cert}\E' is not a self-signed CA certificate: issued by \S.*\n\z/,
+    '... naming the key, the path and the reason';
+  ok !-e $tmp.'/trust/selfroot', '... and nothing written';
 };
 
 subtest 'the program' => sub {

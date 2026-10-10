@@ -281,19 +281,6 @@ The root itself may be in the file as well.
 
 #### internals
 
-# The certificates of a file of the ca section, as a bundle; errors in the
-# words of the device list.
-sub _certificates {
-  my ( $self, $path, $what ) = @_;
-  my $bundle = eval { SICK::Bundle->from_files( cert => $path ) };
-  return $bundle if $bundle;
-  my $error = $@;
-  $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
-  $error =~ s/\Acannot read certificate file/cannot read $what/;
-  $error =~ s/\Acert is not a PEM certificate/$what '$path' is not a PEM certificate/;
-  croak $error;
-}
-
 # The root as a bundle, after making sure it is one: a single certificate,
 # self-signed by name and by signature, of a CA.
 sub _root {
@@ -303,11 +290,7 @@ sub _root {
   croak 'ca.root \''.$path.'\' holds more than one certificate; step needs the root alone'
     .' - name the intermediate certificate as ca.intermediates'
     if defined $root->chain;
-  my $reason
-    = !$root->is_self_signed ? 'issued by '.$root->issuer_dn
-    : !$root->is_ca          ? 'basicConstraints does not say CA:TRUE'
-    : !$root->signs_itself   ? 'its signature does not verify with its own key'
-    :                          undef;
+  my $reason = $self->_not_a_root($root);
   croak 'ca.root \''.$path.'\' is not a self-signed CA certificate: '.$reason if defined $reason;
   return $root;
 }

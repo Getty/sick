@@ -410,4 +410,62 @@ subtest 'sign refuses a request with other names' => sub {
   like $@, qr/^not a PEM certificate request/, '... saying so';
 };
 
+subtest 'additional roots: published, not handed to step, checked like the root' => sub {
+  # the next root before the switch, the previous one after it
+  my $next = new_ca( dir => $tmp, name => 'next-root', cn => 'Fake Step Root 2' );
+  my $old  = new_ca( dir => $tmp, name => 'old-root',  cn => 'Fake Step Root 0' );
+
+  is_deeply $issuer->additional_roots, [], 'no additional roots unless configured';
+  is $issuer->additional_roots_pem, undef, '... and additional_roots_pem is undef then';
+
+  my $with = SICK::Issuer::StepCA->new( %ca, additional_roots => [ $next->{cert}, $old->{cert} ] );
+  is_deeply $with->additional_roots, [ $next->{cert}, $old->{cert} ], 'the paths as given';
+  is $with->additional_roots_pem, $next->{pem}.$old->{pem}, 'additional_roots_pem: the certificates, in the order of the list';
+  is $with->root_pem, $root->{pem}, '... and root_pem stays the root alone';
+  is $with->intermediates_pem, undef, '... and they are no intermediates';
+  is_deeply( SICK::Issuer::StepCA->new( %ca, additional_roots => [] )->additional_roots_pem, undef, 'an empty list is none' );
+
+  calls();
+  $with->issue( {%spec} );
+  my ( $raw, @calls ) = calls();
+  is scalar @calls, 1, 'issue calls step once';
+  is_deeply $calls[0]{flags}{'--root'}, [ $root->{cert} ], '... with the root as --root';
+  unlike $raw, qr/\Q$_\E/, '... and '.( $_ =~ s{.*/}{}r ).' nowhere on its command line' for $next->{cert}, $old->{cert};
+
+  my $ok = eval { SICK::Issuer::StepCA->new( %ca, additional_roots => $next->{cert} ); 1 };
+  ok !$ok, 'a path that is no list dies';
+  like $@, qr/^ca\.additional_roots: must be a list of paths/, '... in the words of the device list';
+  $ok = eval { SICK::Issuer::StepCA->new( %ca, additional_roots => [ $next->{cert}, [] ] ); 1 };
+  ok !$ok, 'a list with something else than a path in it dies';
+  like $@, qr/^ca\.additional_roots: must be a list of paths/, '... the same way';
+
+  my $missing   = $tmp.'/missing-root-2.crt';
+  my $crowded   = spew( $tmp.'/two-roots.pem', $next->{pem}.$old->{pem} );
+  my $root_copy = spew( $tmp.'/root-again.crt', $root->{pem} );
+  my $next_copy = spew( $tmp.'/next-again.crt', $next->{pem} );
+  my $lone_leaf = new_ca( dir => $tmp, name => 'lone-leaf-2', cn => 'lone2.example.internal', extensions => 'leaf_ext' );
+  my @cases = (
+    [ 'a missing file', [$missing], qr/^cannot read ca\.additional_roots '\Q$missing\E': \S/ ],
+    [ 'a file without a certificate', [$password_file],
+      qr/^ca\.additional_roots '\Q$password_file\E' is not a PEM certificate/ ],
+    [ 'a file with two certificates', [$crowded],
+      qr/^ca\.additional_roots '\Q$crowded\E' holds more than one certificate; name each root as an entry of its own/ ],
+    [ 'the intermediate', [ $inter->{cert} ],
+      qr/^ca\.additional_roots '\Q$inter->{cert}\E' is not a self-signed CA certificate: issued by CN=Fake Step Root(?: at |\z)/ ],
+    [ 'a self-signed leaf', [ $lone_leaf->{cert} ],
+      qr/^ca\.additional_roots '\Q$lone_leaf->{cert}\E' is not a self-signed CA certificate: basicConstraints does not say CA:TRUE(?: at |\z)/ ],
+    [ 'the root under another name', [$root_copy],
+      qr/^ca\.additional_roots '\Q$root_copy\E' is the root of this CA \(CN=Fake Step Root\); list only the next or the previous root(?: at |\z)/ ],
+    [ 'one root twice under two names', [ $next->{cert}, $next_copy ],
+      qr/^ca\.additional_roots '\Q$next_copy\E' is the same certificate as '\Q$next->{cert}\E'(?: at |\z)/ ],
+  );
+  for my $case (@cases) {
+    my ( $what, $paths, $message ) = @$case;
+    my $ok = eval { SICK::Issuer::StepCA->new( %ca, additional_roots => $paths )->additional_roots_pem; 1 };
+    ok !$ok, 'additional_roots_pem dies for '.$what;
+    like $@, $message, '... naming ca.additional_roots, the path and the reason';
+    unlike $@, qr/\Q$secret\E/, '... without showing a file' if $what eq 'a file without a certificate';
+  }
+};
+
 done_testing;
