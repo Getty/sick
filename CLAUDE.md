@@ -11,10 +11,12 @@ no `-j`), `dzil build`, `dzil test`. Never `dzil release` without explicit permi
 
 ## Rules of this repo
 
-- **Runtime dependencies: core Perl plus `YAML::PP`. Nothing else.** No Moo, no LWP, no
-  SSH module, no Path::Tiny, no Try::Tiny. Classes are plain `bless`. Tests use
-  `Test::More` and core modules only. A device type that needs more is its own
-  distribution (`SICK-Target-*`).
+- **Perl follows the house rules** (skills `getty-perl-core`, `getty-perl-moo`): Moo for
+  classes, `Path::Tiny` for files, `JSON::MaybeXS` for JSON, and what CPAN already has is
+  taken from there. The code does not look like that yet: the first build ran on "core
+  Perl plus `YAML::PP`, plain `bless`", a rule the maintainer never gave. New code
+  follows the house rules; existing modules are converted one by one, on cards.
+- **A device type is its own distribution** (`SICK-Target-*`), with its own dependencies.
 - **X.509 goes through the `openssl` CLI** (`SICK::OpenSSL`), never a Perl X.509 module.
 - **No shell.** Every external program is started through `SICK::Command::run`
   (fork + list-form `exec`). The one exception is a `reload` given as a single string
@@ -28,6 +30,22 @@ no `-j`), `dzil build`, `dzil test`. Never `dzil release` without explicit permi
 - **`# ABSTRACT:` lines are plain ASCII**; every file under `lib/` and `bin/` carries its
   own `our $VERSION`.
 - Tests talk to `127.0.0.1` only. No test touches a real device or a real CA.
+
+## Delegation
+
+Delegate behavior-relevant code to the right agent instead of touching it yourself — the
+principle, the lanes and this repo's hazards are in `.claude/rules/sick-rules.md`.
+
+| Task | Agent |
+|---|---|
+| Implement / refactor / debug anything under `lib/`, `bin/`, `docker/`, `k8s/` | `sick-worker` (default) |
+| Write or extend tests in `t/` | `sick-test-writer` |
+| Commits, `Changes`, card → done, pre-release audit | `sick-release-manager` |
+
+The agents carry their conventions via `briefing.skills` (see `.claude/agents/`); the main
+agent delegates rather than loading them. `.claude/skills/sick-core` holds the internals
+and is this repo's own; the other skills there are installed by skilletor
+(`.claude/skilletor.json`) and are changed in their source, never here.
 
 ## Layout
 
