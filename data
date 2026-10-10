@@ -1,0 +1,30 @@
+---
+class: standard
+completed: 2026-10-10T15:26:06Z
+created: 2026-10-10T06:03:44Z
+depends_on:
+- 1
+id: 4
+priority: medium
+started: 2026-10-10T15:26:06Z
+status: done
+tags:
+- stack
+- moo
+- path-tiny
+title: Convert SICK::Config to Moo on Path::Tiny
+updated: 2026-10-10T15:26:17Z
+---
+
+SICK::Config (387 lines): the device list.
+
+Done when:
+- Moo class; load and load_string build it; path, ca, ca_name, defaults, devices, device as before;
+- the file is read through Path::Tiny;
+- read_secret keeps its exact message: cannot read secret file <path>: <reason of the system>. Path::Tiny has error messages of its own; the one a user sees here stays ours, and it never carries anything from the file;
+- unknown keys stay an error with their path (devices.grafana: unknown key ...), in the same words: t/13-config.t pins them;
+- YAML::PP stays the reader.
+
+Config is Moo on Path::Tiny: path Str, _data (init_arg data, untyped), lazy ca/defaults/_devices/_by_name forced in BUILD in file order; load and read_secret read through Path::Tiny with our own message (path + system reason only). prove -lr t, Cisco suite green; t/e2e/run-local.sh ALL PASSED (image with libpath-tiny-perl, libtype-tiny-perl built).
+
+Committed: 36b082f. t/e2e/run-local.sh ALL PASSED (per worker); proves the k1/k2 Dockerfile packages build
