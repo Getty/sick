@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-10-10T15:43:01Z
+created: 2026-10-10T06:03:49Z
+depends_on:
+- 2
+- 3
+id: 5
+priority: medium
+started: 2026-10-10T15:43:01Z
+status: done
+tags:
+- stack
+- moo
+- path-tiny
+title: 'Convert the issuers to Moo: SICK::Issuer, StepCA, SelfSigned'
+updated: 2026-10-10T15:53:30Z
+---
+
+The hierarchy moves in one card, because a base class and its subclasses cannot be half Moo: SICK::Issuer (255 lines), SICK::Issuer::StepCA (311), SICK::Issuer::SelfSigned (280).
+
+Today a subclass lists its constructor arguments in attributes / required_attributes and the base class checks them by hand in new.
+
+Done when:
+- the three are Moo classes (extends), the arguments are has declarations;
+- the messages a user of the device list sees stay: ca: unknown key <key> for <class> and ca: missing <key>. The default Moo message for a missing argument is not an acceptable replacement, and an unknown key must stay an error;
+- from_ca loads its two classes with use at the top: both are known when the file is written, the require inside the method goes;
+- file handling goes through Path::Tiny and SICK::Temp; a key is written under umask 077 as before;
+- the step command line is unchanged, argument for argument: t/21-issuer-stepca.t reads back what t/bin/fake-step recorded. Read the header of the fake first;
+- t/20-issuer-selfsigned.t and t/21-issuer-stepca.t green, skips named.
+
+sick-worker: issuers converted (Moo, extends, has; ca: checks in base around BUILDARGS with the old messages; from_ca uses both classes at the top; Path::Tiny in StepCA/SelfSigned). prove -lr t 172 tests PASS, no skips; Cisco suite PASS (90-live skipped, no live vars). Tree commit-ready, not moved.
+
+Committed as 52e3050
+
+Follow-up fix in acb7a3f: SelfSigned publishes with rename, not Path::Tiny move (regression of 52e3050)
