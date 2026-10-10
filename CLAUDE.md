@@ -9,6 +9,18 @@ Build and test: `prove -lr t` while iterating (`-r` — the suite is serial on p
 no `-j`), `dzil build`, `dzil test`. Never `dzil release` without explicit permission.
 `LICENSE` is committed (`dzil genlicense`); `[@Author::GETTY]` gathers tracked files only.
 
+Environment on agent-lab, in every shell (also for `karr`, which otherwise dies with
+`Can't locate App/karr/SyncGuard.pm`):
+
+```bash
+eval "$(perl -I$HOME/perl5/lib/perl5 -Mlocal::lib)"
+export PATH=$HOME/.local/bin:$PATH      # step, step-ca, acme.sh, xmllint
+```
+
+`t/e2e/install-tools.sh` puts step, step-ca and acme.sh there in pinned, checksummed
+versions; with them `prove -lr t` runs without a skip. `xmllint` (for `t/50-trust.t`)
+was unpacked by hand from Debian's `libxml2-utils` (`apt-get download`, `dpkg -x`).
+
 ## Rules of this repo
 
 - **Perl follows the house rules** (skills `getty-perl-core`, `getty-perl-moo`): Moo for
@@ -61,14 +73,18 @@ t/NN-*.t                       10s core, 20s issuers, 30s targets and decision
 t/bin/fake-step                stand-in for the step CLI, modelled on step 0.30.2
 docker/                        compose.yml (ca, sick, trust), Dockerfile, init-ca.sh, entrypoint.sh
 t/e2e/run-lab.sh               the Docker setup against a real switch; changes the switch
+t/e2e/run-local.sh             the same proof with Docker only: web container as device, project sick-e2e, 127.0.0.1
+t/e2e/install-tools.sh         step, step-ca, acme.sh in pinned versions into ~/.local (no sudo)
 ```
 
 ## Docker
 
 - The image is built from the directory above this checkout: it needs
   `../sick-target-ciscosb` as well. `docker/Dockerfile.dockerignore` is an allow list.
-- No Docker on the development machine: build and run on a Docker host
-  (`t/e2e/run-lab.sh` there). `prove` never starts a container.
+- `prove` never starts a container. agent-lab has Docker: `t/e2e/run-local.sh` is the
+  end-to-end proof there (project `sick-e2e`, ports on 127.0.0.1, torn down at exit).
+  Other people's containers run on that host: touch nothing that is not `sick-*`, no
+  `prune`. `t/e2e/run-lab.sh` changes a real switch and is not run unasked.
 - Secrets reach containers as files in volumes. Nothing secret in the
   environment, in an image layer, in `docker/README.md` or in the e2e script.
 - `docker/README.md` ends with the transcript of an e2e run. Names and addresses

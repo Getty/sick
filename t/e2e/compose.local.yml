@@ -1,0 +1,39 @@
+# Added to docker/compose.yml by t/e2e/run-local.sh (docker compose -f ... -f this file).
+# The shipped file stays as it is; this one only adds the "device": a
+# container, "web", that serves over TLS whatever a files device writes into
+# a shared volume, and the volume itself.
+#
+# SICK_E2E_HERE is the directory of this file (set by the script), SICK_IMAGE
+# the image the base file builds: it has openssl and a shell, which is all
+# "web" needs.
+
+services:
+
+  sick:
+    volumes:
+      # the dir of the files device
+      - devfiles:/srv/device
+
+  web:
+    image: ${SICK_IMAGE:-sick:local}
+    pull_policy: never
+    init: true
+    stop_grace_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/usr/local/bin/web-serve.sh"]
+    tmpfs:
+      - /tmp:mode=0700,size=4m
+    volumes:
+      - devfiles:/srv/device:ro
+      - ${SICK_E2E_HERE:?set by run-local.sh}/web-serve.sh:/usr/local/bin/web-serve.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:443 </dev/null >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+volumes:
+  devfiles:
