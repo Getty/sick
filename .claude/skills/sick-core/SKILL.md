@@ -121,6 +121,12 @@ regression:
   (`SICK::Temp::write`). `Path::Tiny`'s `spew` writes a temporary file and
   renames it with a mode from the umask, so for a moment the key exists with
   wider permissions.
+- **A finished file is published with CORE `rename`, not `Path::Tiny->move`.**
+  `move` is `File::Copy::move`: when `rename` fails it copies – not atomic,
+  and the copy gets a mode from the umask – and when the destination is a
+  directory it moves the file into it. Written next to the destination
+  (`tempfile` in the same directory, mode set before content, `append_raw`),
+  then `rename`d.
 - **What goes to an external program is a plain string.** `SICK::Temp` hands
   out `path` and `file` as strings, and `SICK::Command::run` refuses anything
   in `@argv` that is a reference. Do not teach it to accept objects that
