@@ -1,0 +1,24 @@
+---
+class: standard
+created: 2026-10-10T06:04:29Z
+id: 11
+priority: medium
+status: backlog
+tags:
+- stack
+- decision
+- needs-maintainer
+title: 'Decide: which hand-written plumbing gives way to CPAN'
+updated: 2026-10-10T06:04:29Z
+---
+
+A question for the maintainer, not work for an agent. His instruction on 2026-10-05 was "gern soviel von anderen nehmen wie möglich"; the first build wrote these itself, under the core-only rule that is now gone. k1 to k9 only cover Moo, Path::Tiny and JSON::MaybeXS, which he named. For each item below: keep, or replace, and with what. Every "replace" becomes a card of its own.
+
+- SICK::Command (217 lines): fork, list-form exec, select loop, timeout, env, umask. The property that matters is that no shell ever sees an argument.
+- SICK::CLI (309 lines): Getopt::Long and a hand-written dispatch for check / run / trust. karr uses MooX::Cmd for the same job.
+- SICK::Target::class_for: finds plugins by reading SICK/Target/ in every @INC directory.
+- SICK::Names (178 lines): tells host names from IPv4 and IPv6 addresses, splits and compares them.
+- SICK::Duration (56 lines): parses 397d, 30d.
+- The rule "X.509 goes through the openssl CLI, never a Perl X.509 module" (CLAUDE.md), which also puts presented_cert on openssl s_client. It comes from the same design pass as the core-only rule; the maintainer has neither confirmed nor rejected it.
+
+Nothing here is a recommendation. The list is what was hand-written, with its size.
