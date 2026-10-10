@@ -19,6 +19,14 @@
 # and the provisioner password over to the sick service, and starts step-ca.
 # A start that finds everything as it should be changes nothing.
 #
+# Rotating the provisioner, on the running CA:
+#
+#   docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --rotate-provisioner
+#
+# replaces key pair and password of the JWK provisioner, hands the new
+# password over and has step-ca reload (SIGHUP). Tokens signed with the old
+# key are refused from then on.
+#
 #   SICK_CA_IMPORT_DIR    the directory to import at the first start
 #                         (default $STEPPATH/import); it holds
 #                           root_ca.crt          the root certificate
@@ -136,9 +144,16 @@ initialise() {
   jq -e --arg name "$provisioner" '.authority.provisioners[]? | select(.type == "JWK" and .name == $name)' "$config" >/dev/null \
     || die "the CA has no JWK provisioner '$provisioner' (step ca provisioner add $provisioner --type JWK --create)"
 
-  # The settings this script owns: lifetime and template of the provisioner,
-  # the policy. step-ca reads them at start.
-  local allow_dns allow_ip wanted
+  apply_settings "$config"
+
+  log "root fingerprint (SHA-256): $(step certificate fingerprint "$root_cert")"
+}
+
+# The settings this script owns: lifetime and template of the provisioner,
+# the policy. step-ca reads them at start. <file> is changed in place, and
+# only when something differs.
+apply_settings() {
+  local file=$1 allow_dns allow_ip wanted
   allow_dns=$(json_list "${SICK_CA_ALLOW_DNS:-}")
   allow_ip=$(json_list "${SICK_CA_ALLOW_IP:-}")
   wanted=$(jq --arg name "$provisioner" --arg max "$max_lifetime" --arg template "$leaf_template" \
@@ -151,16 +166,46 @@ initialise() {
           + ( if ($ip  | length) > 0 then { ip:  $ip  } else {} end ) )
         else .
         end
-    ' "$config")
-  if [ "$wanted" = "$(jq . "$config")" ]; then
-    log "configuration unchanged: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy)"
+    ' "$file")
+  if [ "$wanted" = "$(jq . "$file")" ]; then
+    log "configuration unchanged: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")"
   else
-    printf '%s\n' "$wanted" >"$config.new"
-    mv "$config.new" "$config"
-    log "configuration updated: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy)"
+    printf '%s\n' "$wanted" >"$file.new"
+    mv "$file.new" "$file"
+    log "configuration updated: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")"
   fi
+}
 
-  log "root fingerprint (SHA-256): $(step certificate fingerprint "$root_cert")"
+#### rotating the provisioner: new key pair, new password
+
+# The provisioner key is a JWK the CA hands to anybody who asks
+# (/provisioners/<kid>/encrypted-key), encrypted with the provisioner
+# password. A new password on the same key would leave whoever decrypted it
+# with the old password able to sign tokens, so the key is replaced, not
+# re-encrypted: "step ca provisioner remove" and "add --create", on a copy
+# of ca.json that replaces the original only when everything worked.
+# ("step ca provisioner update --create" fails in step 0.30.2 against a
+# local ca.json: "provisioner sick:<new kid> not found".)
+rotate_provisioner() {
+  [ -f "$config" ] || die "no CA in $STEPPATH: nothing to rotate"
+  local old_kid new_kid
+  old_kid=$(jq -r --arg name "$provisioner" '.authority.provisioners[] | select(.type == "JWK" and .name == $name) | .key.kid' "$config")
+  [ -n "$old_kid" ] || die "the CA has no JWK provisioner '$provisioner'"
+  random_password >"$provisioner_password.new"
+  cp "$config" "$config.rotate"
+  { step ca provisioner remove "$provisioner" --ca-config "$config.rotate" \
+      && step ca provisioner add "$provisioner" --type JWK --create \
+           --password-file "$provisioner_password.new" --ca-config "$config.rotate"
+  } >/dev/null 2>"$STEPPATH/rotate.log" \
+    || { cat "$STEPPATH/rotate.log" >&2; rm -f "$config.rotate" "$provisioner_password.new"; die "rotating '$provisioner' failed; nothing changed"; }
+  rm -f "$STEPPATH/rotate.log"
+  apply_settings "$config.rotate"
+  new_kid=$(jq -r --arg name "$provisioner" '.authority.provisioners[] | select(.type == "JWK" and .name == $name) | .key.kid' "$config.rotate")
+  # ca.json first: should the second step not happen, the new password is
+  # still in provisioner_password.new
+  mv "$config.rotate" "$config"
+  mv "$provisioner_password.new" "$provisioner_password"
+  log "rotated provisioner '$provisioner': key $new_kid with a new password replaces key $old_kid"
 }
 
 # SICK_CA_DNS through a jq filter, as arguments of step ca init
@@ -288,7 +333,7 @@ stage_import() {
 
 describe_policy() {
   local policy
-  policy=$(jq -r '.authority.policy.x509.allow // empty | [ (.dns // [])[], (.ip // [])[] ] | join(", ")' "$config")
+  policy=$(jq -r '.authority.policy.x509.allow // empty | [ (.dns // [])[], (.ip // [])[] ] | join(", ")' "${1:-$config}")
   if [ -n "$policy" ]; then printf ', names allowed: %s' "$policy"; else printf ', names not restricted'; fi
 }
 
@@ -314,9 +359,33 @@ put() {
 
 #### main
 
+# step-ca reads ca.json again on SIGHUP
+reload() {
+  if pkill -HUP -x step-ca; then
+    log 'step-ca reloads its configuration (SIGHUP)'
+  else
+    log 'no step-ca running here: the next start reads the new configuration'
+  fi
+}
+
 case ${1:-} in
   --initialise)
     initialise
+    exit 0
+    ;;
+  --rotate-provisioner-only)
+    rotate_provisioner
+    exit 0
+    ;;
+  --rotate-provisioner)
+    # docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --rotate-provisioner
+    if [ "$(id -u)" = 0 ]; then
+      su "$run_as" -s /bin/bash -c 'exec /bin/bash "$0" --rotate-provisioner-only' -- "$0"
+    else
+      rotate_provisioner
+    fi
+    hand_over
+    reload
     exit 0
     ;;
   '') ;;

@@ -277,6 +277,57 @@ hours. `init-ca.sh` leaves it alone; `step ca provisioner update acme
 --x509-default-dur ... --x509-max-dur ...` inside the `ca` container changes
 that.
 
+### Backup, restore, rotating the provisioner
+
+```bash
+docker/ca-backup.sh backup  --volume sick_ca --to /safe/ca-2026-10-10.tar
+docker/ca-backup.sh restore --from /safe/ca-2026-10-10.tar --volume NEW_VOLUME
+```
+
+`backup` stops the containers that use the volume for the copy (step-ca
+holds its Badger database open; the lab CA was down for 1-2 seconds),
+starts them again and writes the archive with mode 0600 plus
+`FILE.manifest`: SHA-256 of the archive and of every file, root and
+intermediate fingerprint, end of the intermediate's validity – no secret.
+The archive is the whole CA, keys *and* their passwords: keep it like the
+keys, and keep the manifest (or its `archive-sha256` line) apart from it.
+
+`restore` checks the archive against the manifest before it touches
+anything, refuses a volume that holds a CA, anything else, or is in use, and
+checks the restored files and fingerprints again. It starts no CA. A drill
+runs the restored CA on a network of its own without published ports – never
+beside the live one: two CAs with one key and two databases drift apart. To
+replace a lost volume, `docker compose create ca`, restore into its volume,
+`docker compose up -d`.
+
+Observed in the lab (`t/e2e/ca-recovery.sh`, one host, images cached, an
+archive of 28 KB): 3–4 seconds from `restore` to the first certificate of
+the restored CA. That is the floor; the real RTO is finding the archive, a
+host and the decision. The RPO is the time since the last backup: what was
+issued after it is missing from the restored database; the certificates
+themselves stay valid.
+
+**The provisioner password** of `sick` is rotated on the running CA with
+
+```bash
+docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --rotate-provisioner
+```
+
+It replaces the key pair, not only the password: the CA hands the encrypted
+provisioner key to anybody who asks, so whoever knew the old password may
+have the key itself. The new password goes to the `sick` service through the
+handover volume and step-ca reloads; SICK issues with it at once, and a
+token signed with the old key is refused.
+
+**ACME accounts** (not tried yet, P6): an ACME client deactivates its own
+account (RFC 8555, 7.3.6 – `certbot unregister`, `acme.sh
+--deactivate-account`). step-ca without remote administration has no command
+to deactivate somebody else's account; what cuts them all is replacing the
+provisioner (`step ca provisioner remove acme`, then `add acme --type ACME`)
+or requiring external account binding (`--require-eab`). Until then the
+policy (`SICK_CA_ALLOW_*`) and the name constraints bound what any account
+can obtain.
+
 ## The sick service
 
 The entrypoint runs `sick run` at once and then every `SICK_INTERVAL`, and

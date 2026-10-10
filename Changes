@@ -111,3 +111,10 @@ Revision history for SICK
       deployed: the device fails with "not deployed: the private key does
       not belong to the certificate" before its target is called. New
       SICK::Bundle method key_matches.
+    - Docker: docker/ca-backup.sh backs up the CA volume with the CA stopped
+      (archive 0600 plus a manifest of checksums and fingerprints) and
+      restores it, after checking the manifest, into an empty volume only;
+      init-ca.sh --rotate-provisioner replaces key and password of the
+      provisioner "sick", hands the password to the sick service and reloads
+      step-ca; t/e2e/ca-recovery.sh proves an isolated restore drill and the
+      rotation.
