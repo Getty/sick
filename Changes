@@ -199,3 +199,8 @@ Revision history for SICK
     - t/e2e/ops.sh: container tests for the notifications, the alert rules
       against real output of sick check (stale device, unreachable CA), and
       the CronJob in a k3d cluster.
+    - The CA's ACME provisioner "acme" now issues server certificates with
+      serverAuth only, for 30 days by default and at most 90. Set the
+      lifetimes with SICK_CA_ACME_LIFETIME, SICK_CA_ACME_MAX_LIFETIME and
+      SICK_CA_ACME_MIN_LIFETIME; they are applied at every start and checked
+      as Go durations with min <= lifetime <= max.

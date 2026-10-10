@@ -90,6 +90,9 @@ All of them are optional.
 | `SICK_CA_DNS` | | further names and addresses under which the CA is reached, comma separated – for its own TLS certificate. Lab mode adds `ca` and `localhost`; import mode requires the list and takes it alone. Used once |
 | `SICK_CA_IMPORT` | | import mode, with `compose.import.yml`: the output directory of `ceremony.sh`. Read at the first start only |
 | `SICK_CA_MAX_LIFETIME` | `19800h` | the longest lifetime the provisioner `sick` grants (825 days, the most Apple accepts from a private CA). Hours, minutes, seconds – step-ca knows no days |
+| `SICK_CA_ACME_LIFETIME` | `720h` | the lifetime the ACME provisioner `acme` gives a certificate (30 days, see below) |
+| `SICK_CA_ACME_MAX_LIFETIME` | `2160h` | the longest lifetime `acme` grants a client that asks for one (90 days) |
+| `SICK_CA_ACME_MIN_LIFETIME` | `5m` | the shortest (step-ca's own default). Go durations, like the lifetime of `sick`; minimum ≤ lifetime ≤ maximum, or the CA does not start |
 | `SICK_CA_ALLOW_DNS` | | names the CA may issue for, comma separated: `*.example.internal`, `host.example.org` |
 | `SICK_CA_ALLOW_IP` | | addresses and networks the CA may issue for: `192.0.2.0/24`. Both empty: no restriction. One of them set: nothing but what is listed |
 | `SICK_CA_PORT` | `9000` | published port of the CA |
@@ -164,6 +167,11 @@ At **every start** it
 - gives that provisioner a template that issues server certificates with
   `serverAuth` as their only extended key usage (step-ca's default adds
   `clientAuth`),
+- gives the ACME provisioner `acme` the same template and its lifetimes:
+  `SICK_CA_ACME_LIFETIME` (30 days) for a certificate, between
+  `SICK_CA_ACME_MIN_LIFETIME` and `SICK_CA_ACME_MAX_LIFETIME` (90 days) for a
+  client that asks for a lifetime of its own (step-ca would issue for 24
+  hours, with `clientAuth`),
 - sets the names the CA may issue for from `SICK_CA_ALLOW_DNS` and
   `SICK_CA_ALLOW_IP`, when at least one of them is given,
 - copies root certificate, intermediate certificate and provisioner password
@@ -174,7 +182,7 @@ everything in place changes nothing and says so:
 
 ```
 init-ca: the CA in /home/step exists: nothing to make
-init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted
+init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted; 'acme' issues for 720h (5m to 2160h), serverAuth only
 init-ca: root fingerprint (SHA-256): af22556f14379ec5a8db1ec01db94434c7a25282331cf01caa7e33916ffd6afc
 ```
 
@@ -182,6 +190,14 @@ A changed setting takes effect with `docker compose up -d` (which restarts the
 CA). Taking `SICK_CA_ALLOW_*` away again does *not* lift the restriction:
 `init-ca.sh` never removes what it finds. Edit `authority.policy` in
 `config/ca.json` for that.
+
+Why 30 days for ACME: an ACME client renews at about two thirds of the
+lifetime, so a 30-day certificate is renewed with about 10 days left. That
+is the time the CA may be down – restore from backup included – before
+services start to expire. A longer lifetime buys more of that time and keeps
+a mistake (a wrong name, a key that leaked) around longer; a shorter one the
+reverse. Clients that count fixed days instead of a share of the lifetime
+need that set to match; the recipes for each service say how.
 
 The container starts as root for `init-ca.sh`, which hands over the three
 files and then starts step-ca as the unprivileged user `step` of the image.

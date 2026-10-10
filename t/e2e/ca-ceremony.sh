@@ -38,7 +38,17 @@
 #      step-ca), are refused by openssl verify and by GnuTLS certtool
 #      against the root; an in-scope leaf signed the same way is accepted
 #      by both. The errors are printed.
-#   7. teardown, also after a failure or Ctrl-C: the project down with its
+#   7. the ACME provisioner (k46): after the first start ca.json gives "acme"
+#      the leaf template without clientAuth and the lifetimes 5m / 720h /
+#      2160h, and init-ca.sh says so. A real ACME order (step, http-01,
+#      standalone solver in a helper container the CA reaches under
+#      acme.example.internal) yields a certificate with serverAuth as its
+#      only extended key usage and a lifetime of 720h (openssl, here). With
+#      SICK_CA_ACME_LIFETIME=10m and SICK_CA_ACME_MIN_LIFETIME=1m after a
+#      restart the next order lasts 10m; a second start with the same values
+#      changes nothing; a lifetime above the maximum stops init-ca.sh before
+#      it touches anything
+#   8. teardown, also after a failure or Ctrl-C: the project down with its
 #      volumes, the helper containers (labelled sick=1 and
 #      sick-e2e=ca-ceremony) removed by their labels, nothing named sick-e2e-
 #      ceremony* left, the private working directory (stand-in root key
@@ -75,7 +85,7 @@ project=${SICK_E2E_PROJECT:-sick-e2e-ceremony}
 ca_port=${SICK_E2E_CA_PORT:-19100}
 debian=${SICK_E2E_DEBIAN:-debian:trixie}
 label=sick-e2e=ca-ceremony
-helpers=(sick-e2e-ceremony-make sick-e2e-ceremony-gnutls)
+helpers=(sick-e2e-ceremony-make sick-e2e-ceremony-gnutls sick-e2e-ceremony-acme)
 
 step_no=0
 step() { step_no=$((step_no + 1)); printf '\n=== %s. %s\n' "$step_no" "$*"; }
@@ -164,6 +174,8 @@ SICK_CA_DNS=ca.example.internal
 SICK_CA_IMPORT=$work/ceremony
 SICK_CA_ALLOW_DNS=$1
 SICK_CA_ALLOW_IP=$2
+SICK_CA_ACME_LIFETIME=${acme_lifetime:-}
+SICK_CA_ACME_MIN_LIFETIME=${acme_min:-}
 SICK_CA_PORT=127.0.0.1:$ca_port
 SICK_TRUST_PORT=127.0.0.1:0
 SICK_INTERVAL=1d
@@ -172,7 +184,7 @@ EOF
 }
 write_env '' ''
 unset SICK_BUILD_CONTEXT SICK_CONFIG_FILE SICK_SECRETS_DIR SICK_CA_NAME SICK_CA_DNS SICK_CA_PORT \
-  SICK_CA_MAX_LIFETIME SICK_CA_ALLOW_DNS SICK_CA_ALLOW_IP SICK_CA_IMPORT SICK_CA_IMPORT_DIR \
+  SICK_CA_MAX_LIFETIME SICK_CA_ACME_LIFETIME SICK_CA_ACME_MAX_LIFETIME SICK_CA_ACME_MIN_LIFETIME SICK_CA_ALLOW_DNS SICK_CA_ALLOW_IP SICK_CA_IMPORT SICK_CA_IMPORT_DIR \
   SICK_TRUST_PORT SICK_INTERVAL SICK_RUN_OPTIONS SICK_IMAGE SICK_FROM STEP_VERSION BUSYBOX_VERSION SICK_E2E_HERE
 
 compose() {
@@ -185,14 +197,14 @@ in_sick() { compose run --rm --no-deps -T -e STEPPATH=/tmp/step -e HOME=/tmp --e
 ca_log() { compose logs --no-log-prefix ca 2>&1 | plain; }
 issued() { ca_log | grep -E 'method=POST' | grep -E 'path=/sign ' | grep -c 'status=201' || true; }
 
-#### 7. teardown, armed before anything exists
+#### 8. teardown, armed before anything exists
 
 armed=
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
-  printf '\n=== 7. teardown\n'
+  printf '\n=== 8. teardown\n'
   # the helpers by their labels (sick=1 and this script's), never by name
   docker ps -aq --filter label=sick=1 --filter "label=$label" | xargs -r docker rm -f -v >/dev/null 2>&1
   if [ -n "$armed" ]; then
@@ -343,6 +355,14 @@ expect 'init-ca.sh says import mode' '^init-ca: import mode: ' "$first"
 refuse '... not lab mode' 'lab mode' "$first"
 expect '... and made the CA on the imported hierarchy' "made the CA on the imported hierarchy: JWK provisioner 'sick', ACME provisioner 'acme'" "$first"
 expect '... with the provisioner set up' "configuration updated: 'sick' grants up to 19800h, serverAuth only, names not restricted" "$first"
+expect '... and the ACME provisioner' "names not restricted; 'acme' issues for 720h \\(5m to 2160h\\), serverAuth only" "$first"
+acme_conf=$(in_ca jq -r '.authority.provisioners[] | select(.type == "ACME" and .name == "acme")
+  | "claims: \(.claims.minTLSCertDuration) \(.claims.defaultTLSCertDuration) \(.claims.maxTLSCertDuration)",
+    (.options.x509.template | split("\n")[] | "template: " + .)' /home/step/config/ca.json 2>&1 | plain)
+show <<<"$acme_conf"
+expect 'ca.json: "acme" has min 5m, default 720h, max 2160h' '^claims: 5m 720h 2160h$' "$acme_conf"
+expect '... a template with extended key usage serverAuth' '^template:[[:space:]]+"extKeyUsage": \["serverAuth"\]$' "$acme_conf"
+refuse '... and without clientAuth' 'clientAuth' "$acme_conf"
 expect '... and the root fingerprint of the ceremony' "root fingerprint \(SHA-256\): $root_fp" "$first"
 
 note 'the volumes, searched for the root key'
@@ -538,4 +558,100 @@ result 198.51.100.9 openssl refused '198.51.100.9 signed directly'
 result 198.51.100.9 gnutls refused '198.51.100.9 signed directly'
 result device gnutls-cli accepted 'the device, live, against the root alone'
 
-# 7. runs in the EXIT trap
+#### 7. the ACME provisioner
+
+# acme_order <name>: a real ACME order with step, http-01 answered by its
+# standalone solver in a helper container the CA reaches under <name>.
+# Prints step's output, then the certificate (leaf first) between markers.
+acme_order() {
+  docker run --rm --name sick-e2e-ceremony-acme --label sick=1 --label "$label" \
+    --network "${project}_default" --network-alias "$1" \
+    -v "${project}_handover:/etc/sick/ca:ro" -e STEPPATH=/tmp/step -e HOME=/tmp \
+    --entrypoint sh sick:local -c '
+      cd /tmp && step ca certificate "$0" /tmp/a.crt /tmp/a.key --provisioner acme \
+        --ca-url https://ca.example.internal:9000 --root /etc/sick/ca/root_ca.crt --http-listen :80 2>&1
+      echo "exit: $?"
+      if [ -s /tmp/a.crt ]; then echo "--- certificate"; cat /tmp/a.crt; fi' "$1" 2>&1 | plain
+}
+# lifetime_of <output of acme_order>: notAfter - notBefore of the leaf, in seconds
+leaf_of() { sed -n '/^--- certificate$/,$p' <<<"$1" | sed 1d | openssl x509; }
+lifetime_of() {
+  local leaf before after
+  leaf=$(leaf_of "$1")
+  before=$(openssl x509 -noout -startdate <<<"$leaf" | sed 's/^notBefore=//')
+  after=$(openssl x509 -noout -enddate <<<"$leaf" | sed 's/^notAfter=//')
+  echo $(( $(date -u -d "$after" +%s) - $(date -u -d "$before" +%s) ))
+}
+# lifetime_is <seconds> <output of acme_order> <what>: step-ca backdates
+# notBefore by one minute, so the lifetime from issuance is the span less 60s
+lifetime_is() {
+  local span
+  span=$(lifetime_of "$2")
+  if [ "$span" -eq "$1" ] || [ "$span" -eq $(( $1 + 60 )) ]; then
+    pass "$3: notAfter - notBefore = ${span}s ($(( span - $1 ))s of it the backdating of notBefore)"
+  else
+    fail "$3: notAfter - notBefore = ${span}s, expected $1s (+60s backdating)"
+  fi
+}
+
+step 'the ACME provisioner: a real order, serverAuth only, the lifetime of SICK_CA_ACME_*'
+note 'step ca certificate acme.example.internal --provisioner acme (http-01, standalone)'
+n=$(issued)
+out=$(acme_order acme.example.internal)
+show <<<"$(sed '/^--- certificate$/,$d' <<<"$out")"
+expect 'the ACME order is granted' '^exit: 0$' "$out"
+leaf=$(leaf_of "$out")
+facts=$(openssl x509 -noout -subject -issuer -startdate -enddate -ext subjectAltName,extendedKeyUsage <<<"$leaf")
+show <<<"$facts"
+expect '... for acme.example.internal' 'DNS:acme\.example\.internal' "$facts"
+expect '... issued by the intermediate of the ceremony' 'issuer=.*SICK E2E Intermediate CA' "$facts"
+expect '... extended key usage serverAuth' '^ *TLS Web Server Authentication$' "$facts"
+refuse '... and nothing else (no clientAuth)' 'Client Authentication' "$facts"
+lifetime_is $((720 * 3600)) "$out" '... lifetime 720h'
+[ "$(issued)" -eq "$n" ] || fail '... but the JWK path (POST /sign) logged a certificate: the order went elsewhere'
+pass '... through ACME, not through POST /sign'
+
+note 'SICK_CA_ACME_LIFETIME=10m SICK_CA_ACME_MIN_LIFETIME=1m, docker compose up -d'
+acme_lifetime=10m acme_min=1m
+write_env '*.example.internal' '192.0.2.0/25'
+since=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+compose up -d --wait ca >/dev/null 2>&1 || fail 'the CA did not come back healthy'
+again=$(compose logs --no-log-prefix --since "$since" ca 2>&1 | plain | grep '^init-ca:' || true)
+show <<<"$again"
+expect 'init-ca.sh sets the short lifetime' "configuration updated: .*'acme' issues for 10m \(1m to 2160h\), serverAuth only" "$again"
+acme_conf=$(in_ca jq -r '.authority.provisioners[] | select(.type == "ACME" and .name == "acme") | "claims: \(.claims.minTLSCertDuration) \(.claims.defaultTLSCertDuration) \(.claims.maxTLSCertDuration)"' /home/step/config/ca.json 2>&1 | plain)
+expect '... ca.json: min 1m, default 10m, max 2160h' '^claims: 1m 10m 2160h$' "$acme_conf"
+out=$(acme_order acme.example.internal)
+show <<<"$(sed '/^--- certificate$/,$d' <<<"$out")"
+expect 'the ACME order is granted' '^exit: 0$' "$out"
+lifetime_is 600 "$out" '... lifetime 10m'
+refuse '... still without clientAuth' 'Client Authentication' "$(leaf_of "$out" | openssl x509 -noout -ext extendedKeyUsage)"
+
+note 'the same values again: docker compose restart ca'
+since=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+compose restart ca >/dev/null 2>&1 || fail 'docker compose restart ca'
+compose up -d --wait ca >/dev/null 2>&1 || fail 'the CA did not come back healthy'
+again=$(compose logs --no-log-prefix --since "$since" ca 2>&1 | plain | grep '^init-ca:' || true)
+show <<<"$again"
+expect 'a start that finds everything in place changes nothing and says so' "configuration unchanged: .*'acme' issues for 10m \(1m to 2160h\), serverAuth only" "$again"
+
+note 'SICK_CA_ACME_LIFETIME=3000h, above the maximum: init-ca.sh --initialise in a one-off container'
+before=$(in_ca sha256sum /home/step/config/ca.json 2>&1 | plain)
+set +e
+out=$(compose run --rm --no-deps -T -e SICK_CA_ACME_LIFETIME=3000h ca --initialise 2>&1 | plain)
+code=$?
+set -e
+show <<<"$out"
+[ "$code" -ne 0 ] || fail 'init-ca.sh accepted a lifetime above the maximum'
+expect 'init-ca.sh refuses a lifetime above the maximum' "SICK_CA_ACME_LIFETIME '3000h' is longer than SICK_CA_ACME_MAX_LIFETIME '2160h'" "$out"
+[ "$(in_ca sha256sum /home/step/config/ca.json 2>&1 | plain)" = "$before" ] || fail '... but ca.json changed'
+pass '... and ca.json is untouched'
+set +e
+out=$(compose run --rm --no-deps -T -e SICK_CA_ACME_LIFETIME=30d ca --initialise 2>&1 | plain)
+code=$?
+set -e
+show <<<"$out"
+[ "$code" -ne 0 ] || fail 'init-ca.sh accepted 30d'
+expect 'init-ca.sh refuses 30d (Go knows no days)' "SICK_CA_ACME_LIFETIME '30d' is not a positive Go duration" "$out"
+
+# 8. runs in the EXIT trap

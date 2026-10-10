@@ -14,7 +14,7 @@
 #                certificate and key, the password of that key. The root key
 #                is not there and never enters the volume.
 #
-# Every start: brings four settings of the CA configuration in line with
+# Every start: brings the settings of the CA configuration in line with
 # the environment, hands the root certificate, the intermediate certificate
 # and the provisioner password over to the sick service, and starts step-ca.
 # A start that finds everything as it should be changes nothing.
@@ -78,6 +78,18 @@
 #                         also gets a template: server certificates with
 #                         extended key usage serverAuth alone (step-ca's
 #                         default adds clientAuth).
+#   SICK_CA_ACME_LIFETIME the lifetime the ACME provisioner "acme" gives a
+#                         certificate, a Go duration (default "720h", 30
+#                         days). An ACME client renews at about two thirds of
+#                         the lifetime: 30 days leave about 10 days in which
+#                         the CA may be down before services expire.
+#   SICK_CA_ACME_MAX_LIFETIME  the longest lifetime "acme" grants a client
+#                         that asks for one (default "2160h", 90 days)
+#   SICK_CA_ACME_MIN_LIFETIME  the shortest (default "5m", step-ca's own)
+#                         The three have to be min <= lifetime <= max. "acme"
+#                         gets the same template as the JWK provisioner:
+#                         serverAuth alone. Without a provisioner "acme" (it
+#                         was removed) there is nothing to set.
 #   SICK_CA_ALLOW_DNS     comma separated DNS names the CA may issue for,
 #                         "*.example.internal" style
 #   SICK_CA_ALLOW_IP      comma separated addresses and networks the CA may
@@ -117,13 +129,17 @@ switch_dir=$STEPPATH/switch
 name=${SICK_CA_NAME:-SICK Internal CA}
 provisioner=${SICK_CA_PROVISIONER:-sick}
 max_lifetime=${SICK_CA_MAX_LIFETIME:-19800h}
+acme=acme
+acme_lifetime=${SICK_CA_ACME_LIFETIME:-720h}
+acme_max=${SICK_CA_ACME_MAX_LIFETIME:-2160h}
+acme_min=${SICK_CA_ACME_MIN_LIFETIME:-5m}
 handover=${SICK_HANDOVER_DIR:-/handover}
 import_dir=${SICK_CA_IMPORT_DIR:-$STEPPATH/import}
 staged=$STEPPATH/import
 run_as=step
 
-# The leaf template of the provisioner: step-ca's default, with serverAuth
-# as the only extended key usage.
+# The leaf template of the JWK and the ACME provisioner: step-ca's default,
+# with serverAuth as the only extended key usage.
 leaf_template='{
 	"subject": {{ toJson .Subject }},
 	"sans": {{ toJson .SANs }},
@@ -143,6 +159,34 @@ json_list() {
   jq -cn --arg list "${1:-}" '$list | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique'
 }
 
+# A Go duration ("720h", "1h30m", "1.5h", "90s") in seconds; nothing when
+# <text> is not one or not positive. Go's units: ns, us (µs), ms, s, m, h.
+duration_seconds() {
+  jq -rn --arg d "$1" '
+    ( "([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|ms|s|m|h)" ) as $part
+    | { ns: 1e-9, us: 1e-6, "µs": 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600 } as $unit
+    | if $d | test("^(" + $part + ")+$")
+      then [ $d | scan($part) | (.[0] | if startswith(".") then "0" + . else . end | rtrimstr(".") | tonumber) * $unit[.[2]] ]
+           | add | select(. > 0)
+      else empty end'
+}
+
+# The lifetimes of "acme": Go durations, min <= default <= max - step-ca
+# itself refuses to start otherwise, with less to go on.
+check_acme_lifetimes() {
+  local min def max
+  min=$(duration_seconds "$acme_min")
+  def=$(duration_seconds "$acme_lifetime")
+  max=$(duration_seconds "$acme_max")
+  [ -n "$min" ] || die "SICK_CA_ACME_MIN_LIFETIME '$acme_min' is not a positive Go duration like 5m, 90s or 1h30m"
+  [ -n "$def" ] || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is not a positive Go duration like 720h, 90m or 1h30m"
+  [ -n "$max" ] || die "SICK_CA_ACME_MAX_LIFETIME '$acme_max' is not a positive Go duration like 2160h, 90m or 1h30m"
+  jq -en --argjson a "$min" --argjson b "$def" '$a <= $b' >/dev/null \
+    || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is shorter than SICK_CA_ACME_MIN_LIFETIME '$acme_min'"
+  jq -en --argjson a "$def" --argjson b "$max" '$a <= $b' >/dev/null \
+    || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is longer than SICK_CA_ACME_MAX_LIFETIME '$acme_max'"
+}
+
 random_password() {
   # 40 characters out of 62: about 238 bits
   local password
@@ -156,6 +200,7 @@ random_password() {
 initialise() {
   [[ $max_lifetime =~ ^([0-9]+(h|m|s))+$ ]] \
     || die "SICK_CA_MAX_LIFETIME '$max_lifetime' is not a duration like 19800h"
+  check_acme_lifetimes
 
   if [ ! -f "$config" ]; then
     mkdir -p "$STEPPATH/secrets"
@@ -182,17 +227,24 @@ initialise() {
   log "root fingerprint (SHA-256): $(step certificate fingerprint "$root_cert")"
 }
 
-# The settings this script owns: lifetime and template of the provisioner,
-# the policy. step-ca reads them at start. <file> is changed in place, and
-# only when something differs.
+# The settings this script owns: lifetime and template of the JWK
+# provisioner, lifetimes and template of the ACME provisioner, the policy.
+# step-ca reads them at start. <file> is changed in place, and only when
+# something differs.
 apply_settings() {
   local file=$1 allow_dns allow_ip wanted
   allow_dns=$(json_list "${SICK_CA_ALLOW_DNS:-}")
   allow_ip=$(json_list "${SICK_CA_ALLOW_IP:-}")
   wanted=$(jq --arg name "$provisioner" --arg max "$max_lifetime" --arg template "$leaf_template" \
+      --arg acme "$acme" --arg amin "$acme_min" --arg adef "$acme_lifetime" --arg amax "$acme_max" \
       --argjson dns "$allow_dns" --argjson ip "$allow_ip" '
       ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .claims.maxTLSCertDuration ) = $max
       | ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .options.x509.template ) = $template
+      | ( .authority.provisioners[] | select(.type == "ACME" and .name == $acme) ) |=
+          ( .claims.minTLSCertDuration = $amin
+          | .claims.defaultTLSCertDuration = $adef
+          | .claims.maxTLSCertDuration = $amax
+          | .options.x509.template = $template )
       | if ($dns | length) + ($ip | length) > 0
         then .authority.policy.x509.allow =
           ( ( if ($dns | length) > 0 then { dns: $dns } else {} end )
@@ -201,11 +253,19 @@ apply_settings() {
         end
     ' "$file")
   if [ "$wanted" = "$(jq . "$file")" ]; then
-    log "configuration unchanged: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")"
+    log "configuration unchanged: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")$(describe_acme "$file")"
   else
     printf '%s\n' "$wanted" >"$file.new"
     mv "$file.new" "$file"
-    log "configuration updated: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")"
+    log "configuration updated: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")$(describe_acme "$file")"
+  fi
+}
+
+describe_acme() {
+  if jq -e --arg acme "$acme" '.authority.provisioners[]? | select(.type == "ACME" and .name == $acme)' "$1" >/dev/null; then
+    printf "; '%s' issues for %s (%s to %s), serverAuth only" "$acme" "$acme_lifetime" "$acme_min" "$acme_max"
+  else
+    printf "; no ACME provisioner '%s', nothing set for it" "$acme"
   fi
 }
 
@@ -221,6 +281,7 @@ apply_settings() {
 # local ca.json: "provisioner sick:<new kid> not found".)
 rotate_provisioner() {
   [ -f "$config" ] || die "no CA in $STEPPATH: nothing to rotate"
+  check_acme_lifetimes
   local old_kid new_kid
   old_kid=$(jq -r --arg name "$provisioner" '.authority.provisioners[] | select(.type == "JWK" and .name == $name) | .key.kid' "$config")
   [ -n "$old_kid" ] || die "the CA has no JWK provisioner '$provisioner'"
