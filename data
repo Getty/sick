@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T18:42:16Z
+created: 2026-10-10T17:15:09Z
+id: 33
+priority: low
+started: 2026-10-10T17:45:49Z
+status: done
+tags:
+- trust
+- finding
+title: 'Trust: refuse a non-CA certificate as intermediate'
+updated: 2026-10-10T18:42:28Z
+---
+
+Finding from k22 (2026-10-10). SICK::Trust::_intermediates checks that each intermediate leads to the root but not CA:TRUE; with an issuer other than StepCA a leaf of the root would be published as an intermediate. Done when: Trust uses SICK::Bundle::is_ca and refuses with a message naming the subject; test.
+
+2026-10-10 18:00 Done, uncommitted: SICK::Trust::_intermediates refuses a certificate that leads to the root but is not a CA: "the intermediate certificate '<subject>' is not a CA certificate (basicConstraints does not say CA:TRUE)". Test in t/50, red before and green after. It shares lib/SICK/Trust.pm and t/50-trust.t with k31, so it can only be split off by hunk.
+
+Committed as 4fd3d10
