@@ -273,7 +273,7 @@ subtest 'a device that fails is exit code 1, and the others go on' => sub {
   my $failing = list( files_device( 'stuck', reload => '"echo the service is down >&2; echo and stays down >&2; exit 3"' ) );
   ( $code, $out, $err ) = cli( 'run', '--config', $failing );
   is $code, 1, 'a deployment that fails: exit code 1';
-  like $out, qr/^stuck   failed  missing  deploy failed: reload failed \(exit 3\): the service is down; and stays down\n\z/m,
+  like $out, qr/^stuck   failed  missing  deploy failed: reload failed \(exit 3\): the service is down; and stays down; there is no previous certificate to restore, the new one stays in place\n\z/m,
     '... with the error on one line of the table';
   unlike $out.$err, qr/ at \S+ line \d+/, '... and without the place in the code';
 };

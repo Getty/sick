@@ -7,8 +7,9 @@
 # s_server, and once a second looks at /srv/device/cert.pem. When that file
 # is there and has changed, the service is restarted with the new
 # certificate - which is what the reload command of a real device does.
-# SICK's files target renames cert.pem last, after key.pem, chain.pem and
-# fullchain.pem, so cert.pem changing means the set is complete.
+# SICK's files target publishes the four files as one generation (the names
+# are links into .sick/current, switched in one step), so cert.pem changing
+# means the set is complete.
 #
 # s_server sends the first certificate of its -cert file and nothing else,
 # like a switch that presents its certificate alone. With

@@ -160,3 +160,9 @@ Revision history for SICK
       'deferred', exit code 1); --force tries anyway. Discarded certificates
       are not revoked: their key never left a private temporary directory.
     - SICK::Bundle has serial.
+    - files: cert.pem, chain.pem, fullchain.pem and key.pem are now links into
+      dir/.sick/current, switched to a complete new generation in one step; a
+      failed reload goes back to the previous generation and runs the reload
+      again; plain files of an earlier version become a generation on the
+      first deploy. Mount the directory into containers, not the single
+      files.

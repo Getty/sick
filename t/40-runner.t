@@ -228,7 +228,7 @@ subtest 'first run renews, second run changes nothing' => sub {
   my @first = $runner->run;
   is_deeply brief(@first), [ [ 'web', 'renewed', 'missing' ], [ 'db', 'renewed', 'missing' ] ], 'first run: renewed';
   is_deeply [ map { $_->{error} } @first ], [ undef, undef ], '... without an error';
-  is_deeply files_in($dir), [qw( cert.pem chain.pem fullchain.pem key.pem )], 'the files are there';
+  is_deeply files_in($dir), [qw( .sick cert.pem chain.pem fullchain.pem key.pem )], 'the files are there, with the generations of the files target in .sick';
 
   my $deployed = SICK::Bundle->from_files( cert => $dir.'/cert.pem' );
   is_deeply $deployed->names, ['web.example.internal'], 'the certificate carries the names of the device';
@@ -474,7 +474,7 @@ subtest 'a device that makes its own key' => sub {
   is_deeply brief( $runner->run ), [ [ 'keeper', 'renewed', 'missing' ] ], 'renewed';
   is_deeply [ @count{qw( keeper_csr sign issue keeper_got_key )} ], [ 1, 1, undef, undef ],
     'the request was signed; no key was made and none was handed to the target';
-  is_deeply files_in( $tmp.'/keeper' ), [qw( cert.pem chain.pem fullchain.pem )], 'no key on disk';
+  is_deeply files_in( $tmp.'/keeper' ), [qw( .sick cert.pem chain.pem fullchain.pem )], 'no key on disk';
 
   my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'x509', '-noout', '-pubkey' ], stdin => slurp( $tmp.'/keeper/cert.pem' ) );
   my ( $want ) = SICK::OpenSSL::run( [ 'req', '-noout', '-pubkey' ], stdin => $request->{csr_pem} );

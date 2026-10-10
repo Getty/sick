@@ -377,14 +377,46 @@ something that is skipped.
 
 ### `files`
 
-Writes `cert.pem`, `chain.pem`, `fullchain.pem` and `key.pem` into `dir`, each
-one atomically, then runs `reload`.
+Publishes `cert.pem`, `chain.pem`, `fullchain.pem` and `key.pem` in `dir` as
+one generation, then runs `reload`.
 
 | Option | |
 |---|---|
 | `dir` | required; the directory |
 | `reload` | a command to run afterwards: a list (started directly) or a string (run by `/bin/sh -c`) |
 | `mode_key` | file mode of `key.pem`, default `0600` |
+
+The four names are relative links into `.sick/current`, which points to a
+generation directory holding all four files:
+
+```
+dir/
+  cert.pem       -> .sick/current/cert.pem        (chain.pem, fullchain.pem, key.pem alike)
+  .sick/
+    current      -> 20261010T211500.123456Z-1a2b3c4d
+    previous     -> 20260905T030000.654321Z-9f8e7d6c
+    20261010T211500.123456Z-1a2b3c4d/   cert.pem chain.pem fullchain.pem key.pem
+    20260905T030000.654321Z-9f8e7d6c/   cert.pem chain.pem fullchain.pem key.pem
+```
+
+A deploy writes the new generation completely, then renames a new
+`current` link over the old one. The names lead to the old four files or to
+the new four, never to a new key beside the old certificate. A program that
+opens them one after the other can still straddle a switch; to be sure,
+resolve the generation once (the real path of `cert.pem`) and read all four
+from there. The previous generation stays, older ones are removed. Plain
+files of an earlier SICK become a generation of their own on the first
+deploy, and the names become links.
+
+When `reload` fails, `current` goes back to the previous generation,
+`reload` runs once more for it, the new generation is removed and the
+device is reported as failed, with a message that says whether the old
+certificate was restored. On the first deploy there is nothing to go back
+to; the new files stay.
+
+Mount the directory into a container, not the single files: a bind mount of
+one file pins the file of the generation it found at start and never sees a
+later one.
 
 Without `host`, the certificate in `cert.pem` counts as the one the device
 presents. Set `host` to have SICK ask the service itself.
