@@ -1,16 +1,15 @@
 package SICK::Target::Acmesh;
 # ABSTRACT: Hand a certificate to one of the deploy hooks of acme.sh
 
-use strict;
-use warnings;
-use parent 'SICK::Target';
+use Moo;
+extends 'SICK::Target';
 use Carp qw( croak );
-use File::Path qw( make_path );
-use File::Temp ();
+use Path::Tiny ();
 use SICK::Command;
 use SICK::Config;
 use SICK::Names;
 use SICK::Temp;
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -264,7 +263,7 @@ sub deploy {
   };
   my $died = $@;
   # the key has no business in a home that stays
-  unlink $self->_key_file( $home, $name ) unless $private;
+  eval { Path::Tiny::path( $self->_key_file( $home, $name ) )->remove } unless $private;
   unless ( defined $exit ) {
     $died =~ s/ at \S+ line [0-9]+\.?\s*\z//;
     croak $died;
@@ -316,18 +315,17 @@ the hook and the device. The next run starts from what the device presents.
 
 sub _key_file {
   my ( $self, $home, $name ) = @_;
-  return $home.'/'.$name.'/'.$name.'.key';
+  return Path::Tiny::path($home)->child( $name, $name.'.key' )->stringify;
 }
 
 # Put the bundle where acme.sh looks for a certificate of that name.
 sub _stage {
   my ( $self, $home, $name, $bundle ) = @_;
-  my $dir = $home.'/'.$name;
+  my $dir = Path::Tiny::path($home)->child($name)->stringify;
 
-  unless ( -d $dir ) {
-    make_path( $dir, { mode => 0700, error => \my $errors } );
-    croak 'cannot create directory \''.$dir.'\': '.( values %{ $errors->[0] } )[0]
-      if $errors && @$errors;
+  unless ( Path::Tiny::path($dir)->is_dir ) {
+    eval { Path::Tiny::path($dir)->mkdir( { mode => 0700 } ); 1 }
+      or croak 'cannot create directory \''.$dir.'\': '.$self->_reason($@);
   }
 
   my @alt = @{ $self->device->names };
@@ -349,25 +347,35 @@ sub _stage {
       'Le_Alt=\''.( @alt ? join( ',', @alt ) : 'no' ).'\''."\n",
       ( defined $keylength ? 'Le_Keylength=\''.$keylength.'\''."\n" : () ) ),
     0600
-  ) unless -e $dir.'/'.$name.'.conf';
+  ) unless Path::Tiny::path($dir)->child( $name.'.conf' )->exists;
   return;
 }
 
 # One file, written aside with its mode set before any content goes in, then
-# renamed over what was there.
+# renamed over what was there. The file aside is created by File::Temp
+# (O_EXCL, mode 0600) and filled in place - not with spew, which writes a
+# file of its own with a mode from the umask - and published with CORE
+# rename: Path::Tiny's move copies when renaming fails.
 sub _put {
   my ( $self, $path, $content, $mode ) = @_;
-  ( my $dir = $path ) =~ s{/[^/]+\z}{};
-  my $tmp = eval { File::Temp->new( DIR => $dir, TEMPLATE => '.sick-XXXXXXXX', UNLINK => 0 ) }
+  my $dir = Path::Tiny::path($path)->parent->stringify;
+  my $aside = eval { Path::Tiny->tempfile( DIR => $dir, TEMPLATE => '.sick-XXXXXXXX', UNLINK => 0 ) }
     or croak 'cannot write \''.$path.'\': '.( $! ? $! : 'cannot create a temporary file' );
-  my $aside = $tmp->filename;
-  my $ok = chmod( $mode, $aside ) && print( {$tmp} $content ) && close($tmp) && rename( $aside, $path );
-  unless ($ok) {
-    my $reason = q{}.$!;
-    unlink $aside;
+  my $reason = eval { $aside->chmod($mode); $aside->append_raw($content); 1 } ? undef : $self->_reason($@);
+  $reason = q{}.$! if !defined $reason && !rename( $aside->stringify, $path );
+  if ( defined $reason ) {
+    eval { $aside->remove };
     croak 'cannot write \''.$path.'\': '.$reason;
   }
   return $path;
+}
+
+# The reason of the system out of a Path::Tiny exception.
+sub _reason {
+  my ( $self, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  ( $error = defined $error ? $error : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  return length $error ? $error : 'unknown error';
 }
 
 # Take every secret out of a text that is about to be shown to somebody.

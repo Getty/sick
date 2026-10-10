@@ -1,14 +1,13 @@
 package SICK::Target::Files;
 # ABSTRACT: Write certificate, chain and key as PEM files and run a reload command
 
-use strict;
-use warnings;
-use parent 'SICK::Target';
+use Moo;
+extends 'SICK::Target';
 use Carp qw( croak );
-use File::Path qw( make_path );
-use File::Temp ();
+use Path::Tiny ();
 use SICK::Bundle;
 use SICK::Command;
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -129,10 +128,9 @@ sub deploy {
   $self->validate;
   my $dir = $self->dir;
 
-  unless ( -d $dir ) {
-    make_path( $dir, { mode => 0755, error => \my $errors } );
-    croak 'cannot create directory \''.$dir.'\': '.( values %{ $errors->[0] } )[0]
-      if $errors && @$errors;
+  unless ( Path::Tiny::path($dir)->is_dir ) {
+    eval { Path::Tiny::path($dir)->mkdir( { mode => 0755 } ); 1 }
+      or croak 'cannot create directory \''.$dir.'\': '.$self->_reason($@);
   }
 
   my %content = (
@@ -147,6 +145,9 @@ sub deploy {
     for my $name ( grep { exists $content{$_} } @FILES ) {
       $staged{$name} = $self->_stage( $name, $content{$name}, $name eq 'key.pem' ? $self->mode_key : 0644 );
     }
+    # CORE rename, not Path::Tiny's move: that one copies when renaming
+    # fails and moves into a directory of that name, and a reader would see
+    # half a file
     for my $name ( grep { exists $staged{$_} } @FILES ) {
       rename $staged{$name}, $dir.'/'.$name
         or die 'cannot write \''.$dir.'/'.$name.'\': '.$!."\n";
@@ -156,7 +157,7 @@ sub deploy {
   };
   unless ($done) {
     my $error = $@;
-    unlink values %staged;
+    eval { Path::Tiny::path($_)->remove } for values %staged;
     $error =~ s/\s+\z//;
     croak $error;
   }
@@ -193,9 +194,9 @@ sub presented_cert {
   return $self->SUPER::presented_cert if defined $self->device->host;
 
   $self->validate;
-  my $cert = $self->dir.'/cert.pem';
-  return undef unless -e $cert;
-  my $chain = $self->dir.'/chain.pem';
+  my $cert = Path::Tiny::path( $self->dir )->child('cert.pem')->stringify;
+  return undef unless Path::Tiny::path($cert)->exists;
+  my $chain = Path::Tiny::path( $self->dir )->child('chain.pem')->stringify;
   my $bundle = eval { SICK::Bundle->from_files( cert => $cert, ( -s $chain ? ( chain => $chain ) : () ) ) };
   return $bundle if $bundle;
   my $error = $@;
@@ -219,20 +220,29 @@ C<< unreachable: cannot read certificate file ... >>.
 #### internals
 
 # Write one file under a temporary name in the target directory, mode set
-# before any content goes in. Returns the temporary path.
+# before any content goes in. Returns the temporary path. The file is
+# created by File::Temp (O_EXCL, mode 0600) and filled in place: not with
+# spew, which writes a file of its own with a mode from the umask.
 sub _stage {
   my ( $self, $name, $content, $mode ) = @_;
   my $dir = $self->dir;
-  my $tmp = eval { File::Temp->new( DIR => $dir, TEMPLATE => '.'.$name.'.XXXXXXXX', UNLINK => 0 ) }
+  my $aside = eval { Path::Tiny->tempfile( DIR => $dir, TEMPLATE => '.'.$name.'.XXXXXXXX', UNLINK => 0 ) }
     or die 'cannot write \''.$dir.'/'.$name.'\': '.( $! ? $! : 'cannot create a temporary file' )."\n";
-  my $path = $tmp->filename;
-  my $ok = chmod( $mode, $path ) && print( {$tmp} $content ) && close($tmp);
+  my $ok = eval { $aside->chmod($mode); $aside->append_raw($content); 1 };
   unless ($ok) {
-    my $reason = q{}.$!;
-    unlink $path;
+    my $reason = $self->_reason($@);
+    eval { $aside->remove };
     die 'cannot write \''.$dir.'/'.$name.'\': '.$reason."\n";
   }
-  return $path;
+  return $aside->stringify;
+}
+
+# The reason of the system out of a Path::Tiny exception.
+sub _reason {
+  my ( $self, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  ( $error = defined $error ? $error : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  return length $error ? $error : 'unknown error';
 }
 
 sub _reload {

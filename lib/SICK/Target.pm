@@ -1,12 +1,14 @@
 package SICK::Target;
 # ABSTRACT: Base class and plugin loader for the device types SICK can deploy to
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
+use Module::Runtime qw( use_module );
 use SICK::Bundle;
 use SICK::Names;
 use SICK::OpenSSL;
+use Types::Standard qw( CodeRef HasMethods );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -25,7 +27,9 @@ Using a target:
 Writing one:
 
     package SICK::Target::MyBox;
-    use parent 'SICK::Target';
+    use Moo;
+    extends 'SICK::Target';
+    use namespace::autoclean;
 
     sub required_options { qw( credentials ) }
     sub optional_options { qw( slot ) }
@@ -48,7 +52,9 @@ than core Perl lives in a distribution of its own, C<SICK-Target-*>.
 
 The C<type> of a device in the device list selects the class, see
 L</class_for>. A target class is a subclass of this one and implements
-L</deploy>.
+L</deploy>. This class is a L<Moo> class and a target is best written with
+C<extends>; one written with C<use parent> works as well, also with a
+C<new> of its own that calls C<SUPER::new> and stores more in the object.
 
 =cut
 
@@ -75,16 +81,13 @@ sub class_for {
     unless defined $name;
 
   my $class = 'SICK::Target::'.$name;
-  my $file  = 'SICK/Target/'.$name.'.pm';
-  unless ( $INC{$file} ) {
-    # the one place a module is loaded at run time: its name comes from the
-    # device list
-    my $loaded = eval { require $file; 1 };
-    unless ($loaded) {
-      my $error = $@;
-      $error =~ s/\s+\z//;
-      croak 'cannot load '.$class.' for type \''.$type.'\': '.$error;
-    }
+  # the one place a module is loaded at run time: its name comes from the
+  # device list
+  my $loaded = eval { use_module($class); 1 };
+  unless ($loaded) {
+    my $error = $@;
+    $error =~ s/\s+\z//;
+    croak 'cannot load '.$class.' for type \''.$type.'\': '.$error;
   }
 
   croak $class.' (type \''.$type.'\') is not a SICK::Target' unless $class->isa('SICK::Target');
@@ -113,15 +116,20 @@ implement L</deploy>.
 
 =cut
 
-sub new {
-  my ( $class, %arg ) = @_;
+# The checks and messages of the constructor come first; the types are the
+# second line. A subclass that is not a Moo class (use parent) and has a new
+# of its own calls SUPER::new and lands here as well.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   my $device = $arg{device};
   croak $class.'->new needs a device'
     unless ref $device && eval { $device->can('names') && $device->can('options') };
   croak $class.'->new: log must be a code reference'
     if defined $arg{log} && ref $arg{log} ne 'CODE';
-  return bless { device => $device, log => $arg{log} }, $class;
-}
+  delete $arg{log} unless defined $arg{log};
+  return \%arg;
+};
 
 =method new
 
@@ -133,9 +141,12 @@ something to say. Nothing is checked yet, see L</validate>.
 
 =cut
 
-sub device { $_[0]->{device} }
+has device => ( is => 'ro', isa => HasMethods [qw( names options )], required => 1 );
 
-=method device
+# Private: the public log is the method below, which calls it.
+has _log => ( is => 'ro', isa => CodeRef, init_arg => 'log', predicate => 1 );
+
+=attr device
 
 The L<SICK::Device>.
 
@@ -143,7 +154,7 @@ The L<SICK::Device>.
 
 sub log {
   my ( $self, $message ) = @_;
-  $self->{log}->($message) if $self->{log};
+  $self->_log->($message) if $self->_has_log;
   return;
 }
 

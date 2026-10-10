@@ -10,6 +10,7 @@ requires 'Getopt::Long', '2.39';
 requires 'IO::Handle';
 requires 'IO::Select';
 requires 'MIME::Base64';
+requires 'Module::Runtime';
 requires 'Moo';
 requires 'namespace::autoclean', '0.16';
 requires 'Path::Tiny';

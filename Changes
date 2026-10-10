@@ -78,3 +78,6 @@ Revision history for SICK
     - SICK::Issuer, SICK::Issuer::StepCA and SICK::Issuer::SelfSigned are Moo
       classes; an issuer subclass declares its ca keys with has. An empty
       optional key in the ca section counts as not given.
+    - SICK::Target, SICK::Target::Files and SICK::Target::Acmesh are Moo
+      classes; class_for loads device types with Module::Runtime (new
+      prerequisite). Targets written with use parent keep working.
