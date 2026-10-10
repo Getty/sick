@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-10T23:13:35Z
+created: 2026-10-10T06:23:13Z
+id: 15
+priority: high
+started: 2026-10-10T21:00:35Z
+status: done
+tags:
+- ops
+title: 'P5 Operations: JSON and Prometheus output, timers, CronJob, alerts, inventory'
+updated: 2026-10-10T23:13:47Z
+---
+
+Machine-readable state, scheduling recipes in the repo, notification on failure, an inventory of what was issued. Package, result and 'done when': docs/roadmap.md, section P5 Operations.
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: lifetime of intermediate and root in the path, live fingerprint, last successful issue; thresholds relative to lifetime + recovery budget; inventory of deployed (not only issued) certs; alerts for stale certificate and unreachable CA.
+
+P5 complete: k26+k27+state 4499a46, k24 5a6b5d6, Java note 4734c20, k39+k40 4629ccf, k41 0e2cc27, k42 950bf84 + 593b6f3; e2e all green at 950bf84; open: k43 owner, k44 rolled-back device, k45 run-local labels
