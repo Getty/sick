@@ -1,0 +1,89 @@
+# sick run, started by sick.timer. Afterwards, whatever the run ended with,
+# the metrics for node_exporter's textfile collector and the trust page.
+# When the run fails, sick-notify@sick.service tells somebody.
+#
+#   install -m 0755 contrib/notify/sick-notify /usr/local/bin/
+#   install -m 0644 contrib/systemd/sick.service contrib/systemd/sick.timer \
+#     contrib/systemd/sick-notify@.service /etc/systemd/system/
+#   mkdir -p /srv/trust /var/lib/prometheus/node-exporter
+#   systemctl daemon-reload && systemctl enable --now sick.timer
+#
+# Paths are those of "cpanm SICK" with its scripts in /usr/local/bin; adjust
+# them in a drop-in (systemctl edit sick.service), not here. A drop-in that
+# changes ExecStart= or ExecStopPost= first empties the list ("ExecStart=").
+#
+# The sandbox below allows writing in the state directory, the trust page
+# and the textfile directory only. A device of type "files" writes in its
+# "dir", and its reload may need more - give both in the drop-in:
+#
+#   [Service]
+#   ReadWritePaths=/etc/nginx/tls
+#
+# "systemctl reload <service>" as a reload works inside the sandbox (it asks
+# systemd over D-Bus). Without CapabilityBoundingSet= below, root is plain
+# root with every capability; with it, it reads and writes what root owns
+# and nothing else - see there.
+
+[Unit]
+Description=SICK: renew the certificates of the devices that cannot do it themselves
+Documentation=https://metacpan.org/pod/SICK
+Wants=network-online.target
+After=network-online.target
+OnFailure=sick-notify@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sick run
+
+# Exit code 3: another "sick run" holds the lock of the state directory and
+# nothing was done. That is no failure to report: the run that holds the
+# lock reports its own. systemd never starts this unit twice at once, so the
+# other run is one outside it - a cron job, somebody at the shell, a second
+# unit with the same state directory.
+SuccessExitStatus=3
+
+# Both run after every run, also after a failed one ("-": their own failure
+# does not fail the unit). sick check asks every device and the CA again;
+# its file is replaced at once, so node_exporter reads the old or the new.
+ExecStopPost=-/usr/local/bin/sick check --format prometheus --output /var/lib/prometheus/node-exporter/sick.prom
+ExecStopPost=-/usr/local/bin/sick trust /srv/trust
+
+# A run that hangs ends here and counts as failed (sick removes its
+# temporary keys on the TERM). sick's own timeouts are far shorter.
+TimeoutStartSec=1h
+
+# step and ssh want a writable home; /root is hidden by ProtectHome=. ssh
+# takes its home from the password database, not from $HOME: a device that
+# uses ssh (SICK-Target-CiscoSB) gets "known_hosts: /var/lib/sick/known_hosts".
+Environment=HOME=/var/lib/sick
+StateDirectory=sick
+StateDirectoryMode=0700
+
+# Sandbox
+ProtectSystem=strict
+ReadWritePaths=-/srv/trust -/var/lib/prometheus/node-exporter
+PrivateTmp=yes
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# No capabilities: sick reads its device list, the secrets the list names
+# and the CA's files, which root owns (mode 0600 is fine), and writes in the
+# directories above. Add what your setup needs, for instance:
+#   CAP_DAC_READ_SEARCH  a secret or device directory that belongs to
+#                        another user and is not readable by root's owner bits
+#   CAP_DAC_OVERRIDE     a device "dir" owned by another user
+#   CAP_KILL             a reload that signals a process of another user
+CapabilityBoundingSet=

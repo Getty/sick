@@ -1,0 +1,29 @@
+# /etc/cron.d/sick - sick run once a day, for a machine without systemd.
+#
+#   install -m 0755 contrib/notify/sick-notify /usr/local/bin/
+#   install -m 0644 contrib/cron/sick /etc/cron.d/sick
+#   mkdir -p /var/lib/sick /srv/trust /var/lib/prometheus/node-exporter
+#
+# The run writes its table to /var/lib/sick/last-run.log. When it fails,
+# sick-notify sends that log as configured in /etc/sick/notify.conf. Exit
+# code 3 is left out: another sick run held the lock and this one did
+# nothing - the run that holds it reports its own failure.
+#
+# Afterwards, whatever the run ended with: the metrics for the textfile
+# collector of node_exporter (replaced at once) and the trust page.
+#
+# Mail by cron (MAILTO) is the second channel: what these commands print
+# reaches it, and they print only when something is wrong - sick-notify
+# when it could not deliver, sick check and sick trust when they could not
+# write. Without sick-notify, replace "|| [ $? -eq 3 ] || sick-notify ..."
+# by "|| cat /var/lib/sick/last-run.log": cron then mails the log of a
+# failed run.
+#
+# Pick another minute than 4:17 on each machine, so they do not all ask the
+# CA at once. No "%" in the command: cron would make it a line break.
+
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=root
+
+17 4 * * *  root  sick run >/var/lib/sick/last-run.log 2>&1 || [ $? -eq 3 ] || sick-notify "sick run failed on $(uname -n)" </var/lib/sick/last-run.log; sick check --format prometheus --output /var/lib/prometheus/node-exporter/sick.prom; sick trust /srv/trust >/dev/null

@@ -1,0 +1,24 @@
+# k8s/test with "sick run" as a CronJob instead of the loop in the Pod:
+#
+#   kubectl apply -k k8s/daten       # once: the volumes that stay
+#   kubectl apply -k k8s/cronjob     # instead of k8s/test
+#   kubectl -n dev-sick create job --from=cronjob/sick-run sick-run-now   # one run now
+#
+# The Deployment keeps the CA and the trust page and gains "metrics", which
+# serves the file of "sick check --format prometheus"; its container "sick"
+# goes. What the CA hands over, the trust page and the metrics become
+# volumes, so that the Job's Pod sees them. See k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-sick
+resources:
+  - ../test
+  - volumes.yaml
+  - cronjob.yaml
+  - metrics.yaml
+patches:
+  - path: deployment.yaml
+configMapGenerator:
+  - name: sick-metrics-httpd
+    files:
+      - httpd.conf=metrics-httpd.conf

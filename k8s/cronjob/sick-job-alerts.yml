@@ -1,0 +1,38 @@
+# Alert rules for the CronJob, from kube-state-metrics. Not part of the
+# kustomization: load them where your Prometheus reads rules, together with
+# contrib/prometheus/sick-alerts.yml for what sick check reports. With the
+# Prometheus Operator, put the groups below under the spec of a
+# PrometheusRule:
+#
+#   apiVersion: monitoring.coreos.com/v1
+#   kind: PrometheusRule
+#   metadata: { name: sick, namespace: dev-sick }
+#   spec:
+#     groups: [ ...the list below... ]
+#
+#   promtool test rules sick-job-alerts.test.yml
+
+groups:
+  - name: sick-cronjob
+    rules:
+      # A Job of the CronJob failed: sick run ended with 1 (a device failed
+      # or was deferred) or 2 (the device list is wrong), or the Pod could
+      # not run. The Job is named in the alert; its log says which device:
+      #   kubectl -n dev-sick logs job/<job_name>
+      # It stays as long as the Job does (failedJobsHistoryLimit) - delete
+      # the Job once it is dealt with.
+      - alert: SickJobFailed
+        expr: sum by (namespace, job_name) (kube_job_status_failed{namespace="dev-sick", job_name=~"sick-run-.*"}) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job_name }}: sick run failed, see kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}"
+
+      # No Job has succeeded for two days: failing every day, or not
+      # started at all (suspended, never scheduled, Pod stuck in Pending).
+      - alert: SickCronJobNotSucceeding
+        expr: time() - kube_cronjob_status_last_successful_time{namespace="dev-sick", cronjob="sick-run"} > 2 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "CronJob {{ $labels.cronjob }} has not succeeded for two days"

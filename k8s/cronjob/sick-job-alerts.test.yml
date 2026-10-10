@@ -1,0 +1,42 @@
+# promtool test rules sick-job-alerts.test.yml
+# promtool starts the clock at 0: time() is the evaluation time in seconds.
+
+rule_files:
+  - sick-job-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'kube_job_status_failed{namespace="dev-sick", job_name="sick-run-29000000", reason="BackoffLimitExceeded"}'
+        values: '1x10'
+      - series: 'kube_job_status_failed{namespace="dev-sick", job_name="sick-run-29001440"}'
+        values: '0x10'
+      - series: 'kube_job_status_failed{namespace="other", job_name="sick-run-1"}'
+        values: '1x10'
+      - series: 'kube_job_status_failed{namespace="dev-sick", job_name="backup-1"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SickJobFailed
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: dev-sick, job_name: sick-run-29000000 }
+            exp_annotations:
+              summary: "sick-run-29000000: sick run failed, see kubectl -n dev-sick logs job/sick-run-29000000"
+
+  # last success at 0; two days and one minute later it alerts, a day later not
+  - interval: 1h
+    input_series:
+      - series: 'kube_cronjob_status_last_successful_time{namespace="dev-sick", cronjob="sick-run"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: SickCronJobNotSucceeding
+        exp_alerts: []
+      - eval_time: 49h
+        alertname: SickCronJobNotSucceeding
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: dev-sick, cronjob: sick-run }
+            exp_annotations:
+              summary: "CronJob sick-run has not succeeded for two days"

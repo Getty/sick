@@ -1,0 +1,26 @@
+# Starts sick.service once a day.
+#
+#   systemctl enable --now sick.timer
+#   systemctl list-timers sick.timer
+#
+# The time is 04:17 plus a delay of up to an hour that is random per machine
+# but the same every day (FixedRandomDelay=): many machines do not ask the
+# CA at the same minute, and the runs of one machine stay 24 hours apart. A
+# delay drawn anew every day could bring two runs 23 hours together, and the
+# back-off of a failing device (at most 24 hours less 15 minutes) would then
+# skip a day.
+#
+# Persistent=: a run missed while the machine was off is made up at the next
+# boot.
+
+[Unit]
+Description=SICK: renew certificates daily
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+RandomizedDelaySec=1h
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target

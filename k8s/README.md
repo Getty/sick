@@ -30,6 +30,58 @@ For a look from your machine:
     kubectl -n dev-sick port-forward svc/trust 8080:8080
     kubectl -n dev-sick exec deploy/sick -c sick -- sick check
 
+## `sick run` as a CronJob
+
+[`k8s/cronjob`](cronjob/) is `k8s/test` with the loop replaced by a CronJob:
+
+    kubectl apply -k k8s/daten       # once
+    kubectl apply -k k8s/cronjob     # instead of k8s/test
+    kubectl -n dev-sick create job --from=cronjob/sick-run sick-run-now    # a run now
+    kubectl -n dev-sick logs job/sick-run-now
+
+The CronJob `sick-run` starts a Job at 04:17 UTC that does `sick run`, then -
+whatever it ended with - `sick check --format prometheus` and `sick trust`, as
+`contrib/systemd/sick.service` does on a machine. The Deployment keeps `ca`
+and `trust`, loses `sick` and gains `metrics`.
+
+- **One run at a time.** `concurrencyPolicy: Forbid` holds back a schedule
+  while a Job is active. A Job made by hand (`kubectl create job --from`) is
+  not held back; sick's own lock then ends the second run with exit code 3,
+  which the Job counts as success - nothing was done, and the run that holds
+  the lock reports its own failure.
+- **No retries by Kubernetes** (`backoffLimit: 0`): sick backs off a failing
+  device itself, from one hour to a day. A missed start is made up within
+  four hours (`startingDeadlineSeconds`), a Job that hangs ends after one
+  (`activeDeadlineSeconds`). Three succeeded and three failed Jobs are kept
+  with their logs.
+- **Shared volumes.** What the CA hands over (`sick-handover`), the trust
+  page (`sick-trust`) and the metrics (`sick-metrics`) are claims of their
+  own instead of `emptyDir`, so that the Job's Pod sees them; `sick-state`
+  is the one of `k8s/daten`. They are `ReadWriteOnce`: the Job's Pod is
+  placed on the node of the Deployment's Pod (`podAffinity`) and waits while
+  that Pod is not running. All three are written again - the handover at
+  every start of the CA, the others by every run - and go with
+  `kubectl delete -k k8s/cronjob`.
+- **Metrics.** The Job writes `sick.prom`; the container `metrics` (busybox
+  httpd) serves it as `http://sick-metrics:9101/sick.prom` with the
+  Content-Type Prometheus 3 insists on. The Service carries the usual
+  `prometheus.io/*` annotations; for the Prometheus Operator write a
+  ServiceMonitor for port `metrics`, path `/sick.prom`. A file that stops
+  changing is what `SickCheckStale` of
+  [`contrib/prometheus/sick-alerts.yml`](../contrib/prometheus/sick-alerts.yml)
+  catches. Not a Pushgateway: a pushed value stays forever, and the alerts
+  of a device would outlive it. Not node_exporter's textfile collector: it
+  reads a directory of the node, not a claim.
+- **Alerts on the Job.** [`cronjob/sick-job-alerts.yml`](cronjob/sick-job-alerts.yml)
+  has two rules over kube-state-metrics: `SickJobFailed`
+  (`kube_job_status_failed`, names the Job whose log says which device) and
+  `SickCronJobNotSucceeding` (no success for two days). They are no part of
+  the kustomization, because the PrometheusRule kind exists only with the
+  Prometheus Operator; the file says how to wrap them.
+  `promtool test rules cronjob/sick-job-alerts.test.yml` tests them.
+
+`t/e2e/ops.sh k8s` runs all this in a throw-away k3d cluster.
+
 ## Yours to set
 
 Do it in an overlay that names `k8s/test` as its resource:

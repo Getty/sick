@@ -1,0 +1,15 @@
+# sick.prom inside the cluster. A Prometheus that discovers Services by the
+# usual annotations scrapes it; for the Prometheus Operator write a
+# ServiceMonitor with port "metrics" and path /sick.prom.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sick-metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9101"
+    prometheus.io/path: /sick.prom
+spec:
+  selector: { app: sick }
+  ports:
+    - { name: metrics, port: 9101, targetPort: metrics }

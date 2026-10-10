@@ -1,0 +1,34 @@
+# What the Pod of the Deployment and the Pods of the CronJob share, beside
+# sick-state from k8s/daten. All three are written again: the handover at
+# every start of the CA, the trust page and the metrics by every run.
+# ReadWriteOnce: the Job's Pod is placed on the node of the Deployment's
+# Pod (podAffinity in cronjob.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sick-handover    # root, intermediate and provisioner password, from the CA
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 16Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sick-trust       # output of "sick trust"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sick-metrics     # sick.prom of "sick check --format prometheus"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 16Mi

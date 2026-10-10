@@ -1,0 +1,14 @@
+# /etc/sick/notify.conf - where sick-notify sends a failed run.
+# Paths and addresses only: the secret of a webhook is the file it names.
+# Read by sick-notify, never executed; an unknown key is an error.
+
+# The first line of this file is the URL of the webhook (mode 0600).
+webhook_url_file = /etc/sick/notify-webhook.url
+# The CA curl verifies the webhook with; default the system store.
+#webhook_cacert = /etc/sick/root_ca.pem
+#timeout = 20
+
+# Mail through the local sendmail (postfix, exim, msmtp-mta, nullmailer).
+#mail_to = ops@example.org
+#mail_from = sick@host.example.org
+#sendmail = /usr/sbin/sendmail

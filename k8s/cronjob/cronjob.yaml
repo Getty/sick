@@ -1,0 +1,94 @@
+# sick run once a day as a Job, then - whatever it ended with - the metrics
+# and the trust page, as contrib/systemd/sick.service does on a machine.
+#
+#   kubectl -n dev-sick create job --from=cronjob/sick-run sick-run-now
+#   kubectl -n dev-sick logs job/sick-run-now
+#
+# A failed run is a failed Job: the alert SickJobFailed of
+# sick-job-alerts.yml (kube-state-metrics) reports it, by name.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sick-run
+spec:
+  schedule: "17 4 * * *"
+  timeZone: Etc/UTC
+  # One run at a time: the next schedule is skipped while a Job is active.
+  # A Job made by hand (kubectl create job --from) is not held back by
+  # this; sick's own lock then ends the second run with exit code 3, which
+  # the script below counts as success.
+  concurrencyPolicy: Forbid
+  # A start missed by up to four hours (controller down, cluster upgrade)
+  # is made up; after that the next day's run takes over.
+  startingDeadlineSeconds: 14400
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # No retry by Kubernetes: sick backs off a failing device itself (1 h
+      # up to 24 h), an immediate retry would only ask the CA again.
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          # not "app: sick": the Services select that label
+          labels: { app.kubernetes.io/name: sick-run }
+        spec:
+          restartPolicy: Never
+          # The volumes are ReadWriteOnce: run on the node of the CA's Pod.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels: { app: sick }
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: sick
+              image: sick:local
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  sick run --verbose
+                  rc=$?
+                  sick check --format prometheus --output /srv/metrics/sick.prom \
+                    || echo "sick check: exit $? - sick.prom names the device"
+                  sick trust /srv/trust >/dev/null \
+                    || echo "sick trust: exit $?, the trust page was not updated"
+                  if [ "$rc" -eq 3 ]; then
+                    echo "sick run: exit 3, another sick run holds the lock - nothing done, no failure"
+                    exit 0
+                  fi
+                  echo "sick run: exit $rc"
+                  exit "$rc"
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: "1", memory: 256Mi }
+              volumeMounts:
+                - { name: config, mountPath: /etc/sick/sick.yml, subPath: sick.yml, readOnly: true }
+                - { name: secrets, mountPath: /etc/sick/secrets, readOnly: true }
+                - { name: handover, mountPath: /etc/sick/ca, readOnly: true }
+                - { name: state, mountPath: /var/lib/sick }
+                - { name: trust, mountPath: /srv/trust }
+                - { name: metrics, mountPath: /srv/metrics }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: config
+              configMap: { name: sick-config }
+            - name: secrets
+              secret: { secretName: sick-secrets, optional: true }
+            - name: handover
+              persistentVolumeClaim: { claimName: sick-handover, readOnly: true }
+            - name: state
+              persistentVolumeClaim: { claimName: sick-state }
+            - name: trust
+              persistentVolumeClaim: { claimName: sick-trust }
+            - name: metrics
+              persistentVolumeClaim: { claimName: sick-metrics }
+            # where a new key exists for a moment: memory only
+            - name: tmp
+              emptyDir: { medium: Memory, sizeLimit: 16Mi }

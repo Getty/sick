@@ -185,3 +185,17 @@ Revision history for SICK
       relative to each device's renew_before, tested with promtool.
     - SICK::Issuer gains health (step-ca: step ca health with a 10-second
       timeout); the states of SICK::Runner->check gain presented.
+    - contrib/systemd: sick.service and sick.timer (daily, randomized per
+      machine but fixed, catches up after downtime); afterwards always the
+      Prometheus textfile and the trust page; on failure
+      sick-notify@.service; exit code 3 (lock held) is no failure.
+    - contrib/notify/sick-notify: sends the failed run to a webhook (URL
+      from a file, never in an argument or the output) and/or by mail,
+      configured in /etc/sick/notify.conf.
+    - contrib/cron/sick: a cron.d line that notifies on failure except for
+      exit code 3, writes the textfile and the trust page.
+    - k8s/cronjob: sick run as a CronJob (Forbid, no retries), metrics
+      served for Prometheus, alert rules for failed Jobs.
+    - t/e2e/ops.sh: container tests for the notifications, the alert rules
+      against real output of sick check (stale device, unreachable CA), and
+      the CronJob in a k3d cluster.

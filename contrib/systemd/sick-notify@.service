@@ -1,0 +1,29 @@
+# Tells somebody that a unit failed: OnFailure=sick-notify@%n.service in
+# sick.service starts sick-notify@sick.service. sick-notify takes the lines
+# of the failed run from the journal and sends them as configured in
+# /etc/sick/notify.conf (see contrib/notify/sick-notify).
+#
+#   install -m 0755 contrib/notify/sick-notify /usr/local/bin/
+#
+# Try it without waiting for a failure:
+#
+#   systemctl start sick-notify@sick.service
+
+[Unit]
+Description=SICK: report that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sick-notify -u %i "%i failed on %H"
+
+# Lighter than sick.service on purpose: a local sendmail writes into its
+# spool under /var and may need root's capabilities to do so, and a mail
+# client may read its configuration from root's home.
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes

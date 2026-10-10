@@ -1,0 +1,84 @@
+# Added to docker/compose.yml by t/e2e/ops.sh (docker compose -f ... -f this
+# file). The shipped file stays as it is. This one
+#   - publishes no port (ports: !reset) and labels every container, volume
+#     and network sick=1;
+#   - adds the "device" web of run-local.sh (t/e2e/web-serve.sh) and a
+#     webhook receiver, "hook" (t/e2e/webhook-receiver.py);
+#   - gives the sick service what the cron line of contrib/cron/sick needs:
+#     sick-notify from contrib/notify, /etc/sick/notify.conf with its files,
+#     and the textfile directory of node_exporter.
+#
+# SICK_OPS_HERE is the directory of this file, SICK_OPS_WORK the private
+# working directory of the script (both set by ops.sh).
+
+services:
+
+  ca:
+    labels: { sick: "1" }
+    ports: !reset []
+
+  trust:
+    labels: { sick: "1" }
+    ports: !reset []
+
+  sick:
+    labels: { sick: "1" }
+    volumes:
+      - devfiles:/srv/device
+      - ${SICK_OPS_HERE:?set by ops.sh}/../../contrib/notify/sick-notify:/usr/local/bin/sick-notify:ro
+      - ${SICK_OPS_WORK:?set by ops.sh}/notify.conf:/etc/sick/notify.conf:ro
+      - ${SICK_OPS_WORK:?set by ops.sh}/notify:/etc/sick/notify:ro
+    tmpfs:
+      - /var/lib/prometheus/node-exporter:mode=0755,size=1m
+
+  web:
+    labels: { sick: "1" }
+    image: ${SICK_IMAGE:-sick:local}
+    pull_policy: never
+    init: true
+    stop_grace_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/usr/local/bin/web-serve.sh"]
+    tmpfs:
+      - /tmp:mode=0700,size=4m
+    volumes:
+      - devfiles:/srv/device:ro
+      - ${SICK_OPS_HERE:?set by ops.sh}/web-serve.sh:/usr/local/bin/web-serve.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:443 </dev/null >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  hook:
+    labels: { sick: "1" }
+    image: ${SICK_OPS_PYTHON_IMAGE:-python:3}
+    user: "65534:65534"
+    init: true
+    stop_grace_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python3", "-I", "-u", "/usr/local/lib/webhook-receiver.py"]
+    volumes:
+      - ${SICK_OPS_HERE:?set by ops.sh}/webhook-receiver.py:/usr/local/lib/webhook-receiver.py:ro
+      - ${SICK_OPS_WORK:?set by ops.sh}/hook:/etc/hook:ro
+    healthcheck:
+      test: ["CMD", "python3", "-I", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 3s
+
+volumes:
+  ca: { labels: { sick: "1" } }
+  handover: { labels: { sick: "1" } }
+  state: { labels: { sick: "1" } }
+  trust: { labels: { sick: "1" } }
+  devfiles: { labels: { sick: "1" } }
+
+networks:
+  default: { labels: { sick: "1" } }

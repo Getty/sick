@@ -1,0 +1,44 @@
+# The Deployment of k8s/test without its "sick" container: the CronJob runs
+# sick now. Handover and trust page move from emptyDir to volumes the Job
+# shares; "metrics" serves sick.prom for Prometheus.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sick
+spec:
+  template:
+    spec:
+      containers:
+        - name: sick
+          $patch: delete
+        # sick.prom as written by the last Job, for Prometheus to scrape
+        # (Service sick-metrics). A file that stops changing is caught by
+        # the alert SickCheckStale of contrib/prometheus/sick-alerts.yml.
+        - name: metrics
+          image: busybox:1.37
+          command: [httpd, -f, -p, "9101", -h, /srv/metrics, -c, /etc/httpd.conf]
+          securityContext:
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          ports:
+            - { name: metrics, containerPort: 9101 }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 32Mi }
+          volumeMounts:
+            - { name: metrics, mountPath: /srv/metrics, readOnly: true }
+            - { name: metrics-httpd, mountPath: /etc/httpd.conf, subPath: httpd.conf, readOnly: true }
+      volumes:
+        - name: handover
+          emptyDir: null
+          persistentVolumeClaim: { claimName: sick-handover }
+        - name: trust
+          emptyDir: null
+          persistentVolumeClaim: { claimName: sick-trust }
+        - name: metrics
+          persistentVolumeClaim: { claimName: sick-metrics }
+        - name: metrics-httpd
+          configMap: { name: sick-metrics-httpd }

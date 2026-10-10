@@ -1,0 +1,219 @@
+#!/bin/sh
+#
+# sick-notify - tell somebody that a sick run failed.
+#
+#   sick-notify [-c <config>] [-u <unit>] <subject>
+#
+# The message is read from standard input, or with -u from the journal of
+# a systemd unit: the lines of the failed run when OnFailure= started us
+# ($MONITOR_INVOCATION_ID, systemd 250 and newer), else the last 50 lines
+# of the unit (journalctl -u <unit> -n 50). It goes to a webhook (an HTTP
+# POST with a JSON body), by mail (sendmail), or both - whatever the
+# configuration names. Used by contrib/systemd/sick-notify@.service
+# (OnFailure= of sick.service) and by the cron line in contrib/cron/sick.
+#
+# The configuration (-c, else $SICK_NOTIFY_CONFIG, else /etc/sick/notify.conf)
+# holds paths and addresses, never a secret. One "key = value" per line,
+# "#" starts a comment; it is read, never executed:
+#
+#   webhook_url_file = /etc/sick/notify-webhook.url
+#                      # a file whose first line is the URL of the webhook.
+#                      # The URL often is the secret (Slack, Mattermost,
+#                      # Teams, ntfy with a token in the path): keep the file
+#                      # mode 0600. It reaches curl through its standard
+#                      # input, not its arguments, and is never printed.
+#   webhook_cacert   = /etc/sick/root_ca.pem
+#                      # optional: the CA file curl verifies the webhook
+#                      # with, e.g. your own root (default: the system store)
+#   mail_to          = ops@example.org
+#                      # optional: recipient(s), separated by commas
+#   mail_from        = sick@host.example.org     # optional
+#   sendmail         = /usr/sbin/sendmail        # optional, this default
+#   timeout          = 20                        # optional: seconds per webhook call
+#
+# The JSON body is {"text": ..., "subject": ..., "host": ...}: "text" is the
+# subject, an empty line and the message, which is what Slack, Mattermost and
+# Rocket.Chat show; other receivers can take the fields apart.
+#
+# Exit codes: 0 delivered on at least one way (a way that failed is still
+# reported on standard error), 1 nothing could be delivered or nothing is
+# configured, 2 the command line or the configuration is wrong.
+#
+# POSIX sh; needs curl for the webhook and a sendmail for mail.
+
+set -u
+
+me=sick-notify
+say() { printf '%s: %s\n' "$me" "$*" >&2; }
+usage() {
+  say "$*"
+  printf 'usage: %s [-c <config>] [-u <unit>] <subject>\n' "$me" >&2
+  exit 2
+}
+
+config=${SICK_NOTIFY_CONFIG:-/etc/sick/notify.conf}
+unit=
+while getopts c:u:h option; do
+  case $option in
+    c) config=$OPTARG ;;
+    u) unit=$OPTARG ;;
+    h) printf 'usage: %s [-c <config>] [-u <unit>] <subject>\n' "$me"; exit 0 ;;
+    *) usage 'unknown option' ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ "$#" -eq 1 ] || usage 'needs exactly one subject'
+subject=$1
+[ -n "$subject" ] || usage 'the subject is empty'
+
+#### configuration
+
+webhook_url_file= webhook_cacert= mail_to= mail_from= sendmail=/usr/sbin/sendmail timeout=20
+
+[ -r "$config" ] || { say "cannot read the configuration '$config'"; exit 2; }
+line_no=0
+while IFS= read -r line || [ -n "$line" ]; do
+  line_no=$((line_no + 1))
+  line=${line%%#*}
+  case $line in *[![:space:]]*) ;; *) continue ;; esac
+  case $line in *=*) ;; *) say "$config line $line_no: not 'key = value'"; exit 2 ;; esac
+  key=$(printf '%s' "${line%%=*}" | tr -d '[:space:]')
+  value=$(printf '%s' "${line#*=}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  case $key in
+    webhook_url_file) webhook_url_file=$value ;;
+    webhook_cacert) webhook_cacert=$value ;;
+    mail_to) mail_to=$value ;;
+    mail_from) mail_from=$value ;;
+    sendmail) sendmail=$value ;;
+    timeout)
+      case $value in '' | *[!0-9]*) say "$config line $line_no: timeout must be a number of seconds"; exit 2 ;; esac
+      timeout=$value
+      ;;
+    *) say "$config line $line_no: unknown key '$key'"; exit 2 ;;
+  esac
+done <"$config"
+
+[ -n "$webhook_url_file" ] || [ -n "$mail_to" ] \
+  || { say "$config names neither webhook_url_file nor mail_to: nothing to deliver to"; exit 1; }
+
+#### the message
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/sick-notify.XXXXXXXX") || { say 'cannot make a temporary directory'; exit 1; }
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ -n "$unit" ]; then
+  # Started by OnFailure=, systemd says which run of the unit failed: then
+  # its lines, and only those; else the last 50 lines of the unit.
+  if [ -n "${MONITOR_INVOCATION_ID:-}" ] && [ "${MONITOR_UNIT:-}" = "$unit" ]; then
+    printf '%s: result %s, %s %s\n\n' "$unit" "${MONITOR_SERVICE_RESULT:-?}" \
+      "${MONITOR_EXIT_CODE:-exit}" "${MONITOR_EXIT_STATUS:-?}" >"$work/message"
+    set -- "_SYSTEMD_INVOCATION_ID=$MONITOR_INVOCATION_ID"
+  else
+    : >"$work/message"
+    set -- -u "$unit"
+  fi
+  journalctl "$@" -n 50 --no-pager -o short-iso >>"$work/message" 2>"$work/journal.err" \
+    || printf '(journalctl %s failed: %s)\n' "$*" "$(head -n 1 "$work/journal.err")" >>"$work/message"
+else
+  cat >"$work/message"
+fi
+[ -s "$work/message" ] || printf '(no message)\n' >"$work/message"
+
+host=$(hostname 2>/dev/null || uname -n)
+
+#### webhook
+
+# a JSON string: backslash and quote escaped, lines joined with \n, a tab
+# as a space, other control characters dropped
+json() {
+  tr '\t' ' ' \
+    | tr -d '\000-\010\013-\037\177' \
+    | sed 's/\\/\\\\/g; s/"/\\"/g' \
+    | awk 'BEGIN { printf "\"" } NR > 1 { printf "%s", "\\n" } { printf "%s", $0 } END { printf "\"" }'
+}
+
+delivered=0
+failed=0
+
+send_webhook() {
+  if [ ! -r "$webhook_url_file" ]; then
+    say "webhook: cannot read '$webhook_url_file'"
+    return 1
+  fi
+  url=
+  IFS= read -r url <"$webhook_url_file" || [ -n "$url" ] || { say "webhook: '$webhook_url_file' is empty"; return 1; }
+  case $url in
+    https://* | http://*) ;;
+    *) say "webhook: the first line of '$webhook_url_file' is no http(s) URL"; return 1 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { say 'webhook: curl is not installed'; return 1; }
+
+  {
+    printf '{"text":'
+    { printf '%s\n\n' "$subject"; cat "$work/message"; } | json
+    printf ',"subject":'
+    printf '%s' "$subject" | json
+    printf ',"host":'
+    printf '%s' "$host" | json
+    printf '}\n'
+  } >"$work/body.json"
+
+  # The URL goes to curl as a config line on its standard input: in the
+  # argument list every user of the machine could read it. curl's own error
+  # text may hold the host or the URL; it is not shown.
+  escaped=$(printf '%s' "$url" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  set -- --silent --show-error --max-time "$timeout" --output /dev/null --write-out '%{http_code}' \
+    --header 'Content-Type: application/json' --data-binary "@$work/body.json" --config -
+  [ -z "$webhook_cacert" ] || set -- --cacert "$webhook_cacert" "$@"
+  code=$(printf 'url = "%s"\n' "$escaped" | curl "$@" 2>"$work/curl.err")
+  rc=$?
+  unset url escaped
+  if [ "$rc" -ne 0 ]; then
+    say "webhook: curl failed with exit code $rc (see 'man curl', EXIT CODES)"
+    return 1
+  fi
+  case $code in
+    2??) say "webhook: delivered (HTTP $code)"; return 0 ;;
+    *) say "webhook: the receiver answered HTTP $code"; return 1 ;;
+  esac
+}
+
+send_mail() {
+  [ -x "$sendmail" ] || { say "mail: '$sendmail' is not an executable program"; return 1; }
+  {
+    printf 'To: %s\n' "$mail_to"
+    [ -z "$mail_from" ] || printf 'From: %s\n' "$mail_from"
+    printf 'Subject: %s\n' "$subject"
+    printf 'Content-Type: text/plain; charset=UTF-8\n'
+    printf 'Auto-Submitted: auto-generated\n'
+    printf '\n'
+    tr -d '\000-\010\013-\037\177' <"$work/message"
+  } >"$work/mail.txt"
+  if [ -n "$mail_from" ]; then
+    "$sendmail" -t -oi -f "$mail_from" <"$work/mail.txt"
+  else
+    "$sendmail" -t -oi <"$work/mail.txt"
+  fi
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    say "mail: $sendmail ended with exit code $rc"
+    return 1
+  fi
+  say "mail: handed to $sendmail for $mail_to"
+  return 0
+}
+
+if [ -n "$webhook_url_file" ]; then
+  if send_webhook; then delivered=$((delivered + 1)); else failed=$((failed + 1)); fi
+fi
+if [ -n "$mail_to" ]; then
+  if send_mail; then delivered=$((delivered + 1)); else failed=$((failed + 1)); fi
+fi
+
+if [ "$delivered" -eq 0 ]; then
+  say "nothing could be delivered: $subject"
+  exit 1
+fi
+exit 0
