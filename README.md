@@ -179,6 +179,14 @@ iPhone, iPad, Android, macOS, Windows and the browsers themselves are written
 from the documentation of those platforms and have not been walked through
 on a device yet.
 
+## The handbook
+
+[docs/handbook/](docs/handbook/README.md) leads from nothing to a running
+internal CA: planning, the CA with an offline root, clients, devices,
+services, operations and emergencies. It grows with the
+[roadmap](docs/roadmap.md); the chapters on planning, the CA and the CA side
+of emergencies are there.
+
 ## With Docker
 
 [docker/](docker/README.md) is the whole thing in three containers: a step-ca
