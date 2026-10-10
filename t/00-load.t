@@ -18,6 +18,7 @@ for (qw(
   SICK::Names
   SICK::OpenSSL
   SICK::Runner
+  SICK::State
   SICK::Target
   SICK::Target::Acmesh
   SICK::Target::Files

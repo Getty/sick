@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use Test::More;
+use Fcntl qw( LOCK_EX LOCK_NB LOCK_UN );
 use File::Path ();
 use File::Temp qw( tempdir );
 use IO::Socket::INET;
@@ -63,7 +64,8 @@ sub program {
 
 my $number = 0;
 
-# a device list with a self-signed CA; returns its path
+# a device list with a self-signed CA and a state directory of its own;
+# returns its path
 sub list {
   my ( $devices, %ca ) = @_;
   my $path = $tmp.'/list'.++$number.'.yml';
@@ -71,8 +73,32 @@ sub list {
   spew( $path,
     "ca:\n".join( q{}, map { '  '.$_.': '.$section{$_}."\n" } sort keys %section )
       ."defaults:\n  lifetime: 40d\n  renew_before: 10d\n  key: ec256\n"
+      ."state: ".state_of($path)."\n"
       ."devices:\n".$devices );
   return $path;
+}
+
+sub state_of { $_[0] =~ s/list([0-9]+)\.yml\z/state$1/r }
+
+# takes the lock of a state directory the way another sick run would
+sub hold_lock {
+  my ( $dir, $content ) = @_;
+  File::Path::make_path($dir);
+  open my $fh, '>>', $dir.'/sick.lock' or die 'cannot open the lock: '.$!;
+  flock $fh, LOCK_EX | LOCK_NB or die 'cannot take the lock: '.$!;
+  if ( defined $content ) {
+    truncate $fh, 0;
+    print {$fh} $content;
+    $fh->flush;
+  }
+  return $fh;
+}
+
+sub lock_is_free {
+  my ( $dir ) = @_;
+  open my $fh, '>>', $dir.'/sick.lock' or return 0;
+  my $free = flock $fh, LOCK_EX | LOCK_NB;
+  return $free ? 1 : 0;
 }
 
 sub files_device {
@@ -90,7 +116,7 @@ subtest 'help and version' => sub {
     like $out, qr/^Usage:\n  sick \[--config <file>\] check/, '... and prints the usage';
     like $out, qr/^  \Q$_\E\b/m, '... naming '.$_ for qw( check run trust );
     like $out, qr/--\Q$_\E\b/, '... and --'.$_ for qw( config force dry-run verbose help version );
-    like $out, qr/^  0 .*\n  1 .*\n  2 /m, '... and the exit codes';
+    like $out, qr/^  0 .*\n  1 .*\n  2 .*\n  3  run: another sick run holds the lock/m, '... and the exit codes';
     is $err, q{}, '... nothing on standard error';
   }
   is_deeply [ cli( 'run', '--help' ) ], [ 0, SICK::CLI->usage, q{} ], '--help wins wherever it stands';
@@ -250,6 +276,110 @@ subtest 'a device that fails is exit code 1, and the others go on' => sub {
   like $out, qr/^stuck   failed  missing  deploy failed: reload failed \(exit 3\): the service is down; and stays down\n\z/m,
     '... with the error on one line of the table';
   unlike $out.$err, qr/ at \S+ line \d+/, '... and without the place in the code';
+};
+
+subtest 'one run at a time' => sub {
+  my $path  = list( files_device('locked') );
+  my $state = state_of($path);
+  my $lock  = $state.'/sick.lock';
+
+  {
+    my $held = hold_lock( $state, "4242\n" );
+    my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+    is $code, 3, 'while another run holds the lock: exit code 3';
+    is $err, "sick: another sick run holds the lock '$lock' (pid 4242)\n", '... naming the lock and its holder';
+    is $out, q{}, '... and doing nothing';
+    ok !-e $tmp.'/locked', '... to any device';
+
+    truncate $held, 0;
+    ( $code, $out, $err ) = cli( 'run', '--force', '--config', $path, 'locked' );
+    is $code, 3, 'a holder that has not written its pid yet: exit code 3';
+    is $err, "sick: another sick run holds the lock '$lock'\n", '... without a pid';
+
+    ( $code, $out, $err ) = program( 'run', '--config', $path );
+    is $code, 3, 'bin/sick exits with 3 as well';
+    like $err, qr/^sick: another sick run holds the lock '\Q$lock\E'\n\z/, '... saying why';
+
+    ( $code, $out, $err ) = cli( 'check', '--config', $path );
+    is $code, 0, 'check takes no lock';
+    like $out, qr/^locked  missing/m, '... and looks';
+    ( $code, $out, $err ) = cli( 'run', '--dry-run', '--config', $path );
+    is $code, 0, 'neither does a dry run';
+    like $out, qr/^locked  would-renew  missing/m, '... which says what would be done';
+    ( $code, $out, $err ) = cli( 'trust', '--config', $path, $tmp.'/trust/locked' );
+    is $code, 0, 'nor trust';
+  }
+
+  my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  is $code, 0, 'once the other run is gone: exit code 0';
+  like $out, qr/^locked  renewed  missing/m, '... renewed';
+  is slurp($lock), $$."\n", 'the lock file names the last run';
+  ok lock_is_free($state), 'the lock is released after the run';
+  ok -s $state.'/devices/locked.json', 'the record is written';
+};
+
+subtest 'the lock goes with a run that dies' => sub {
+  my $path  = list( files_device('dying') );
+  my $state = state_of($path);
+  {
+    no warnings 'redefine';
+    local *SICK::Runner::run = sub { die "the run fell over\n" };
+    my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+    is $code, 1, 'a run that dies: exit code 1';
+    is $err, "sick: the run fell over\n", '... saying why';
+    ok -e $state.'/sick.lock', 'the lock had been taken';
+    ok lock_is_free($state), '... and is free again';
+  }
+  my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  is $code, 0, 'the next run works';
+};
+
+subtest 'a state directory that cannot be used' => sub {
+  my $file = spew( $tmp.'/plain-file', "not a directory\n" );
+  my $path = list( files_device('homeless') );
+  spew( $path, slurp($path) =~ s/^state: .*$/state: $file\/state/mr );
+  my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  is $code, 1, 'run: exit code 1';
+  like $err, qr/^sick: cannot take the lock '\Q$file\E\/state\/sick\.lock': \S.*\n\z/, '... with path and reason';
+  ok !-e $tmp.'/homeless', '... and nothing done';
+  ( $code, $out, $err ) = cli( 'check', '--config', $path );
+  is $code, 0, 'check does not need it';
+};
+
+subtest 'a record that cannot be written' => sub {
+  my $path   = list( files_device('unrecorded') );
+  my $record = state_of($path).'/devices/unrecorded.json';
+  File::Path::make_path($record);
+  my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  like $out, qr/^unrecorded  renewed  missing\n/m, 'the device is renewed';
+  is $code, 1, '... but without its record the run is exit code 1';
+  like $err, qr/^sick: unrecorded: cannot read state record '\Q$record\E': Is a directory; cannot write state record '\Q$record\E': \S/m,
+    '... saying why';
+};
+
+subtest 'a device that keeps failing is deferred' => sub {
+  # a directory below a plain file: every deployment fails before it writes
+  my $file = spew( $tmp.'/flaky-file', "not a directory\n" );
+  my $path = list( "  flaky:\n    type: files\n    names: [flaky.example.internal]\n    dir: $file/certs\n" );
+  my ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  is $code, 1, 'first run: exit code 1';
+  like $out, qr/^flaky   failed  missing  deploy failed: /m, '... deploy failed';
+
+  ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  is $code, 1, 'second run: still exit code 1, the device is not served';
+  like $out, qr/^flaky   deferred  missing  back-off after 1 failure, next attempt \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\n\z/m,
+    '... deferred, saying until when';
+
+  ( $code, $out, $err ) = cli( 'run', '--force', '--config', $path );
+  like $out, qr/^flaky   failed  missing  deploy failed: /m, '--force tries again';
+  like slurp( state_of($path).'/devices/flaky.json' ), qr/"consecutive_failures"\s*:\s*2/, '... and that counts';
+  unlike slurp( state_of($path).'/devices/flaky.json' ), qr/PRIVATE KEY|key\.pem/, 'no key in the record';
+
+  my $broken = state_of($path).'/devices/flaky.json';
+  spew( $broken, "{oops\n" );
+  ( $code, $out, $err ) = cli( 'run', '--config', $path );
+  like $err, qr/^sick: flaky: cannot read state record '\Q$broken\E': not valid JSON\n/m, 'a broken record is reported';
+  like $out, qr/^flaky   failed  missing  deploy failed: /m, '... and the device worked on as if it had none';
 };
 
 subtest 'trust' => sub {

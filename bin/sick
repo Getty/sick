@@ -74,14 +74,38 @@ certificate.
     grafana  renewed    missing
 
 The actions are C<unchanged>, C<renewed>, C<would-renew> (with
-C<--dry-run>) and C<failed>. A device that fails does not stop the others.
+C<--dry-run>), C<failed> and C<deferred>. A device that fails does not stop
+the others.
+
+C<deferred> is a device whose last attempts failed after the decision to
+renew - the CA refused or could not be reached, the deployment or the
+second look failed. Its next attempt waits 1 hour after the first failure,
+then 2, 4, 8, 16 and at most 24 hours, less a grace of 15 minutes so that
+a daily timer does not skip a day; until then nothing is issued for it
+and the error says
+C<back-off after 3 failures, next attempt 2026-10-11 08:17:00 UTC>. It
+counts as failed for the exit code. C<unchanged> or C<renewed> ends the
+back-off; an unreachable device changes nothing in it. The certificate of a
+failed attempt is not revoked: its key existed only in a private temporary
+directory and is gone, so the certificate is useless and expires unused.
+
+Only one C<sick run> works at a time: it takes the lock F<sick.lock> in the
+state directory, and a second run ends with exit code C<3> and
+C<another sick run holds the lock '/var/lib/sick/sick.lock' (pid 4242)>.
+The lock goes with the process. C<check>, C<trust> and C<run --dry-run> take
+no lock.
+
+A run keeps one record per device in the state directory,
+F<devices/E<lt>nameE<gt>.json>: the last look, the last certificate issued,
+the last deployment, the failures in a row and the back-off - never a key
+(L<SICK::Runner/"Records and back-off">).
 
 =over 4
 
 =item C<--force>, C<-f>
 
-Renew also certificates that are fine. A device that cannot be reached
-still fails.
+Renew also certificates that are fine, and devices in their back-off. A
+device that cannot be reached still fails.
 
 =item C<--dry-run>, C<-n>
 
@@ -156,13 +180,30 @@ Nothing failed.
 
 =item C<1>
 
-At least one device failed (C<run>) or could not be checked (C<check>), or
-C<trust> could not write its files.
+At least one device failed or was deferred (C<run>) or could not be checked
+(C<check>), or C<trust> could not write its files, or C<run> could not use
+its state directory.
 
 =item C<2>
 
 The command line or the device list is wrong: unknown command, option or
 device, a list that cannot be read or is not valid.
+
+=item C<3>
+
+C<run> did nothing: another C<sick run> holds the lock of the state
+directory.
+
+=back
+
+=head1 FILES
+
+=over 4
+
+=item F</var/lib/sick>
+
+The state directory, C<state> in the device list: F<sick.lock> and
+F<devices/E<lt>nameE<gt>.json> (L<SICK::State>).
 
 =back
 

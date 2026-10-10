@@ -245,6 +245,19 @@ subtest 'additional roots of a root replacement' => sub {
     qr/^list\.yml: ca\.root: must be a plain value/, 'every other key of ca stays a plain value';
 };
 
+subtest 'the state directory' => sub {
+  is( SICK::Config->load_string( $minimal, 'list.yml' )->state_dir, '/var/lib/sick', 'without state: /var/lib/sick' );
+  is( SICK::Config->load($example)->state_dir, '/var/lib/sick', '... also for the example' );
+  is( SICK::Config->load_string( "state: /srv/sick/state\n".$minimal, 'list.yml' )->state_dir,
+    '/srv/sick/state', 'state as written' );
+  is( SICK::Config->load_string( "state: '0700'\n".$minimal, 'list.yml' )->state_dir, '0700', '... as plain text' );
+
+  like error_of( "state: [a, b]\n".$minimal ), qr/^list\.yml: state: must be the path of a directory/, 'a list';
+  like error_of( "state:\n  dir: /x\n".$minimal ), qr/^list\.yml: state: must be the path of a directory/, 'a mapping';
+  like error_of( "state: ''\n".$minimal ), qr/^list\.yml: state: must be the path of a directory/, 'empty';
+  like error_of( "state:\n".$minimal ), qr/^list\.yml: state: must be the path of a directory/, 'no value';
+};
+
 subtest 'invalid values' => sub {
   my $device = "devices:\n  ant:\n    type: files\n    names: [ant.example.internal]\n";
 
@@ -279,7 +292,7 @@ subtest 'invalid values' => sub {
 };
 
 subtest 'files that are no device list' => sub {
-  like error_of("- a\n- b\n"), qr/^list\.yml: must be a mapping with the keys ca, defaults, devices/, 'a list';
+  like error_of("- a\n- b\n"), qr/^list\.yml: must be a mapping with the keys ca, defaults, devices, state/, 'a list';
   like error_of(q{}), qr/^list\.yml: must contain exactly one YAML document/, 'an empty file';
   like error_of("--- {}\n--- {}\n"), qr/^list\.yml: must contain exactly one YAML document/, 'two documents';
   like error_of("devices: [unclosed\n"), qr/^list\.yml: invalid YAML: \S/, 'broken YAML';

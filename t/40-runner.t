@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use Test::More;
+use File::Path ();
 use File::Temp qw( tempdir );
 use IO::Socket::INET;
 use lib 't/lib';
@@ -12,7 +13,10 @@ use SICK::Issuer;
 use SICK::Issuer::SelfSigned;
 use SICK::OpenSSL;
 use SICK::Runner;
+use SICK::State;
 use SICK::Target::Files;
+use JSON::MaybeXS qw( decode_json );
+use POSIX qw( strftime );
 use Test::SICK::PKI qw( new_ca new_cert new_csr slurp spew );
 
 # SICK::Runner with the SelfSigned issuer and the files target: the four
@@ -586,6 +590,267 @@ subtest 'a bundle whose key does not belong to its certificate is not deployed' 
   is $count{lazy_deploy}, undef, '... and never handed to the target';
   ok !-e $tmp.'/mismatch', 'the device is untouched';
   is_deeply leftovers(), [], 'no temporary directory is left';
+};
+
+#### the state: records and back-off
+
+my $states = 0;
+
+# a fresh state directory
+sub new_state { SICK::State->new( dir => $tmp.'/state-'.++$states ) }
+
+sub record {
+  my ( $state, $name ) = @_;
+  my $path = $state->record_path($name);
+  return -e $path ? decode_json( slurp($path) ) : undef;
+}
+
+sub iso { strftime( '%Y-%m-%dT%H:%M:%SZ', gmtime $_[0] ) }
+sub utc { strftime( '%Y-%m-%d %H:%M:%S UTC', gmtime $_[0] ) }
+
+subtest 'construction with a state' => sub {
+  my $config = SICK::Config->load_string( "devices:\n".device_yaml('web'), 'list.yml' );
+  my $state  = new_state();
+  my $runner = SICK::Runner->new( config => $config, issuer => $issuer, state => $state );
+  ok $runner->has_state, 'has_state';
+  is $runner->state, $state, 'state';
+  ok !SICK::Runner->new( config => $config, issuer => $issuer )->has_state, 'without one: has_state is false';
+  ok !eval { SICK::Runner->new( config => $config, issuer => $issuer, state => '/var/lib/sick' ); 1 },
+    'a state that is a path dies';
+  like $@, qr/^SICK::Runner->new: state must be a SICK::State/, '... saying so';
+};
+
+subtest 'the record after a run' => sub {
+  %count = ();
+  my $state  = new_state();
+  my $runner = runner( "devices:\n".device_yaml('kept'), state => $state );
+  local $now = time + 60;
+
+  $runner->check;
+  ok !-e $state->dir, 'check writes nothing';
+  is_deeply brief( $runner->run( [], dry_run => 1 ) ), [ [ 'kept', 'would-renew', 'missing' ] ], 'dry run';
+  ok !-e $state->dir, '... writes nothing either';
+
+  my @results = $runner->run;
+  is_deeply brief(@results), [ [ 'kept', 'renewed', 'missing' ] ], 'run: renewed';
+  is $results[0]{state_error}, undef, '... and the record was written';
+  my $deployed = SICK::Bundle->from_files( cert => $tmp.'/kept/cert.pem' );
+  my $record   = record( $state, 'kept' );
+  is $state->record_path('kept'), $state->dir.'/devices/kept.json', 'one file per device';
+  is $record->{device}, 'kept', 'the record names the device';
+  is_deeply $record->{last_check},
+    { time => iso($now), status => 'missing', detail => 'the device presents no certificate', fingerprint_sha256 => undef, not_after => undef },
+    'last_check: what the first look saw';
+  is_deeply $record->{last_issue},
+    {
+      time               => iso($now),
+      serial             => $deployed->serial,
+      fingerprint_sha256 => $deployed->fingerprint_sha256,
+      names              => ['kept.example.internal'],
+      not_after          => iso( $deployed->not_after ),
+      issuer             => $deployed->issuer_dn
+    },
+    'last_issue: the facts of the certificate the device presents now';
+  like $record->{last_issue}{serial}, qr/\A[0-9A-F]+\z/, '... with its serial';
+  is_deeply $record->{last_deploy}, { time => iso($now), result => 'ok', error => undef }, 'last_deploy: ok';
+  is $record->{last_success}, iso($now), 'last_success';
+  is $record->{consecutive_failures}, 0, 'no failures';
+  ok exists $record->{next_attempt} && !defined $record->{next_attempt}, 'no back-off';
+  is( ( stat $state->record_path('kept') )[2] & 07777, 0644, 'the record is 0644: there is no secret in it' );
+  is( ( stat $state->dir.'/devices' )[2] & 07777, 0755, '... in a directory of 0755' );
+
+  local $now = $now + 3600;
+  is_deeply brief( $runner->run ), [ [ 'kept', 'unchanged', 'ok' ] ], 'second run: unchanged';
+  my $second = record( $state, 'kept' );
+  is_deeply [ @{ $second->{last_check} }{qw( time status fingerprint_sha256 not_after )} ],
+    [ iso($now), 'ok', $deployed->fingerprint_sha256, iso( $deployed->not_after ) ],
+    'last_check: the live certificate';
+  is_deeply $second->{last_issue}, $record->{last_issue}, 'last_issue: unchanged';
+  is $second->{last_success}, iso($now), 'last_success: this run';
+  is $count{issue}, 1, 'one certificate in all';
+};
+
+subtest 'a device whose deployment keeps failing is deferred' => sub {
+  %count = ();
+  my $state  = new_state();
+  my $runner = runner( "devices:\n".device_yaml( 'shaky', type => 'fragile' ), state => $state );
+  local $switch{fragile} = 1;
+  local $now  = time + 60;
+  my $start   = $now;
+
+  is_deeply brief( $runner->run ), [ [ 'shaky', 'failed', 'missing' ] ], 'first attempt: failed';
+  my $record = record( $state, 'shaky' );
+  is $record->{consecutive_failures}, 1, 'one failure';
+  is $record->{next_attempt}, iso( $start + 3600 ), 'next attempt in an hour';
+  is_deeply $record->{last_deploy}, { time => iso($now), result => 'failed', error => 'deploy failed: the device hung up' },
+    'last_deploy: failed, with the error';
+  is_deeply $record->{last_failure}, { time => iso($now), error => 'deploy failed: the device hung up' }, 'last_failure';
+  ok $record->{last_issue}{fingerprint_sha256}, 'the discarded certificate is on record';
+  ok !exists $record->{last_success}, 'no success yet';
+
+  $now = $start + 3600 - 15 * 60 - 1;
+  my @results = $runner->run;
+  is_deeply brief(@results), [ [ 'shaky', 'deferred', 'missing' ] ], 'a second before the grace: deferred';
+  is $results[0]{error}, 'back-off after 1 failure, next attempt '.utc( $start + 3600 ), '... saying until when';
+  is $count{issue}, 1, '... nothing issued';
+  is $count{fragile_deploy}, 1, '... nothing deployed';
+  is record( $state, 'shaky' )->{last_check}{time}, iso($now), 'the look is on record';
+  is record( $state, 'shaky' )->{consecutive_failures}, 1, '... and the count unchanged';
+
+  my $before = slurp( $state->record_path('shaky') );
+  is_deeply brief( $runner->run( [], dry_run => 1 ) ), [ [ 'shaky', 'deferred', 'missing' ] ], 'a dry run says deferred too';
+  is slurp( $state->record_path('shaky') ), $before, '... and writes nothing';
+
+  # 1, 2, 4, 8, 16, 24, 24 hours
+  my $at = $start + 3600;
+  for my $step ( [ 2, 2 ], [ 3, 4 ], [ 4, 8 ], [ 5, 16 ], [ 6, 24 ], [ 7, 24 ] ) {
+    my ( $failures, $hours ) = @$step;
+    $now = $at;
+    is_deeply brief( $runner->run ), [ [ 'shaky', 'failed', 'missing' ] ], 'attempt '.$failures.' when due: failed';
+    $record = record( $state, 'shaky' );
+    is $record->{consecutive_failures}, $failures, '... '.$failures.' failures';
+    is $record->{next_attempt}, iso( $at + $hours * 3600 ), '... next attempt '.$hours.' hours later';
+    $at += $hours * 3600;
+  }
+  is $count{issue}, 7, 'one certificate per attempt, none in between';
+
+  $now = $at - 15 * 60 - 1;
+  @results = $runner->run;
+  is_deeply brief(@results), [ [ 'shaky', 'deferred', 'missing' ] ], 'deferred again';
+  is $results[0]{error}, 'back-off after 7 failures, next attempt '.utc($at), '... in the plural';
+  is_deeply brief( $runner->run( [], force => 1 ) ), [ [ 'shaky', 'failed', 'missing' ] ], 'force ignores the back-off';
+  is $count{issue}, 8, '... and issues';
+  is record( $state, 'shaky' )->{consecutive_failures}, 8, '... and its failure counts';
+
+  # a daily timer: back after about 24 hours, a little early or late
+  $at = $now + 86400;
+  is record( $state, 'shaky' )->{next_attempt}, iso($at), 'the cap: 24 hours';
+  $now = $at - 15 * 60 - 1;
+  is_deeply brief( $runner->run ), [ [ 'shaky', 'deferred', 'missing' ] ], 'a second before the grace: deferred';
+  is $count{issue}, 8, '... nothing issued';
+  $now = $at - 15 * 60;
+  is_deeply brief( $runner->run ), [ [ 'shaky', 'failed', 'missing' ] ], '15 minutes early: due, and tried';
+  is $count{issue}, 9, '... issuing';
+  is record( $state, 'shaky' )->{consecutive_failures}, 9, '... and counting';
+
+  $switch{fragile} = 0;
+  $now = $now + 86400;
+  is_deeply brief( $runner->run ), [ [ 'shaky', 'renewed', 'missing' ] ], 'the device is fixed: renewed';
+  $record = record( $state, 'shaky' );
+  is $record->{consecutive_failures}, 0, 'the count starts over';
+  ok !defined $record->{next_attempt}, '... without back-off';
+  is $record->{last_success}, iso($now), 'last_success';
+  is_deeply $record->{last_deploy}, { time => iso($now), result => 'ok', error => undef }, 'last_deploy: ok';
+  is $record->{last_issue}{fingerprint_sha256}, fingerprint_in( $tmp.'/shaky' ), 'last_issue: the one deployed';
+  is $record->{last_failure}{error}, 'deploy failed: the device hung up', 'the last failure stays on record';
+  is_deeply leftovers(), [], 'no temporary directory is left';
+};
+
+subtest 'a device that is fine ends the back-off' => sub {
+  my $state  = new_state();
+  my $runner = runner( "devices:\n".device_yaml('steady'), state => $state );
+  local $now = time + 60;
+  is_deeply brief( $runner->run ), [ [ 'steady', 'renewed', 'missing' ] ], 'renewed';
+  $state->update( 'steady', { consecutive_failures => 3, next_attempt => iso( $now + 7200 ) } );
+  is_deeply brief( $runner->run ), [ [ 'steady', 'unchanged', 'ok' ] ], 'a back-off does not matter for a device that is fine';
+  my $record = record( $state, 'steady' );
+  is $record->{consecutive_failures}, 0, '... and is reset';
+  ok !defined $record->{next_attempt}, '... completely';
+};
+
+subtest 'a device that is not judged changes nothing in the back-off' => sub {
+  %count = ();
+  my $state  = new_state();
+  my $runner = runner(
+    "devices:\n".device_yaml( 'gone', host => '127.0.0.1', port => $closed_port ).device_yaml( 'odd', type => 'no-such-type' ),
+    state => $state
+  );
+  local $now = time + 60;
+  $state->update( 'gone', { consecutive_failures => 2, next_attempt => iso( $now + 3600 ), owner => 'netops' } );
+
+  is_deeply brief( $runner->run ), [ [ 'gone', 'failed', 'unreachable' ], [ 'odd', 'failed', 'error' ] ],
+    'unreachable and error, not deferred';
+  my $gone = record( $state, 'gone' );
+  is $gone->{consecutive_failures}, 2, 'unreachable: the count stays';
+  is $gone->{next_attempt}, iso( $now + 3600 ), '... and so does the next attempt';
+  is $gone->{last_check}{status}, 'unreachable', '... the look is on record';
+  like $gone->{last_check}{detail}, qr/^127\.0\.0\.1:$closed_port: \S/, '... with the reason';
+  is $gone->{owner}, 'netops', 'a field SICK does not know is kept';
+
+  my $odd = record( $state, 'odd' );
+  is $odd->{last_check}{status}, 'error', 'error: on record';
+  ok !exists $odd->{consecutive_failures}, '... and no failure counted';
+  is $count{issue}, undef, 'nothing issued';
+};
+
+subtest 'a CA that refuses counts toward the back-off' => sub {
+  %count = ();
+  local $switch{ca_refuses} = 1;
+  my $state  = new_state();
+  my $runner = runner( "devices:\n".device_yaml( 'refused', type => 'fragile' ), state => $state );
+  local $now = time + 60;
+  is_deeply brief( $runner->run ), [ [ 'refused', 'failed', 'missing' ] ], 'failed';
+  my $record = record( $state, 'refused' );
+  is $record->{consecutive_failures}, 1, 'counted';
+  is $record->{next_attempt}, iso( $now + 3600 ), '... with a back-off';
+  like $record->{last_failure}{error}, qr/^issuing failed: step failed/, 'last_failure: the words of the CA';
+  ok !exists $record->{last_issue}, 'nothing issued';
+  ok !exists $record->{last_deploy}, 'nothing deployed';
+  is_deeply brief( $runner->run ), [ [ 'refused', 'deferred', 'missing' ] ], 'the next run waits';
+  is $count{issue}, 1, '... and does not ask the CA';
+};
+
+subtest 'a record that cannot be read' => sub {
+  my $state  = new_state();
+  my $runner = runner( "devices:\n".device_yaml('broken').device_yaml('listed').device_yaml('blocked'), state => $state );
+  local $now = time + 60;
+  my %path = map { $_ => $state->record_path($_) } qw( broken listed blocked );
+  File::Path::make_path( $state->dir.'/devices', $path{blocked} );
+  spew( $path{broken}, "{\"consecutive_failures\": 3, \"next_attempt\": \"2999-01-01T00:00:00Z\"" );
+  spew( $path{listed}, "[1, 2]\n" );
+
+  my @results = $runner->run;
+  is_deeply brief(@results), [ [ 'broken', 'renewed', 'missing' ], [ 'listed', 'renewed', 'missing' ], [ 'blocked', 'renewed', 'missing' ] ],
+    'every device is worked on as if it had no record';
+  is $results[0]{state_error}, 'cannot read state record \''.$path{broken}.'\': not valid JSON', 'broken JSON: path and reason';
+  is $results[1]{state_error}, 'cannot read state record \''.$path{listed}.'\': not a JSON object', 'no object';
+  like $results[2]{state_error},
+    qr/^cannot read state record '\Q$path{blocked}\E': Is a directory; cannot write state record '\Q$path{blocked}\E': \S/,
+    'a directory in its place: cannot be read, and not written either';
+  is record( $state, 'broken' )->{consecutive_failures}, 0, 'the broken record is replaced';
+  is record( $state, 'listed' )->{device}, 'listed', '... and so is the list';
+  ok( ( grep { /\Abroken: cannot read state record / } @log ), 'the problem is logged' );
+
+  SKIP: {
+    skip 'root reads every file', 2 unless $>;
+    my $locked = $state->record_path('broken');
+    chmod 0000, $locked;
+    my @again = $runner->run( ['broken'] );
+    is $again[0]{action}, 'unchanged', 'an unreadable record: the device is worked on';
+    like $again[0]{state_error}, qr/^cannot read state record '\Q$locked\E': Permission denied/, '... and the record reported';
+    chmod 0644, $locked;
+  }
+};
+
+subtest 'the file of a device' => sub {
+  my $state = SICK::State->new( dir => '/var/lib/sick' );
+  is $state->record_path('switch'),     '/var/lib/sick/devices/switch.json',       'a plain name';
+  is $state->record_path('core-sw_1.a'), '/var/lib/sick/devices/core-sw_1.a.json', 'dots, dashes and underscores stay';
+  is $state->record_path('../up'),      '/var/lib/sick/devices/%2E.%2Fup.json',    'no way out of the directory';
+  is $state->record_path('two words'),  '/var/lib/sick/devices/two%20words.json',  'a space';
+  is $state->lock_path, '/var/lib/sick/sick.lock', 'the lock';
+  ok !eval { SICK::State->new( dir => q{} ); 1 }, 'an empty directory dies';
+  like $@, qr/^SICK::State->new needs the state directory/, '... saying so';
+};
+
+subtest 'no record holds a key' => sub {
+  my @records = glob $tmp.'/state-*/devices/*.json';
+  cmp_ok scalar @records, '>=', 8, 'there are records to look at';
+  for my $path (@records) {
+    my $text = slurp($path);
+    unlike $text, qr/PRIVATE KEY/, $path.': no private key';
+    unlike $text, qr/key\.pem/,    '... and no path of one';
+  }
 };
 
 done_testing;

@@ -149,3 +149,14 @@ Revision history for SICK
       only when an anchor was really there, and "not installed" otherwise,
       like Debian and RHEL; trust anchor --remove exits 0 also when nothing
       matched.
+    - sick run keeps one record per device in the state directory (new key
+      'state', default /var/lib/sick): last look, last certificate issued
+      (serial, fingerprint, names, until, issuer), last deployment, failures
+      in a row and back-off; never a key.
+    - sick run takes a lock in the state directory; a second run exits with
+      the new exit code 3. check, trust and run --dry-run take no lock.
+    - A device whose attempt failed after the decision to renew is deferred
+      for 1, 2, 4 ... at most 24 hours, less a 15-minute grace (action
+      'deferred', exit code 1); --force tries anyway. Discarded certificates
+      are not revoked: their key never left a private temporary directory.
+    - SICK::Bundle has serial.

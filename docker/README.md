@@ -109,7 +109,7 @@ paths are those inside the `sick` container:
 | `/etc/sick/sick.yml` | your device list |
 | `/etc/sick/secrets/` | your secrets directory |
 | `/etc/sick/ca/root_ca.crt`, `intermediate_ca.crt`, `provisioner.pw` | handed over by the `ca` service |
-| `/var/lib/sick/` | state: the `known_hosts` of `ssh`. A good place for the `dir` of a `files` device, too |
+| `/var/lib/sick/` | state: the `known_hosts` of `ssh`, the lock of `sick run` (`sick.lock`) and one record per device (`devices/<name>.json`, never a key). A good place for the `dir` of a `files` device, too |
 | `/srv/trust/` | output of `sick trust` |
 | `/tmp/` | memory only; where a new key lies for a moment |
 

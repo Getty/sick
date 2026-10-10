@@ -79,7 +79,9 @@ grafana  renewed    missing
 - **`sick run [--force] [--dry-run] [--verbose] [device ...]`** – check, issue,
   deploy, check again. A device that fails does not stop the others.
   `--dry-run` only says what would be renewed, `--force` renews also what is
-  fine, `--verbose` reports each step on standard error.
+  fine and ignores the back-off, `--verbose` reports each step on standard
+  error. A device whose last attempts failed is `deferred` until its back-off
+  is over ([below](#how-it-works)).
 - **`sick trust <directory>`** – writes `root_ca.pem`, `root_ca.crt` (DER),
   `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac), install and
   remove scripts (`trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`,
@@ -97,8 +99,16 @@ The list is `--config <file>`, else `$SICK_CONFIG`, else `/etc/sick/sick.yml`.
 | Exit code | |
 |---|---|
 | `0` | nothing failed |
-| `1` | at least one device failed, or could not be checked |
+| `1` | at least one device failed, was deferred, or could not be checked |
 | `2` | the command line or the device list is wrong |
+| `3` | `sick run` only: another `sick run` holds the lock of the state directory; nothing was done |
+
+One `sick run` at a time: a run takes an exclusive lock on
+`<state>/sick.lock` and a second one ends at once with
+`another sick run holds the lock '/var/lib/sick/sick.lock' (pid 4242)` and
+exit code 3. The lock goes with the process, also when it dies or is killed;
+there is nothing to clean up. `sick check`, `sick run --dry-run` and
+`sick trust` take no lock.
 
 SICK is no daemon. Renewal is `sick run` in a timer or a cron job; a run
 changes nothing when everything is current.
@@ -293,6 +303,27 @@ directory (mode 0700). That directory is removed when the step is over, also
 when it fails or `sick` is interrupted or terminated – only a `kill -9` leaves
 it behind.
 
+`sick run` keeps one record per device in the state directory
+(`/var/lib/sick/devices/<name>.json`, JSON): the last look (status,
+fingerprint, until when), the last certificate issued (serial, fingerprint,
+names, until when, issuer), the last deployment and its result, the last
+success, the number of failures in a row and the back-off. Never a key or the
+path of one. A record that cannot be read is reported and counts as empty.
+
+When an attempt fails after the decision to renew – the CA refuses or cannot
+be reached, the deployment or the second look fails – the next attempt for
+that device waits 1 hour, then 2, 4, 8, 16 and at most 24 hours, less a
+grace of 15 minutes, so that a daily timer does not skip a day. Until then
+`sick run` reports it as `deferred` (`back-off after 3 failures, next
+attempt 2026-10-11 08:17:00 UTC`), issues nothing for it and exits with 1.
+`--force` tries anyway; `unchanged` or `renewed` ends the back-off. A device
+that is unreachable changes nothing: it never got a certificate.
+
+The certificate of a failed attempt is thrown away, not revoked: its key
+existed only in that private temporary directory and is gone, so the
+certificate is of no use to anybody and expires unused. The back-off keeps a
+device that keeps failing from collecting such certificates on every run.
+
 ## The device list
 
 | Section | Keys |
@@ -300,6 +331,7 @@ it behind.
 | `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `intermediates`, `additional_roots`, `provisioner`, `password_file`, `step`, `dir` |
 | `defaults` | `lifetime` (`397d`), `renew_before` (`30d`), `key` (`rsa2048`) |
 | `devices.<name>` | `type` and `names` (required), `host`, `port` (`443`), `lifetime`, `renew_before`, `key`, plus the options of the type |
+| `state` | the state directory: lock and records of `sick run` (`/var/lib/sick`) |
 
 Durations are a number with a unit: `397d`, `12h`, `45m`, `90s`. Key types are
 `rsa2048`, `rsa3072`, `rsa4096` and `ec256`. Host names end up as DNS SANs, IP

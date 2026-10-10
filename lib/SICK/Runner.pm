@@ -3,9 +3,11 @@ package SICK::Runner;
 
 use Moo;
 use Carp qw( croak );
+use POSIX qw( strftime );
 use SICK::Decision;
 use SICK::Target;
 use Time::HiRes ();
+use Time::Local qw( timegm );
 use Types::Standard qw( CodeRef HasMethods Maybe Num Str );
 use namespace::autoclean;
 
@@ -87,6 +89,8 @@ around BUILDARGS => sub {
     unless ref $arg{config} && eval { $arg{config}->can('devices') && $arg{config}->can('device') };
   croak 'SICK::Runner->new needs an issuer'
     unless ref $arg{issuer} && eval { $arg{issuer}->can('issue') && $arg{issuer}->can('root_pem') };
+  croak 'SICK::Runner->new: state must be a SICK::State'
+    if defined $arg{state} && !( ref $arg{state} && eval { $arg{state}->can('read') && $arg{state}->can('update') } );
   for my $code (qw( now log )) {
     croak 'SICK::Runner->new: '.$code.' must be a code reference'
       if defined $arg{$code} && ref $arg{$code} ne 'CODE';
@@ -95,7 +99,7 @@ around BUILDARGS => sub {
     croak 'SICK::Runner->new: '.$seconds.' must be a number of seconds'
       if defined $arg{$seconds} && $arg{$seconds} !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
   }
-  delete @arg{ grep { !defined $arg{$_} } qw( now log verify_timeout verify_interval ) };
+  delete @arg{ grep { !defined $arg{$_} } qw( state now log verify_timeout verify_interval ) };
   return \%arg;
 };
 
@@ -104,6 +108,7 @@ around BUILDARGS => sub {
     my $runner = SICK::Runner->new(
       config => $config,           # SICK::Config
       issuer => $issuer,           # SICK::Issuer
+      state  => $state,            # optional: SICK::State, records and back-off
       now    => sub { time },      # optional: the clock of the decision
       log    => sub { ... },       # optional: called with one line of text
     );
@@ -129,6 +134,17 @@ The L<SICK::Config>.
 =attr issuer
 
 The L<SICK::Issuer>.
+
+=cut
+
+has state => ( is => 'ro', isa => HasMethods [qw( read update )], predicate => 1 );
+
+=attr state
+
+Optional. A L<SICK::State>: when it is there, L</run> keeps a record per
+device and defers devices whose last attempts failed (see
+L</"Records and back-off">); L</has_state> says whether it is. Without it
+a run remembers nothing, as before. L</check> never touches it.
 
 =cut
 
@@ -247,10 +263,11 @@ sub run {
 Does the four steps for every device and returns one hash reference each:
 
     {
-      device => 'switch',
-      action => 'renewed',
-      reason => 'expiring',
-      error  => undef,
+      device      => 'switch',
+      action      => 'renewed',
+      reason      => 'expiring',
+      error       => undef,
+      state_error => undef,
     }
 
 C<action> is
@@ -277,13 +294,77 @@ C<error> says what went wrong and at which step: C<unreachable: ...> or
 another message from the first look (C<reason> is C<unreachable> or
 C<error> then), C<certificate request failed: ...>,
 C<issuing failed: ...> - with the words of the CA -,
-C<deploy failed: ...> or C<verification failed: ...>.
+C<not deployed: ...>, C<deploy failed: ...> or C<verification failed: ...>.
+
+=item C<deferred>
+
+Only with a L</state>: the certificate is due, for C<reason>, but the last
+attempts for this device failed and the next one is not due yet. Nothing
+was issued. C<error> says
+C<< back-off after <N> failures, next attempt <YYYY-MM-DD HH:MM:SS> UTC >>.
+The device is not served, so a caller counts it as failed.
 
 =back
 
 C<force> renews also when the certificate is fine; C<reason> is C<forced>
-then. It does not override C<unreachable>: a device that cannot be asked
-which certificate it presents cannot be asked afterwards either.
+then. It also ignores the back-off. It does not override C<unreachable>: a
+device that cannot be asked which certificate it presents cannot be asked
+afterwards either.
+
+C<state_error> is C<undef> unless the record of the device could not be
+read (C<< cannot read state record '<path>': <reason> >>; the run went on
+as if there was none) or written (C<< cannot write state record '<path>':
+<reason> >>). Both messages are also logged.
+
+=head2 Records and back-off
+
+With a L</state>, C<run> - not C<dry_run>, not L</check> - writes the
+record of each device it worked on (L<SICK::State/update>). Times are UTC
+in ISO 8601 (C<2026-10-10T04:17:00Z>):
+
+    {
+      "device": "switch",
+      "last_check": {                    # the first look of this run
+        "time": "...", "status": "expiring", "detail": "valid until ...",
+        "fingerprint_sha256": "...",     # null without a certificate
+        "not_after": "..."
+      },
+      "last_issue": {                    # the last certificate issued for it
+        "time": "...", "serial": "...", "fingerprint_sha256": "...",
+        "names": [ "switch.example.internal" ], "not_after": "...",
+        "issuer": "CN=Example Intermediate CA"
+      },
+      "last_deploy": { "time": "...", "result": "ok", "error": null },
+      "last_failure": { "time": "...", "error": "deploy failed: ..." },
+      "last_success": "...",             # last run that ended unchanged or renewed
+      "consecutive_failures": 0,
+      "next_attempt": null               # the back-off, or null
+    }
+
+C<last_check> has C<status> C<unreachable> or C<error> when the device
+could not be judged. C<last_issue> is written as soon as a certificate is
+issued, also when it never reaches the device. C<last_deploy> has
+C<result> C<ok> or C<failed>; it is written when a certificate was handed
+to the target or refused before (C<not deployed: ...>). A record never
+holds a key or the path of one.
+
+An attempt that fails after the decision to renew - the request of the
+device, the CA (also a CA that cannot be reached), the key check, the
+deployment, the second look - counts: C<consecutive_failures> goes up by
+one and C<next_attempt> is the time of that attempt plus
+S<2^(failures-1)> hours, at most 24: 1, 2, 4, 8, 16, 24, 24 ... hours.
+Until then a run reports the device as C<deferred> instead of issuing
+again. The device is due 15 minutes before C<next_attempt> already, so that
+a daily timer, which comes back after about 24 hours, does not miss the
+cap by seconds and skip a day. C<unchanged> and C<renewed> set the count to C<0> and
+C<next_attempt> to null. A device that is C<unreachable>, or that cannot be
+judged (C<error>), changes neither: nothing was issued for it.
+
+The certificate of a failed attempt is thrown away and not revoked. Its key
+existed only in memory and in a private temporary directory
+(L<SICK::Temp>) and is gone, so nobody can use the certificate; it
+expires unused. The back-off is what keeps a device that keeps failing from
+collecting such certificates - and the CA from being asked - on every run.
 
 Croaks with C<< unknown device '<name>' >> before anything is done.
 
@@ -362,27 +443,77 @@ sub _look {
 sub _run_device {
   my ( $self, $device, %opt ) = @_;
   my $name   = $device->name;
-  my %result = ( device => $name, action => 'failed', reason => undef, error => undef );
+  my $now    = $self->now->();
+  my %result = ( device => $name, action => 'failed', reason => undef, error => undef, state_error => undef );
+
+  # What this run learns about the device, written once at the end; a dry
+  # run and a runner without a state remember nothing.
+  my $keep = $self->has_state && !$opt{dry_run};
+  my ( $record, %update ) = ( {} );
+  if ( $self->has_state ) {
+    my $problem;
+    ( $record, $problem ) = $self->state->read($name);
+    if ( defined $problem ) {
+      $result{state_error} = $problem;
+      $self->_log( $name.': '.$problem );
+    }
+  }
+  my $done = sub {
+    $self->_save( $name, \%update, \%result ) if $keep;
+    return \%result;
+  };
   my $failed = sub {
     $result{error} = $_[0];
     $self->_log( $name.': '.$_[0] );
-    return \%result;
+    return $done->();
+  };
+  # A failed attempt to renew: counts toward the back-off.
+  my $attempt_failed = sub {
+    my ( $error ) = @_;
+    my $failures = $self->_failures($record) + 1;
+    my $hours    = $failures > 5 ? 24 : 2**( $failures - 1 );
+    %update = (
+      %update,
+      consecutive_failures => $failures,
+      next_attempt         => $self->_iso( $now + $hours * 3600 ),
+      last_failure         => { time => $self->_iso($now), error => $error },
+    );
+    return $failed->($error);
+  };
+  my $deploy_failed = sub {
+    my ( $error ) = @_;
+    $update{last_deploy} = { time => $self->_iso( $self->now->() ), result => 'failed', error => $error };
+    return $attempt_failed->($error);
   };
 
   my ( $target, $presented, $decision ) = eval { $self->_look($device) };
   unless ($decision) {
     my $error = $self->_message($@);
     $result{reason} = $error =~ /\Aunreachable: / ? 'unreachable' : 'error';
+    $update{last_check} = $self->_check_record( $now, $result{reason}, $error =~ s/\Aunreachable: //r );
     return $failed->($error);
   }
+  $update{last_check} = $self->_check_record( $now, $decision->{reason}, $decision->{detail}, $presented );
 
   $result{reason} = $decision->{reason};
   unless ( $decision->{renew} ) {
     unless ( $opt{force} ) {
       $result{action} = 'unchanged';
-      return \%result;
+      %update = ( %update, $self->_success($now) );
+      return $done->();
     }
     $result{reason} = 'forced';
+  }
+
+  # Due from a quarter of an hour before next_attempt: a daily timer looks
+  # at the device at about the same time as the day before, and would
+  # otherwise miss the 24 hours by seconds and skip a day.
+  my $next = $opt{force} ? undef : $self->_epoch( $record->{next_attempt} );
+  if ( defined $next && $now < $next - $self->_grace ) {
+    my $failures = $self->_failures($record);
+    $result{action} = 'deferred';
+    return $failed->( 'back-off after '.$failures.' failure'.( $failures == 1 ? q{} : 's' )
+        .', next attempt '.strftime( '%Y-%m-%d %H:%M:%S UTC', gmtime $next ) );
   }
   $self->_log( $name.': '.$result{reason}.' ('.$decision->{detail}.')' );
 
@@ -394,32 +525,104 @@ sub _run_device {
   my $spec = $device->spec;
   my $csr;
   eval { $csr = $target->csr($spec); 1 }
-    or return $failed->( 'certificate request failed: '.$self->_message($@) );
+    or return $attempt_failed->( 'certificate request failed: '.$self->_message($@) );
 
   $self->_log( $name.': '
       .( defined $csr ? 'having the request of the device signed' : 'issuing a certificate' )
       .' for '.join( ', ', @{ $spec->{names} } ) );
   my $bundle = eval { defined $csr ? $self->issuer->sign( $csr, $spec ) : $self->issuer->issue($spec) };
-  return $failed->( 'issuing failed: '.$self->_message($@) ) unless ref $bundle;
+  return $attempt_failed->( 'issuing failed: '.$self->_message($@) ) unless ref $bundle;
+  $update{last_issue} = $self->_issue_record($bundle) if $keep;
 
   # A certificate published beside a key that is not its own breaks the
   # service; it is found out here, before the target is asked for anything.
   if ( defined $bundle->key ) {
     my $matches = eval { $bundle->key_matches };
-    return $failed->( 'not deployed: '.$self->_message($@) ) unless defined $matches;
-    return $failed->('not deployed: the private key does not belong to the certificate') unless $matches;
+    return $deploy_failed->( 'not deployed: '.$self->_message($@) ) unless defined $matches;
+    return $deploy_failed->('not deployed: the private key does not belong to the certificate') unless $matches;
   }
 
   $self->_log( $name.': deploying' );
   eval { $target->deploy($bundle); 1 }
-    or return $failed->( 'deploy failed: '.$self->_message($@) );
+    or return $deploy_failed->( 'deploy failed: '.$self->_message($@) );
 
   my $problem = $self->_verify( $target, $bundle );
-  return $failed->( 'verification failed: '.$problem ) if defined $problem;
+  return $deploy_failed->( 'verification failed: '.$problem ) if defined $problem;
 
   $self->_log( $name.': renewed, the device presents the new certificate' );
   $result{action} = 'renewed';
-  return \%result;
+  %update = (
+    %update,
+    last_deploy => { time => $self->_iso( $self->now->() ), result => 'ok', error => undef },
+    $self->_success($now),
+  );
+  return $done->();
+}
+
+#### records
+
+sub _grace { 15 * 60 }
+
+sub _iso {
+  my ( $self, $epoch ) = @_;
+  return defined $epoch ? strftime( '%Y-%m-%dT%H:%M:%SZ', gmtime $epoch ) : undef;
+}
+
+# The epoch of a time in a record; undef for anything that is not one.
+sub _epoch {
+  my ( $self, $text ) = @_;
+  return undef unless defined $text && !ref $text;
+  my ( $y, $m, $d, $hh, $mm, $ss ) = $text =~ /\A([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z\z/
+    or return undef;
+  my $epoch = eval { timegm( $ss, $mm, $hh, $d, $m - 1, $y ) };
+  return $epoch;
+}
+
+sub _failures {
+  my ( $self, $record ) = @_;
+  my $count = $record->{consecutive_failures};
+  return defined $count && !ref $count && $count =~ /\A[0-9]{1,6}\z/ ? $count + 0 : 0;
+}
+
+sub _success {
+  my ( $self, $now ) = @_;
+  return ( last_success => $self->_iso($now), consecutive_failures => 0, next_attempt => undef );
+}
+
+sub _check_record {
+  my ( $self, $now, $status, $detail, $presented ) = @_;
+  return {
+    time               => $self->_iso($now),
+    status             => $status,
+    detail             => $detail,
+    fingerprint_sha256 => $presented ? $presented->fingerprint_sha256 : undef,
+    not_after          => $presented ? $self->_iso( $presented->not_after ) : undef,
+  };
+}
+
+# Facts of the certificate only: never the key, never where it is.
+sub _issue_record {
+  my ( $self, $bundle ) = @_;
+  my %facts = eval {
+    (
+      serial             => $bundle->serial,
+      fingerprint_sha256 => $bundle->fingerprint_sha256,
+      names              => $bundle->names,
+      not_after          => $self->_iso( $bundle->not_after ),
+      issuer             => $bundle->issuer_dn,
+    );
+  };
+  return { time => $self->_iso( $self->now->() ), %facts };
+}
+
+sub _save {
+  my ( $self, $name, $update, $result ) = @_;
+  return unless %$update;
+  eval { $self->state->update( $name, { device => $name, %$update } ); 1 } and return;
+  my $error = $self->_message($@);
+  $self->_log( $name.': '.$error );
+  $result->{state_error} = defined $result->{state_error} ? $result->{state_error}.'; '.$error : $error;
+  return;
 }
 
 # Step 4. Returns undef when the device presents the issued certificate, and

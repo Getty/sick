@@ -142,6 +142,12 @@ The command line: C<check>, C<run>, C<trust>.
 Check, issue, deploy, check again - for every device, one not stopping the
 others.
 
+=item L<SICK::State>
+
+What a run remembers: one record per device - last look, last issue, last
+deployment, failures and back-off, never a key - and the lock that keeps
+two runs apart.
+
 =item L<SICK::Config>, L<SICK::Device>
 
 The device list and one entry of it.

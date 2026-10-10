@@ -6,6 +6,7 @@ use Getopt::Long ();
 use SICK::Config;
 use SICK::Issuer;
 use SICK::Runner;
+use SICK::State;
 use SICK::Trust;
 use Types::Standard qw( FileHandle HashRef );
 use namespace::autoclean;
@@ -50,7 +51,7 @@ Commands:
 Options:
   -c, --config <file>  The device list. Default: $SICK_CONFIG, otherwise
                        /etc/sick/sick.yml.
-  -f, --force          run: renew also what is not due.
+  -f, --force          run: renew also what is not due or deferred.
   -n, --dry-run        run: only say what would be renewed.
   -v, --verbose        run: report what is being done, on standard error.
   -h, --help           This text.
@@ -60,8 +61,9 @@ Without device names, check and run work on every device of the list.
 
 Exit codes:
   0  nothing failed
-  1  at least one device failed or could not be checked
+  1  at least one device failed, was deferred or could not be checked
   2  the command line or the device list is wrong
+  3  run: another sick run holds the lock of the state directory
 USAGE
 
 my $DEFAULT_CONFIG = '/etc/sick/sick.yml';
@@ -175,14 +177,24 @@ C<failed>.
 
 =item C<1>
 
-At least one device failed (C<run>) or could not be checked (C<check>:
-C<unreachable> or C<error>), or C<trust> could not write its files.
+At least one device failed or was deferred (C<run>) or could not be
+checked (C<check>: C<unreachable> or C<error>), or C<trust> could not
+write its files. Also a C<run> that cannot take its lock for another
+reason than another run (C<< cannot take the lock '<path>': <reason> >>),
+or that could not write the record of a device.
 
 =item C<2>
 
 The command cannot be carried out as given: unknown command or option, a
 device name that is not in the list, a device list that cannot be read or
 is not valid, a C<ca> section that does not make an issuer.
+
+=item C<3>
+
+C<run> did nothing because another C<sick run> holds the lock of the state
+directory: C<< another sick run holds the lock '<path>' (pid <pid>) >>
+(L<SICK::State/lock>). C<run --dry-run>, C<check> and C<trust> take no
+lock and never end with C<3>.
 
 =back
 
@@ -207,7 +219,22 @@ sub _check {
 
 sub _run {
   my ( $self, $opt, @names ) = @_;
-  my $runner = $self->_runner($opt) or return 2;
+  my ( $config, $issuer ) = $self->_setup($opt) or return 2;
+  my $state = SICK::State->new( dir => $config->state_dir );
+
+  # One run at a time per state directory; the lock goes with $lock, also
+  # when something below dies. A dry run changes nothing and waits for no one.
+  my $lock;
+  unless ( $opt->{'dry-run'} ) {
+    $lock = eval { $state->lock };
+    unless ($lock) {
+      my $message = $self->_message($@);
+      $self->_say_error($message);
+      return $message =~ /\Aanother sick run holds the lock / ? 3 : 1;
+    }
+  }
+
+  my $runner  = $self->_runner( $opt, $config, $issuer, $state );
   my @results = eval { $runner->run( \@names, force => $opt->{force} ? 1 : 0, dry_run => $opt->{'dry-run'} ? 1 : 0 ) };
   return $self->_died( $self->_message($@) ) if $@;
 
@@ -215,7 +242,12 @@ sub _run {
     [qw( DEVICE ACTION REASON ERROR )],
     map { [ @$_{qw( device action reason )}, defined $_->{error} ? $_->{error} : q{} ] } @results
   );
-  return ( grep { $_->{action} eq 'failed' } @results ) ? 1 : 0;
+  my @unwritten;
+  for my $result ( grep { defined $_->{state_error} } @results ) {
+    $self->_say_error( $result->{device}.': '.$result->{state_error} );
+    push @unwritten, $result if $result->{state_error} =~ /cannot write state record /;
+  }
+  return ( @unwritten || grep { $_->{action} eq 'failed' || $_->{action} eq 'deferred' } @results ) ? 1 : 0;
 }
 
 sub _trust {
@@ -301,12 +333,15 @@ sub _setup {
 }
 
 sub _runner {
-  my ( $self, $opt ) = @_;
-  my ( $config, $issuer ) = $self->_setup($opt) or return;
+  my ( $self, $opt, $config, $issuer, $state ) = @_;
+  unless ($config) {
+    ( $config, $issuer ) = $self->_setup($opt) or return;
+  }
   my $err = $self->err;
   return SICK::Runner->new(
     config => $config,
     issuer => $issuer,
+    ( $state          ? ( state => $state ) : () ),
     ( $opt->{verbose} ? ( log => sub { print {$err} $_[0]."\n" } ) : () ),
   );
 }

@@ -22,6 +22,7 @@ our $VERSION = '0.001';
 
     $config->ca;                 # { url => ..., root => ..., intermediates => ..., provisioner => ..., ... }
     $config->defaults;           # { lifetime => 34300800, renew_before => 2592000, key => 'rsa2048' }
+    $config->state_dir;          # '/var/lib/sick'
 
     for my $device ( $config->devices ) {
       print $device->name, ': ', join( ', ', @{ $device->names } ), "\n";
@@ -56,6 +57,7 @@ The device list is the only configuration SICK has:
         names: [grafana.example.internal]
         dir: /srv/certs/grafana
         reload: "docker restart grafana"
+    state: /var/lib/sick
 
 =over 4
 
@@ -95,6 +97,13 @@ are optional. All other keys belong to the device type and end up in
 L<SICK::Device/options>; the target of that type checks them
 (L<SICK::Target/validate>).
 
+=item C<state>
+
+Optional. The directory where C<sick run> keeps its lock and one record per
+device (L<SICK::State>). F</var/lib/sick> without it. Croaks with
+C<state: must be the path of a directory> for a list, a mapping or an empty
+value.
+
 =back
 
 Secrets are never part of the list, only the paths of the files that hold
@@ -107,7 +116,8 @@ All scalars are read as plain text, so C<mode_key: 0600> stays C<0600>.
 
 =cut
 
-my @TOP_KEYS     = qw( ca defaults devices );
+my @TOP_KEYS     = qw( ca defaults devices state );
+my $STATE_DIR    = '/var/lib/sick';
 my @CA_KEYS      = qw( type name url root intermediates additional_roots provisioner password_file step dir );
 my @DEFAULT_KEYS = qw( lifetime renew_before key );
 my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key );
@@ -186,7 +196,18 @@ sub BUILD {
   $self->ca;
   $self->defaults;
   $self->_by_name;
+  $self->state_dir;
   return;
+}
+
+has state_dir => ( is => 'lazy', isa => Str, init_arg => undef );
+
+sub _build_state_dir {
+  my ( $self ) = @_;
+  return $STATE_DIR unless exists $self->_data->{state};
+  my $dir = $self->_data->{state};
+  $self->_fail( 'state', 'must be the path of a directory' ) unless defined $dir && !ref $dir && length $dir;
+  return $dir;
 }
 
 sub ca_name { $_[0]->ca->{name} }
@@ -205,6 +226,11 @@ The file the list was loaded from.
 
 Hash reference with the C<ca> section as written: plain strings, and
 C<additional_roots> as a reference to a copy of its list.
+
+=attr state_dir
+
+The C<state> of the list: where L<SICK::State> keeps the lock and the
+records of the devices. F</var/lib/sick> when the list does not say.
 
 =method ca_name
 

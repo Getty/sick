@@ -9,6 +9,7 @@ requires 'File::Temp';
 requires 'Getopt::Long', '2.39';
 requires 'IO::Handle';
 requires 'IO::Select';
+requires 'JSON::MaybeXS';
 requires 'MIME::Base64';
 requires 'Module::Runtime';
 requires 'Moo';

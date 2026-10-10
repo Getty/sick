@@ -77,7 +77,8 @@ services:
       - ${SICK_SECRETS_DIR:-./secrets}:/etc/sick/secrets:ro
       # root_ca.crt, intermediate_ca.crt and provisioner.pw, from the ca service
       - handover:/etc/sick/ca:ro
-      # known_hosts of ssh, and whatever a device type wants to keep
+      # known_hosts of ssh, the lock of sick run, the device records, and
+      # whatever a device type wants to keep
       - state:/var/lib/sick
       - trust:/srv/trust
     tmpfs:
@@ -103,5 +104,5 @@ services:
 volumes:
   ca:        # the CA: keys, configuration, database. Back this up.
   handover:  # what the ca service hands to the sick service
-  state:     # known_hosts
+  state:     # known_hosts, sick.lock, devices/<name>.json
   trust:     # output of "sick trust"

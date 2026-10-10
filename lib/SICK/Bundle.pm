@@ -184,6 +184,7 @@ sub not_after          { $_[0]->_info->{not_after} }
 sub fingerprint_sha256 { $_[0]->_info->{fingerprint_sha256} }
 sub subject_dn         { $_[0]->_info->{subject_dn} }
 sub issuer_dn          { $_[0]->_info->{issuer_dn} }
+sub serial             { $_[0]->_info->{serial} }
 
 sub common_name { shift->_common_name }
 
@@ -219,6 +220,11 @@ The subject as an RFC 2253 string, for instance C<CN=ant.example.internal>.
 =method issuer_dn
 
 The issuer in the same form.
+
+=method serial
+
+The serial number as openssl prints it: hex digits, upper case, for
+instance C<4F1A09C3E2>. C<undef> when openssl does not report one.
 
 =method common_name
 
@@ -367,7 +373,7 @@ sub _build__info {
   my ( $self ) = @_;
   my $out = eval {
     SICK::OpenSSL::run_checked(
-      [ 'x509', '-noout', '-subject', '-issuer', '-startdate', '-enddate',
+      [ 'x509', '-noout', '-subject', '-issuer', '-startdate', '-enddate', '-serial',
         '-fingerprint', '-sha256', '-nameopt', 'RFC2253' ],
       stdin => $self->cert,
     );
@@ -380,6 +386,7 @@ sub _build__info {
     elsif ( $line =~ /\Aissuer=\s*(.*)\z/ )    { $info{issuer_dn}  = $1 }
     elsif ( $line =~ /\AnotBefore=(.*)\z/ )    { $info{not_before} = $self->_epoch($1) }
     elsif ( $line =~ /\AnotAfter=(.*)\z/ )     { $info{not_after}  = $self->_epoch($1) }
+    elsif ( $line =~ /\Aserial=([0-9A-Fa-f]+)\z/ ) { $info{serial} = uc $1 }
     elsif ( $line =~ /\Asha256 Fingerprint=([0-9A-Fa-f:]+)\z/i ) {
       ( $info{fingerprint_sha256} = lc $1 ) =~ tr/://d;
     }
