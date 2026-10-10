@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-10T22:50:28Z
+created: 2026-10-10T20:59:37Z
+id: 41
+priority: high
+started: 2026-10-10T22:01:31Z
+status: done
+tags:
+- ops
+- p5
+title: 'P5c Scheduling and alerting: systemd timer, cron, Kubernetes CronJob, failure
+  notification'
+updated: 2026-10-10T22:50:39Z
+---
+
+contrib/systemd units (timer, OnFailure notify), a cron line, a CronJob in k8s/ run in a k3d cluster sick-* with private kubeconfig; container tests that a failing device, a stale certificate and an unreachable CA trigger the documented notification. Part of P5 (k15); binding 'done when': docs/roadmap.md, section P5.
+
+sick-worker: started. Plan: contrib/systemd (service, timer, notify@), contrib/notify/sick-notify, contrib/cron/sick, k8s/cronjob overlay of k8s/test (loop container replaced by CronJob, handover/trust/metrics as PVCs, metrics sidecar), t/e2e/ops.sh parts a/b/c.
+
+sick-worker: done, tree commit-ready (staged, not committed). contrib/systemd (sick.service SuccessExitStatus=3, ExecStopPost check+trust, OnFailure=sick-notify@%n; sick.timer 04:17 + RandomizedDelaySec=1h FixedRandomDelay; sick-notify@.service), contrib/notify/sick-notify (+ notify.conf.example), contrib/cron/sick, k8s/cronjob (overlay of k8s/test; PVCs handover/trust/metrics; metrics sidecar; sick-job-alerts.yml + test), t/e2e/ops.sh (units, notify, alerts, k8s; 72 PASS, ran clean 4x, 2x after the last change). systemd-analyze verify clean in a temp root. prove -lr t: PASS, no skip. Findings: SICK does not redeploy a device that presents an older valid cert of its own (only SickDeviceStale sees it); README cron/textfile path differs from Debian's; k3d needs /dev/kmsg workaround on LXC hosts.
+
+Committed as 0e2cc27
