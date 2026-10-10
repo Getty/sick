@@ -23,6 +23,7 @@ for (qw(
   SICK::Target::Files
   SICK::Temp
   SICK::Trust
+  SICK::Trust::Scripts
 )) {
   use_ok($_);
 }

@@ -10,6 +10,7 @@ use POSIX qw( strftime );
 use Path::Tiny ();
 use SICK::Bundle;
 use SICK::OpenSSL;
+use SICK::Trust::Scripts;
 
 our $VERSION = '0.001';
 
@@ -37,9 +38,13 @@ directory, ready to be put behind any web server:
 
     root_ca.pem            the root certificate as PEM
     root_ca.crt            the same as DER, the form Windows and Android open
+    trust-linux.sh         install and remove scripts, one per platform,
+    trust-macos.sh         with the certificates in them
+    trust-windows.ps1      (L<SICK::Trust::Scripts>)
+    trust-nss.sh
     root_ca.mobileconfig   a configuration profile for iOS, iPadOS and macOS
     index.html             one page: fingerprints, the downloads, and how to
-                           install them on each platform
+                           install and remove them on each platform
 
 A CA like step-ca does not sign with its root but through an intermediate
 certificate, and a device with room for exactly one certificate - a switch -
@@ -94,6 +99,26 @@ in the order they were given, and each one has files of its own for the
 programs that take a single certificate: F<intermediate_ca_1.pem>,
 F<intermediate_ca_1.crt>, F<intermediate_ca_2.pem> and so on.
 
+The page is served over whatever the web server offers, and a client that
+does not trust the CA yet cannot tell a forged page from this one. So the
+page says first that the fingerprint comes from the person who runs the CA,
+by another channel, and not from the page; and the scripts install nothing
+unless they are given the SHA-256 fingerprint of every root they carry,
+checked against what they compute themselves (L<SICK::Trust::Scripts>).
+The page shows the commands with placeholders, never with a fingerprint.
+
+For every platform the page has the script, the steps by hand and how to
+remove it again; for Android that apps targeting API level 24 or newer use
+the CA list only when they opt in (Network Security Configuration), for iOS
+and macOS that the unsigned profile shows as I<Not Verified>, and a short
+section on programs with a store of their own (Java, Python, Node, Go, curl,
+git, Docker, container images, Kubernetes). What it says about Firefox 120,
+C<chrome://certificate-manager> (Chrome 134), Android's Network Security
+Configuration, Node's C<--use-system-ca> and C<NODE_EXTRA_CA_CERTS>, the
+C<security> commands of macOS and C<Import-Certificate> was checked against
+the documentation of the vendors on 2026-10-10; Windows, macOS, iOS and
+Android are marked as not tried on a device.
+
 The page is self-contained - no script, no style sheet, no image from
 anywhere else. Everything is derived from the certificates and the name
 alone: writing twice produces the same bytes, so the command can run after
@@ -131,13 +156,15 @@ sub files {
   my ( $class, $count, $roots ) = @_;
   $count = 0 unless defined $count && !ref $count && $count =~ /\A[0-9]+\z/;
   $roots = 0 unless defined $roots && !ref $roots && $roots =~ /\A[0-9]+\z/;
-  return ( @FIRST, @LAST ) unless $count || $roots;
+  my @scripts = SICK::Trust::Scripts->files;
+  return ( @FIRST, @scripts, @LAST ) unless $count || $roots;
   return (
     @FIRST,
     ( map { ( $_.'.pem', $_.'.crt' ) } _additional($roots) ),
     ( $count > 1 ? 'intermediate_ca.pem' : () ),
     ( $count ? map { ( $_.'.pem', $_.'.crt' ) } _single($count) : () ),
     'ca_bundle.pem',
+    @scripts,
     @LAST,
   );
 }
@@ -148,10 +175,10 @@ sub files {
     my @names = SICK::Trust->files($intermediates);   # with that many
     my @names = SICK::Trust->files( $intermediates, $additional_roots );
 
-The names of the files, in the order they are written: four without
-intermediates, seven with one; the files of the additional roots come right
-after those of the root. The page comes last, so that it never links to a
-file that is not there yet.
+The names of the files, in the order they are written: eight without
+intermediates, eleven with one; the files of the additional roots come right
+after those of the root, the four scripts right before the profile. The page
+comes last, so that it never links to a file that is not there yet.
 
 =cut
 
@@ -190,7 +217,14 @@ sub write {
   my @additional    = _additional( scalar @extra );
   my @roots         = map { $class->_published( $extra[$_], 'additional root', $additional[$_], $name.' root' ) } 0 .. $#extra;
 
+  my $scripts = SICK::Trust::Scripts->new(
+    name          => $name,
+    roots         => [ { pem => $root->cert, der => $der }, map { { pem => $_->{pem}, der => $_->{der} } } @roots ],
+    intermediates => [ map { { pem => $_->{pem}, der => $_->{der} } } @intermediates ],
+  );
+
   my %content = (
+    ( map { $_ => $scripts->content($_) } SICK::Trust::Scripts->files ),
     'root_ca.pem'          => $root->cert,
     'root_ca.crt'          => $der,
     'root_ca.mobileconfig' => $class->_profile( $der, %fact, intermediates => \@intermediates, roots => \@roots ),
@@ -236,7 +270,7 @@ self-signed is the root, and the others are ignored.
 
 C<intermediates_pem> is what L<SICK::Issuer/intermediates_pem> returns: the
 intermediate certificates of the CA as PEM, or C<undef> (or nothing but
-blanks) when it has none - the four files are then exactly what they are
+blanks) when it has none - the files are then exactly what they are
 without the argument. Every intermediate has to lead to the root, through
 the others if need be: this page tells people to install what it offers,
 so a certificate of some other CA is refused and not published. The root
@@ -566,6 +600,8 @@ sub _chain_parts {
     check_more    => join( q{}, map { "\nopenssl x509 -in ".$_.' -noout -fingerprint -sha256' } @pem ),
     the_file      => '<code>root_ca.pem</code>',
     from_system   => ' On Windows, macOS and iOS they find '.$the.' there as well; on Android they do not.',
+    windows_less  => ', and for '.$the.' <code>certutil -delstore CA &lt;thumbprint&gt;</code>',
+    mac_less      => ' (the same for '.$the.', without the first command)',
   );
 
   $part->{INTRO} = <<"HTML";
@@ -617,7 +653,7 @@ HTML
   $part->{IOS} = <<"HTML";
 <p class="soft">The profile holds $the as well, as a plain certificate, so this one installation also covers the
 devices that present their certificate alone. Full trust is switched on for the root only; $the $needs no
-setting. Not tried on a device yet.</p>
+setting.</p>
 HTML
 
   $part->{ANDROID} = <<"HTML";
@@ -628,13 +664,13 @@ HTML
 
   $part->{MACOS} = <<"HTML";
 <p class="soft">Only the root is marked as trusted. $The $is added to the keychain and $needs no trust setting.
-The profile installs $it along with the root. Not tried on a Mac yet.</p>
+The profile and the script install $it along with the root.</p>
 HTML
 
   $part->{WINDOWS} = '<p>Then '.$the.': download '.$and->( map { $link->($_) } @der ).' and install '.$it
     .' the same way, but into the store'."\n"
     .'<em>Intermediate Certification Authorities</em>. A certificate in that store is trusted for nothing; it only helps'."\n"
-    .'Windows to find the way from a device to the root. Not tried on Windows yet.</p>'."\n";
+    .'Windows to find the way from a device to the root. The script puts '.$it.' there as well.</p>'."\n";
 
   $part->{LINUX} = <<"HTML";
 <p class="soft">Only the root goes into these stores. They know nothing but trusted certificates: $the would be
@@ -655,9 +691,9 @@ HTML
     .'      '.$the.', the trust stays with the root.</li>'."\n";
 
   $part->{FIREFOX} = <<"HTML";
-<p class="soft">Since version 120 Firefox does that by itself for the root certificates you installed on Windows and
-macOS. Do not count on it for $the: when a device that presents its certificate alone still gets a warning
-(<code>SEC_ERROR_UNKNOWN_ISSUER</code>), import $the as in the last step.</p>
+<p class="soft">What Firefox takes from Windows and macOS are the root certificates. Do not count on it for $the: when
+a device that presents its certificate alone still gets a warning (<code>SEC_ERROR_UNKNOWN_ISSUER</code>), import
+$the as in the last step, or use the script, which does so.</p>
 <p><strong>Firefox for Android</strong> has no list of its own and no import. It uses the CA certificates installed
 in Android, see <a href="#android">Android</a> above &ndash; since version 120 by itself. Older versions have to be told:
 <em>Settings &rarr; About Firefox</em>, tap the logo until the debug menu is announced, then <em>Settings &rarr; Secret
@@ -761,6 +797,7 @@ sub _page {
 
   # Without an intermediate these are all there is to say, and the lines
   # that only name a part (<!--PART-->) leave nothing behind.
+  my $roots = 1 + @{ $fact{roots} || [] };
   my %t = (
     profile_holds => q{},
     and_pem       => q{},
@@ -770,6 +807,13 @@ sub _page {
     check_more    => q{},
     the_file      => 'the file',
     from_system   => q{},
+    windows_less  => q{},
+    mac_less      => q{},
+    # one placeholder per root: the scripts want the set, and the page has none to give
+    fps           => join( ' ', ( '--fingerprint &lt;from your admin&gt;' ) x $roots ),
+    every_root    => $roots > 1 ? 'every one of the '.$roots.' root certificates' : 'the root certificate',
+    roots_word    => $roots > 1 ? 'the root certificates' : 'the root certificate',
+    one_file      => @{ $fact{intermediates} || [] } || $roots > 1 ? 'ca_bundle.pem' : 'root_ca.pem',
   );
   my %part;
   $class->_chain_parts( \%t, \%part, @{ $fact{intermediates} } ) if @{ $fact{intermediates} || [] };
@@ -821,6 +865,11 @@ sub _page {
 certificate authority. Your browser warns about them until this device trusts the root certificate
 of that authority. Install it once and the warnings are gone.</p>
 
+<p><strong>First get the fingerprint from the person who runs this authority</strong> &ndash; in person, on paper,
+by phone or in a chat you already trust &ndash; not from this page. This page is not authenticated: whoever can change
+it can change the certificates and the fingerprints on it as well, and whoever holds the key of a root certificate you
+trust can issue a certificate for any name. Compare before you install, and stop when they differ.</p>
+
 <!--INTRO-->
 <!--CURRENT-->
 <dl>
@@ -831,9 +880,8 @@ of that authority. Install it once and the warnings are gone.</p>
   <dt>Valid until</dt><dd>$fact{not_after}</dd>
 </dl>
 
-<p>Whoever holds the key of a root certificate you trust can issue a certificate for any name. Compare
-the fingerprint your device shows during the installation with the one above, and when you reached this
-page over a connection you have no reason to trust, ask the person who runs the authority for it.</p>
+<p>That is what this page says the fingerprint is. The scripts below install nothing unless you give them the one
+you got from the person who runs the authority; with the steps by hand, compare that one with what your device shows.</p>
 
 <!--ROOTS-->
 <!--FACTS-->
@@ -845,7 +893,16 @@ page over a connection you have no reason to trust, ask the person who runs the 
 <!--DOWNLOADS-->
 <!--BUNDLE-->
   <li><a href="root_ca.mobileconfig">root_ca.mobileconfig</a> <span class="soft">&ndash; configuration profile$t{profile_holds}. iPhone, iPad, Mac.</span></li>
+  <li><a href="trust-linux.sh" download>trust-linux.sh</a> <span class="soft">&ndash; script: installs and removes $t{roots_word} in the system store of Linux.</span></li>
+  <li><a href="trust-macos.sh" download>trust-macos.sh</a> <span class="soft">&ndash; the same for macOS.</span></li>
+  <li><a href="trust-windows.ps1" download>trust-windows.ps1</a> <span class="soft">&ndash; the same for Windows.</span></li>
+  <li><a href="trust-nss.sh" download>trust-nss.sh</a> <span class="soft">&ndash; the same for a Firefox profile, or Chrome on Linux.</span></li>
 </ul>
+
+<p>The scripts carry the certificates themselves; the one file is enough. Each refuses to install unless you give it
+the SHA-256 fingerprint of $t{every_root} with <code>--fingerprint</code>, the way you got it from the person who
+runs the authority; colons and case do not matter. <code>remove</code> takes out again what <code>install</code> put in.
+They restart nothing and say what still needs a restart.</p>
 
 <nav>
   <a href="#ios">iPhone and iPad</a>
@@ -855,6 +912,7 @@ page over a connection you have no reason to trust, ask the person who runs the 
   <a href="#linux">Linux</a>
   <a href="#firefox">Firefox</a>
   <a href="#chrome">Chrome</a>
+  <a href="#runtimes">Other programs</a>
 </nav>
 
 <h2 id="ios">iPhone and iPad</h2>
@@ -865,7 +923,14 @@ page over a connection you have no reason to trust, ask the person who runs the 
   <li>The profile alone is not enough. Go to <em>Settings &rarr; General &rarr; About &rarr; Certificate Trust
       Settings</em> and switch on full trust for <em>$name</em>.</li>
 </ol>
+<p class="soft">The profile is not signed, so iOS calls it <em>Not Verified</em>. That says nothing about the certificate
+in it; the fingerprint does. After the installation, open the profile under <em>Settings &rarr; General &rarr; VPN &amp;
+Device Management</em>, tap the certificate (<em>More Details</em>) and compare its SHA-256 fingerprint with the one
+you got from the person who runs the authority. When they differ, remove the profile. Not tried on a device yet.</p>
 <!--IOS-->
+<h3>Remove</h3>
+<p><em>Settings &rarr; General &rarr; VPN &amp; Device Management</em>, choose the profile <em>$name</em> and tap
+<em>Remove Profile</em>. That takes away everything it brought.</p>
 
 <h2 id="android">Android</h2>
 <ol>
@@ -876,18 +941,35 @@ page over a connection you have no reason to trust, ask the person who runs the 
   <li>Confirm the warning with <em>Install anyway</em> and pick the downloaded file.</li>
 </ol>
 <!--ANDROID-->
-<p class="soft">Chrome and most browsers use certificates installed this way. Other apps only do so when their
-developers allowed it.</p>
+<p class="soft">Only root certificates belong in this list. Apps that target Android 7 (API level 24) or newer ignore
+certificates installed this way unless their developers opted in with a <em>Network Security Configuration</em>
+(<code>&lt;certificates src=&quot;user&quot;/&gt;</code>). Chrome uses them, and Firefox does since version 120 (checked
+2026-10-10). Not tried on a device yet.</p>
+<h3>Remove</h3>
+<p><em>Settings &rarr; Security &rarr; More security settings &rarr; Encryption &amp; credentials &rarr; Trusted
+credentials</em>, tab <em>User</em>: choose the certificate and <em>Remove</em>. The names differ between
+manufacturers, as above.</p>
 
 <h2 id="macos">macOS</h2>
 <p>With the profile: open <a href="root_ca.mobileconfig">root_ca.mobileconfig</a>, then <em>System Settings &rarr;
 Privacy &amp; Security &rarr; Profiles</em> (on older versions <em>System Preferences &rarr; Profiles</em>),
-select <em>$name</em> and choose <em>Install</em>.</p>
-<p>Or in a terminal, $t{terminal}:</p>
+select <em>$name</em> and choose <em>Install</em>. The profile is not signed, so macOS
+shows it as <em>Not Verified</em>; compare the SHA-256 fingerprint of the certificate in it with the one you got
+before you install it.</p>
+<p>With the script, in a terminal:</p>
+<pre>sudo sh trust-macos.sh install $t{fps}</pre>
+<p>Or in a terminal by hand, $t{terminal}:</p>
 <pre>sudo security add-trusted-cert -d -r trustRoot \\
   -k /Library/Keychains/System.keychain root_ca.pem$t{mac_more}</pre>
 <!--MACOS-->
-<p>Safari and Chrome use the keychain. Firefox has its own list, see <a href="#firefox">below</a>.</p>
+<p>Safari and Chrome use the keychain. Firefox has its own list, see <a href="#firefox">below</a>. Not tried on a Mac
+yet.</p>
+<h3>Remove</h3>
+<pre>sudo sh trust-macos.sh remove</pre>
+<p>Installed with the profile: remove <em>$name</em> under <em>System Settings &rarr; Privacy &amp; Security &rarr;
+Profiles</em>. By hand: <code>sudo security remove-trusted-cert -d root_ca.pem</code>, then
+<code>sudo security delete-certificate -Z &lt;SHA-1 fingerprint&gt; /Library/Keychains/System.keychain</code>$t{mac_less}.
+Restart the browsers.</p>
 
 <h2 id="windows">Windows</h2>
 <ol>
@@ -898,12 +980,21 @@ select <em>$name</em> and choose <em>Install</em>.</p>
       Authorities</em> and finish. Windows shows the SHA-1 fingerprint as <em>thumbprint</em>.</li>
 </ol>
 <!--WINDOWS-->
-<p>Or in a terminal that runs as administrator:</p>
+<p>With the script, in a PowerShell that runs as administrator:</p>
+<pre>powershell -ExecutionPolicy Bypass -File trust-windows.ps1 install $t{fps}</pre>
+<p>Or by hand, in a terminal that runs as administrator:</p>
 <pre>certutil -addstore -f Root root_ca.crt$t{windows_more}</pre>
-<p>Edge and Chrome use the Windows store. Firefox has its own list, see <a href="#firefox">below</a>.</p>
+<p>Edge and Chrome use the Windows store. Firefox has its own list, see <a href="#firefox">below</a>. Not tried on
+Windows yet.</p>
+<h3>Remove</h3>
+<pre>powershell -ExecutionPolicy Bypass -File trust-windows.ps1 remove</pre>
+<p>By hand, as administrator, with the SHA-1 fingerprint (the thumbprint) without colons:
+<code>certutil -delstore Root &lt;thumbprint&gt;</code>$t{windows_less}. Restart the browsers.</p>
 
 <h2 id="linux">Linux</h2>
-<p>The system store wants the PEM file. Debian, Ubuntu and relatives:</p>
+<p>With the script, which finds out by itself which kind of Linux it runs on:</p>
+<pre>sudo sh trust-linux.sh install $t{fps}</pre>
+<p>Or by hand. The system store wants the PEM file. Debian, Ubuntu and relatives:</p>
 <pre>sudo cp root_ca.pem /usr/local/share/ca-certificates/internal-root-ca.crt
 sudo update-ca-certificates</pre>
 <p>Fedora, RHEL, Rocky and relatives:</p>
@@ -917,8 +1008,16 @@ sudo update-ca-trust</pre>
 <p class="soft">That covers <code>curl</code>, <code>git</code>, <code>wget</code> and most programs. Browsers keep
 their own lists on Linux, see below.</p>
 <!--LINUX-->
+<h3>Remove</h3>
+<pre>sudo sh trust-linux.sh remove</pre>
+<p>By hand: delete the file you copied and run the update again (<code>sudo update-ca-certificates --fresh</code>,
+<code>sudo update-ca-trust</code>), or <code>sudo trust anchor --remove root_ca.pem</code>. A program that read the
+store when it started trusts the root until it is restarted.</p>
 
 <h2 id="firefox">Firefox</h2>
+<p>With the script, Firefox closed, for one profile (<code>about:profiles</code> shows its directory):</p>
+<pre>sh trust-nss.sh install $t{fps} /path/to/profile</pre>
+<p>Or by hand:</p>
 <ol>
   <li>Download <a href="root_ca.pem" download>root_ca.pem</a>$t{and_pem}.</li>
   <li>Open <em>Settings &rarr; Privacy &amp; Security</em>, scroll to <em>Certificates</em> and choose
@@ -927,9 +1026,14 @@ their own lists on Linux, see below.</p>
       identify websites</em>.</li>
 <!--FIREFOXSTEP-->
 </ol>
-<p class="soft">On Windows and macOS, Firefox can use the certificates of the system instead: open
-<code>about:config</code> and set <code>security.enterprise_roots.enabled</code> to <code>true</code>.</p>
+<p class="soft">On Windows, macOS and Android, Firefox 120 and newer use the root certificates installed in the system
+as well, unless that is switched off under <em>Settings &rarr; Privacy &amp; Security &rarr; Certificates</em>
+(<code>security.enterprise_roots.enabled</code>; checked 2026-10-10). On Linux it does not.</p>
 <!--FIREFOX-->
+<h3>Remove</h3>
+<pre>sh trust-nss.sh remove /path/to/profile</pre>
+<p>By hand: <em>View Certificates&hellip;</em>, tab <em>Authorities</em>, select the certificate and choose <em>Delete
+or Distrust&hellip;</em>. Restart Firefox.</p>
 
 <h2 id="chrome">Chrome, Chromium, Edge</h2>
 <p>On Windows, macOS, Android and iOS these browsers use the certificates of the system: follow the
@@ -937,11 +1041,47 @@ instructions for the platform above and restart the browser.$t{from_system}</p>
 <p>On Linux they keep their own list:</p>
 <ol>
   <li>Download <a href="root_ca.pem" download>root_ca.pem</a>$t{and_pem}.</li>
-  <li>Open <code>chrome://certificate-manager</code> (older versions: <code>chrome://settings/certificates</code>).</li>
+  <li>Open <code>chrome://certificate-manager</code> (Chrome 134 and newer, checked 2026-10-10; older versions:
+      <code>chrome://settings/certificates</code>).</li>
   <li>Under <em>Local certificates &rarr; Installed by you</em> (older versions: tab <em>Authorities</em>) import
       $t{the_file} as a trusted certificate for websites.</li>
 <!--CHROMESTEP-->
 </ol>
+<p>Or with the script: Chrome on Linux keeps them in the NSS database in <code>~/.pki/nssdb</code>. Not tried yet.</p>
+<pre>sh trust-nss.sh install $t{fps} ~/.pki/nssdb</pre>
+<h3>Remove</h3>
+<p>On Windows, macOS, Android and iOS: remove it from the system as above. On Linux:
+<code>sh trust-nss.sh remove ~/.pki/nssdb</code>, or delete it in the certificate manager. Restart the browser.</p>
+
+<h2 id="runtimes">Programs with a store of their own</h2>
+<p>Many programs do not read the system store, and a system store makes every program on the machine trust the root.
+Where one program needs it, give that program the file instead. Each of them reads its certificates when it starts:
+restart it after a change.</p>
+<ul>
+  <li><strong>Java</strong> has its own <code>cacerts</code>: <code>keytool -importcert -cacerts -alias internal-root-ca
+      -file root_ca.pem</code>, removed with <code>keytool -delete -cacerts -alias internal-root-ca</code>. The JDK
+      packages of Debian and Fedora build theirs from the system store.</li>
+  <li><strong>Python</strong>: <code>requests</code> and many others use <code>certifi</code>, not the system store.
+      <code>REQUESTS_CA_BUNDLE</code> (requests) and <code>SSL_CERT_FILE</code> (the <code>ssl</code> module) point
+      them at a file, which then replaces their list: give them one with everything they need.</li>
+  <li><strong>Node</strong>: <code>NODE_EXTRA_CA_CERTS=/path/to/$t{one_file}</code> adds to its own list, read once at
+      start; <code>node --use-system-ca</code> (Node 23.8, on Linux since 23.9) or <code>NODE_USE_SYSTEM_CA=1</code>
+      (22.19, 24.6) uses the system store (checked 2026-10-10).</li>
+  <li><strong>Go</strong> programs read the system store on Linux, or <code>SSL_CERT_FILE</code> and
+      <code>SSL_CERT_DIR</code>; one built into an empty image has none.</li>
+  <li><strong>curl</strong> uses the system store; for one call <code>curl --cacert $t{one_file}</code>.</li>
+  <li><strong>git</strong>: <code>git config --global http.sslCAInfo /path/to/$t{one_file}</code>, or
+      <code>http.&lt;url&gt;.sslCAInfo</code> for one server; the file replaces the list of git.</li>
+  <li><strong>Docker</strong> pulling from a registry with a certificate of this authority: the root as
+      <code>/etc/docker/certs.d/&lt;registry&gt;:&lt;port&gt;/ca.crt</code> on every host that pulls.</li>
+  <li><strong>Container images</strong> do not see the store of the host. In the Dockerfile:
+      <code>COPY root_ca.pem /usr/local/share/ca-certificates/internal-root-ca.crt</code>, then
+      <code>RUN update-ca-certificates</code> (Debian, Ubuntu, Alpine). That is baked in: removing it means building
+      the image again.</li>
+  <li><strong>Kubernetes pods</strong>: the root from a ConfigMap (or a trust-manager Bundle) mounted into the pod, and
+      the program pointed at it as above; restart the pods after a change.</li>
+</ul>
+<p class="soft">Not tried from this page yet. The handbook has the full table.</p>
 </main>
 </body>
 </html>

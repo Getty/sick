@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Test::More;
 use File::Temp qw( tempdir );
+use Digest::SHA qw( sha1_hex );
 use MIME::Base64 qw( decode_base64 );
 use lib 't/lib';
 
@@ -23,6 +24,7 @@ my $root  = new_ca( dir => $tmp, name => 'root', cn => 'Example Internal Root CA
 my $inter = new_ca( dir => $tmp, name => 'inter', cn => 'Example Internal Intermediate', issuer => $root );
 my $other = new_ca( dir => $tmp, name => 'other', cn => 'Another Root' );
 my $facts = SICK::Bundle->new( cert => $root->{pem} );
+my @scripts = qw( trust-linux.sh trust-macos.sh trust-windows.ps1 trust-nss.sh );
 
 sub files_in {
   my ( $dir ) = @_;
@@ -87,14 +89,14 @@ subtest 'the checker of this test knows broken XML when it sees it' => sub {
 my $dir = $tmp.'/site/trust';
 my @written;
 
-subtest 'the four files' => sub {
+subtest 'the root, the scripts, the profile and the page' => sub {
   ok !-e $dir, 'the directory does not exist yet';
   @written = SICK::Trust->write( $dir, root_pem => $root->{pem}, name => 'Example Internal CA' );
 
-  is_deeply [ SICK::Trust->files ], [qw( root_ca.pem root_ca.crt root_ca.mobileconfig index.html )], 'files';
+  is_deeply [ SICK::Trust->files ], [ qw( root_ca.pem root_ca.crt ), @scripts, qw( root_ca.mobileconfig index.html ) ], 'files';
   is_deeply \@written, [ map { $dir.'/'.$_ } SICK::Trust->files ], 'write returns the paths';
-  is_deeply files_in($dir), [qw( index.html root_ca.crt root_ca.mobileconfig root_ca.pem )],
-    'exactly the four files are there, no temporary ones';
+  is_deeply files_in($dir), [ sort qw( index.html root_ca.crt root_ca.mobileconfig root_ca.pem ), @scripts ],
+    'exactly these files are there, no temporary ones';
   is sprintf( '%04o', ( stat $_ )[2] & 07777 ), '0644', $_ =~ s{.*/}{}r.' is readable for everybody' for @written;
   ok -s $_, $_ =~ s{.*/}{}r.' is not empty' for @written;
 };
@@ -161,8 +163,8 @@ subtest 'index.html' => sub {
 
   my @references = $page =~ /(?:href|src|action)\s*=\s*"([^"]*)"/g;
   ok scalar @references, 'the page has links';
-  is_deeply [ grep { !/\A(?:#[a-z]+|root_ca\.(?:pem|crt|mobileconfig))\z/ } @references ], [],
-    '... only to its own sections and the three files';
+  is_deeply [ grep { !/\A(?:#[a-z]+|root_ca\.(?:pem|crt|mobileconfig)|trust-(?:linux|macos|nss)\.sh|trust-windows\.ps1)\z/ } @references ], [],
+    '... only to its own sections, the three files and the four scripts';
   unlike $page, qr/<(?:script|link|img|iframe|object|embed)\b/i, 'no script, no style sheet, no image from anywhere';
   unlike $page, qr/url\(|\@import/i, '... and none in the style either';
   unlike $page, qr/[ \t]\n/, 'no trailing blanks';
@@ -175,7 +177,7 @@ subtest 'writing twice produces the same bytes' => sub {
   SICK::Trust->write( $dir, root_pem => $root->{pem}, name => 'Example Internal CA' );
   is raw($_), $before{$_}, $_ =~ s{.*/}{}r.' is byte for byte the same' for @written;
   isnt( ( stat $written[0] )[1], $inode{ $written[0] }, 'the files are replaced, not rewritten in place' );
-  is_deeply files_in($dir), [qw( index.html root_ca.crt root_ca.mobileconfig root_ca.pem )], 'and nothing else appeared';
+  is_deeply files_in($dir), [ sort qw( index.html root_ca.crt root_ca.mobileconfig root_ca.pem ), @scripts ], 'and nothing else appeared';
 
   my $again = $tmp.'/again';
   SICK::Trust->write( $again, root_pem => "some text around it\n".$root->{pem}."\n", name => 'Example Internal CA' );
@@ -295,10 +297,10 @@ sub fingerprint_of_der {
 
 my $chained     = $tmp.'/site/chained';
 my $inter_facts = SICK::Bundle->new( cert => $inter->{pem} );
-my @with        = qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig index.html );
+my @with        = ( qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca.crt ca_bundle.pem ), @scripts, qw( root_ca.mobileconfig index.html ) );
 my @chained_paths;
 
-subtest 'with an intermediate: seven files' => sub {
+subtest 'with an intermediate: three files more' => sub {
   @chained_paths = SICK::Trust->write( $chained, root_pem => $root->{pem}, intermediates_pem => $inter->{pem}, name => 'Example Internal CA' );
 
   is_deeply [ SICK::Trust->files(1) ], \@with, 'files(1): the names with one intermediate';
@@ -454,10 +456,10 @@ subtest 'without an intermediate nothing is different' => sub {
   for my $case ( sort keys %cases ) {
     my $target = $tmp.'/none-'.( $case =~ tr/a-z//cdr );
     my @paths  = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $cases{$case}, name => 'Example Internal CA' );
-    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as intermediates_pem: the four files';
+    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as intermediates_pem: the files without one';
     is raw( $target.'/'.$_ ), $before{$_}, '... '.$_.' byte for byte what it is without the argument' for SICK::Trust->files;
   }
-  unlike $before{'index.html'}, qr/intermediate|ca_bundle/i, 'the page of a CA without an intermediate does not speak of one';
+  unlike $before{'index.html'}, qr/intermediate|(?<!REQUESTS_)ca_bundle/i, 'the page of a CA without an intermediate does not speak of one';
   unlike $before{'root_ca.mobileconfig'}, qr/pkcs1/, '... and its profile has the root alone';
 };
 
@@ -479,8 +481,8 @@ subtest 'several intermediates' => sub {
   my $issuing = new_ca( dir => $tmp, name => 'issuing', cn => 'Example Internal Issuing CA', issuer => $inter );
   my $deep    = new_cert( ca => $issuing, dir => $tmp, name => 'deep', cn => 'deep.example.internal' );
   my $target  = $tmp.'/site/deep';
-  my @names   = qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca_1.pem intermediate_ca_1.crt
-    intermediate_ca_2.pem intermediate_ca_2.crt ca_bundle.pem root_ca.mobileconfig index.html );
+  my @names   = ( qw( root_ca.pem root_ca.crt intermediate_ca.pem intermediate_ca_1.pem intermediate_ca_1.crt
+    intermediate_ca_2.pem intermediate_ca_2.crt ca_bundle.pem ), @scripts, qw( root_ca.mobileconfig index.html ) );
   my @paths = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem}.$issuing->{pem} );
 
   is_deeply [ SICK::Trust->files(2) ], \@names, 'files(2)';
@@ -530,7 +532,7 @@ subtest 'what an earlier write left and this one does not write is removed' => s
   my @paths = SICK::Trust->write( $target, root_pem => $root->{pem} );
   is_deeply files_in($target), [ sort SICK::Trust->files, 'intermediate_ca.pem.bak', 'robots.txt' ],
     'the CA has no intermediate any more: nothing of it is offered any longer';
-  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the four files are returned';
+  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the files without them are returned';
   is raw( $target.'/index.html' ), raw( $tmp.'/unnamed/index.html' ), '... with the page of a CA without one';
 };
 
@@ -573,7 +575,7 @@ my $next_leaf = new_cert( ca => $next, dir => $tmp, name => 'renewed', cn => 're
 my $next_facts     = SICK::Bundle->new( cert => $next->{pem} );
 my $previous_facts = SICK::Bundle->new( cert => $previous->{pem} );
 my $rollover       = $tmp.'/site/rollover';
-my @rollover_names = qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt ca_bundle.pem root_ca.mobileconfig index.html );
+my @rollover_names = ( qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt ca_bundle.pem ), @scripts, qw( root_ca.mobileconfig index.html ) );
 my @rollover_paths;
 
 subtest 'with an additional root: its files and the bundle' => sub {
@@ -600,8 +602,8 @@ subtest 'with an additional root: its files and the bundle' => sub {
   ok !$ok, 'a client with the current root alone refuses it';
 
   my $target = $tmp.'/site/rollover-chained';
-  my @names  = qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt root_ca_3.pem root_ca_3.crt
-    intermediate_ca.pem intermediate_ca.crt ca_bundle.pem root_ca.mobileconfig index.html );
+  my @names  = ( qw( root_ca.pem root_ca.crt root_ca_2.pem root_ca_2.crt root_ca_3.pem root_ca_3.crt
+    intermediate_ca.pem intermediate_ca.crt ca_bundle.pem ), @scripts, qw( root_ca.mobileconfig index.html ) );
   my @paths = SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem},
     additional_roots_pem => $next->{pem}.$previous->{pem} );
   is_deeply [ SICK::Trust->files( 1, 2 ) ], \@names, 'files(1, 2): the roots first, then the intermediate';
@@ -707,7 +709,7 @@ subtest 'without an additional root nothing is different' => sub {
   for my $case ( sort keys %cases ) {
     my $target = $tmp.'/noroots-'.( $case =~ tr/a-z//cdr );
     my @paths  = SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $cases{$case}, name => 'Example Internal CA' );
-    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as additional_roots_pem: the four files';
+    is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], $case.' as additional_roots_pem: the files with one root';
     is raw( $target.'/'.$_ ), raw( $dir.'/'.$_ ), '... '.$_.' byte for byte what it is without the argument' for SICK::Trust->files;
 
     my $chained_target = $target.'-chained';
@@ -745,7 +747,7 @@ subtest 'the files of additional roots go when the replacement is over' => sub {
   my @paths = SICK::Trust->write( $target, root_pem => $root->{pem} );
   is_deeply files_in($target), [ sort SICK::Trust->files, 'robots.txt', 'root_ca_2.pem.bak' ],
     'the key is removed again: no additional root and no bundle is offered any longer';
-  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the four files are returned';
+  is_deeply \@paths, [ map { $target.'/'.$_ } SICK::Trust->files ], '... and the files without them are returned';
   is raw( $target.'/'.$_ ), raw( $tmp.'/unnamed/'.$_ ), '... '.$_.' that of a CA with one root' for SICK::Trust->files;
 };
 
@@ -764,6 +766,451 @@ subtest 'additional roots that are none' => sub {
     like $@, $message, '... saying so';
     ok !-e $target, '... and writes nothing';
   }
+};
+
+#### the install and remove scripts
+
+# Four scripts carry the certificates themselves and install them only when
+# the operator gives the SHA-256 fingerprint of every root, as got by another
+# channel. The shell scripts run here in a sandbox: SICK_TRUST_ROOT puts their
+# paths below a directory of the test, and the programs they call
+# (update-ca-certificates, update-ca-trust, trust, certutil, security) are
+# recording fakes earlier in the PATH. Nothing touches a store of this machine.
+
+my $sandbox = $tmp.'/script-sandbox';
+my $fakebin = $sandbox.'/bin';
+my $log     = $sandbox.'/calls.log';
+mkdir $_ or die 'mkdir '.$_.': '.$! for $sandbox, $fakebin;
+
+sub fake {
+  my ( $name, $body ) = @_;
+  my $path = spew( $fakebin.'/'.$name, "#!/bin/sh\nprintf '%s\\n' \"$name\${1+ \$*}\" >> \"\$SICK_TEST_LOG\"\n".$body );
+  chmod 0755, $path or die 'chmod: '.$!;
+  return $path;
+}
+
+# a SHA of a PEM file, the way the fakes find a certificate again
+my $fake_hash = 'openssl x509 -in "$1" -outform DER | openssl dgst -$2 -r | cut -d" " -f1';
+
+fake( 'update-ca-certificates', "exit 0\n" );
+fake( 'update-ca-trust',        "exit 0\n" );
+# p11-kit: trust anchor --store FILE / --remove FILE, kept below $SICK_TRUST_ROOT/p11kit
+fake( 'trust', <<"SH" );
+h() { $fake_hash; }
+[ "\$1" = anchor ] || exit 3
+dir="\$SICK_TRUST_ROOT/p11kit"; mkdir -p "\$dir"
+entry="\$dir/\$(h "\$3" sha256).pem"
+case \$2 in
+  --store)  [ ! -f "\$entry" ] || exit 1; cp "\$3" "\$entry";;
+  --remove) [ -f "\$entry" ] || exit 1; rm -f "\$entry";;
+  *) exit 3;;
+esac
+SH
+# NSS certutil: -A/-M/-D/-L on sql:DIR, one file per nickname
+fake( 'certutil', <<'SH' );
+op=''; db=''; nick=''; trust=''; file=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    -A|-M|-D|-L) op=$1;;
+    -d) db=${2#sql:}; shift;;
+    -n) nick=$2; shift;;
+    -t) trust=$2; shift;;
+    -i) file=$2; shift;;
+  esac
+  shift
+done
+entry="$db/fake-$(printf %s "$nick" | tr -c 'A-Za-z0-9\n' _)"
+case $op in
+  -A) [ ! -f "$entry.pem" ] || exit 1; cp "$file" "$entry.pem"; printf '%s\n' "$trust" > "$entry.trust";;
+  -M) [ -f "$entry.pem" ] || exit 1; printf '%s\n' "$trust" > "$entry.trust";;
+  -D) [ -f "$entry.pem" ] || exit 1; rm -f "$entry.pem" "$entry.trust";;
+  -L) [ -f "$entry.pem" ] || exit 1;;
+  *) exit 3;;
+esac
+SH
+# macOS security: the keychain is a directory next to the keychain path
+fake( 'security', <<"SH" );
+h() { $fake_hash; }
+cmd=\$1; shift
+kc=''; hash=''; trusted=''
+while [ \$# -gt 1 ]; do
+  case \$1 in
+    -k) kc=\$2; shift;;
+    -Z) hash=\$2; shift;;
+    -r) trusted=\$2; shift;;
+  esac
+  shift
+done
+last=\$1
+dir="\$SICK_TRUST_ROOT/keychain"; mkdir -p "\$dir"
+case \$cmd in
+  add-trusted-cert)    [ "\$kc" = "\$SICK_TRUST_ROOT/Library/Keychains/System.keychain" ] || exit 4
+                       s=\$(h "\$last" sha1 | tr a-f A-F); cp "\$last" "\$dir/\$s.pem"; printf '%s\\n' "\$trusted" > "\$dir/\$s.trust";;
+  add-certificates)    [ "\$kc" = "\$SICK_TRUST_ROOT/Library/Keychains/System.keychain" ] || exit 4
+                       s=\$(h "\$last" sha1 | tr a-f A-F); [ ! -f "\$dir/\$s.pem" ] || exit 1; cp "\$last" "\$dir/\$s.pem";;
+  find-certificate)    for f in "\$dir"/*.pem; do [ -f "\$f" ] && printf 'SHA-1 hash: %s\\n' "\$(basename "\$f" .pem)"; done; exit 0;;
+  remove-trusted-cert) s=\$(h "\$last" sha1 | tr a-f A-F); [ -f "\$dir/\$s.trust" ] || exit 1; rm -f "\$dir/\$s.trust";;
+  delete-certificate)  [ -f "\$dir/\$hash.pem" ] || exit 1; rm -f "\$dir/\$hash.pem";;
+  *) exit 3;;
+esac
+SH
+
+my $site = $tmp.'/site/scripts';
+SICK::Trust->write( $site, root_pem => $root->{pem}, intermediates_pem => $inter->{pem},
+  additional_roots_pem => $next->{pem}, name => q{Example 'Internal' CA} );
+my @site_roots = ( $facts, $next_facts );
+my $sha        = sub { my ( $f ) = @_; return $f->fingerprint_sha256 };
+my $colons_of  = sub { join ':', map { uc } $_[0] =~ /(..)/g };
+my $others_sha = SICK::Bundle->new( cert => $other->{pem} )->fingerprint_sha256;
+
+# ( exit code, stdout, stderr ) of a shell script in the sandbox
+sub script {
+  my ( $file, $root_dir, @args ) = @_;
+  my ( $out, $err, $exit ) = SICK::Command::run(
+    [ 'sh', $file, @args ],
+    env => {
+      PATH            => $fakebin.':'.$ENV{PATH},
+      SICK_TRUST_ROOT => $root_dir,
+      SICK_TEST_LOG   => $log,
+    },
+    timeout => 60,
+  );
+  return ( $exit, $out, $err );
+}
+
+sub pem_blocks {
+  my ( $text ) = @_;
+  return [ map { $_."\n" } $text =~ /(-----BEGIN CERTIFICATE-----\n.*?\n-----END CERTIFICATE-----)/sg ];
+}
+
+sub tree {
+  my ( $top ) = @_;
+  return [] unless -d $top;
+  my @found;
+  my @todo = ($top);
+  while ( my $d = shift @todo ) {
+    opendir my $dh, $d or die 'opendir '.$d.': '.$!;
+    for my $e ( sort grep { !/\A\.\.?\z/ } readdir $dh ) {
+      my $p = $d.'/'.$e;
+      if   ( -d $p ) { push @todo, $p }
+      else           { push @found, substr( $p, length($top) + 1 ) }
+    }
+  }
+  return [ sort @found ];
+}
+
+subtest 'the scripts are written, and carry exactly the certificates they install' => sub {
+  for my $where ( $dir, $chained, $site ) {
+    ok -s $where.'/'.$_, $where =~ s{.*/}{}r.': '.$_.' is there' for @scripts;
+  }
+  my $linux = slurp( $site.'/trust-linux.sh' );
+  is_deeply pem_blocks($linux), [ $root->{pem}, $next->{pem} ],
+    'trust-linux.sh: the root and the additional root, and no intermediate - the system store is a store of anchors';
+  for my $file (qw( trust-macos.sh trust-nss.sh )) {
+    is_deeply pem_blocks( slurp( $site.'/'.$file ) ), [ $root->{pem}, $next->{pem}, $inter->{pem} ],
+      $file.': the roots, then the intermediate';
+  }
+  is_deeply pem_blocks( slurp( $dir.'/trust-linux.sh' ) ), [ $root->{pem} ], 'one root: that root alone';
+  is_deeply pem_blocks( slurp( $dir.'/trust-nss.sh' ) ),   [ $root->{pem} ], '... in trust-nss.sh as well';
+
+  my $ps1 = raw( $site.'/trust-windows.ps1' );
+  unlike $ps1, qr/[^\x09\x0a\x0d\x20-\x7e]/, 'trust-windows.ps1 is plain ASCII, whatever the name of the CA';
+  my ($roots_block) = $ps1 =~ /^\$Roots = \@\(\n(.*?)^\)/ms;
+  my ($inter_block) = $ps1 =~ /^\$Intermediates = \@\(\n(.*?)^\)/ms;
+  my @root_der  = map { decode_base64($_) } ( $roots_block || q{} ) =~ /'([A-Za-z0-9+\/=]+)'/g;
+  my @inter_der = map { decode_base64($_) } ( $inter_block || q{} ) =~ /'([A-Za-z0-9+\/=]+)'/g;
+  is_deeply \@root_der,  [ raw( $site.'/root_ca.crt' ), raw( $site.'/root_ca_2.crt' ) ], 'trust-windows.ps1: the roots in DER';
+  is_deeply \@inter_der, [ raw( $site.'/intermediate_ca.crt' ) ], '... and the intermediate, for the store of intermediates';
+  like $ps1, qr/Cert:\\LocalMachine\\Root/, '... roots into LocalMachine\Root';
+  like $ps1, qr/Cert:\\LocalMachine\\CA/,   '... intermediates into LocalMachine\CA';
+  like $ps1, qr/Import-Certificate/,        '... with Import-Certificate';
+
+  my $alone = raw( $dir.'/trust-windows.ps1' );
+  my ($none) = $alone =~ /^\$Intermediates = \@\(\n(.*?)^\)/ms;
+  is $none, q{}, 'without an intermediate the list of intermediates is empty';
+  like raw( $dir.'/'.$_ ), qr/^INTERMEDIATES=0$/m, $_.' of a CA without an intermediate knows of none' for grep { /\.sh\z/ } @scripts;
+  like raw( $site.'/'.$_ ), qr/^INTERMEDIATES=1$/m, $_.' of a CA with one knows of one' for qw( trust-macos.sh trust-nss.sh );
+  like raw( $site.'/trust-linux.sh' ), qr/^INTERMEDIATES=0$/m, '... but trust-linux.sh does not carry it';
+  unlike join( q{}, map { raw( $site.'/'.$_ ) } @scripts ), qr/PRIVATE KEY/, 'no key in any script';
+  unlike raw( $_ ), qr/[ \t]\n/, $_ =~ s{.*/}{}r.' has no trailing blanks' for map { $site.'/'.$_ } @scripts;
+
+  my %before = map { $_ => raw( $site.'/'.$_ ) } @scripts;
+  SICK::Trust->write( $site, root_pem => $root->{pem}, intermediates_pem => $inter->{pem},
+    additional_roots_pem => $next->{pem}, name => q{Example 'Internal' CA} );
+  is raw( $site.'/'.$_ ), $before{$_}, $_.' is byte for byte the same when written again' for @scripts;
+};
+
+subtest 'the shell scripts are valid sh' => sub {
+  for my $file ( grep { /\.sh\z/ } @scripts ) {
+    for my $where ( $dir, $site ) {
+      my ( $out, $err, $exit ) = SICK::Command::run( [ 'sh', '-n', $where.'/'.$file ] );
+      is $exit, 0, 'sh -n '.$file.' ('.( $where =~ s{.*/}{}r ).')' or diag $err;
+    }
+  }
+SKIP: {
+    my $pwsh = eval { ( SICK::Command::run( [ 'pwsh', '-NoProfile', '-Command', 'exit 0' ] ) )[2] };
+    skip 'pwsh is not installed: the syntax of trust-windows.ps1 is not checked', 2 unless defined $pwsh && $pwsh == 0;
+    for my $where ( $dir, $site ) {
+      my $check = spew( $tmp.'/parse-check.ps1', '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$e); if ($e.Count) { $e | ForEach-Object { $_.ToString() }; exit 1 }'."\n" );
+      my ( $out, $err, $exit ) = SICK::Command::run( [ 'pwsh', '-NoProfile', '-NonInteractive', '-File', $check, $where.'/trust-windows.ps1' ] );
+      is $exit, 0, 'pwsh parses trust-windows.ps1 ('.( $where =~ s{.*/}{}r ).')' or diag $out.$err;
+    }
+  }
+};
+
+subtest 'the command line of the scripts' => sub {
+  my $box = $sandbox.'/usage';
+  for my $file ( grep { /\.sh\z/ } @scripts ) {
+    my ( $exit, $out, $err ) = script( $site.'/'.$file, $box );
+    is $exit, 2, $file.' without an action: exit code 2';
+    like $err, qr/Usage:/, '... with the usage';
+    ( $exit, $out, $err ) = script( $site.'/'.$file, $box, 'erase' );
+    is $exit, 2, $file.' with an unknown action: exit code 2';
+    ( $exit, $out, $err ) = script( $site.'/'.$file, $box, 'remove', '--fingerprint', $sha->($facts), ( $file eq 'trust-nss.sh' ? $box : () ) );
+    is $exit, 2, $file.' remove with a fingerprint: exit code 2, remove needs none';
+    ( $exit, $out, $err ) = script( $site.'/'.$file, $box, '--help' );
+    is $exit, 0, $file.' --help: exit code 0';
+    like $out, qr/\Q$file\E install --fingerprint <sha256> \[--fingerprint <sha256> \.\.\.\]/, '... and the usage names --fingerprint';
+  }
+  ok !-e $box, 'none of this wrote anything';
+};
+
+# The families of trust-linux.sh: what /etc/os-release says, where the root
+# goes and which program updates the store.
+my %family = (
+  debian => [ "ID=debian\n",                              'usr/local/share/ca-certificates', '.crt', 'update-ca-certificates' ],
+  ubuntu => [ "ID=ubuntu\nID_LIKE=debian\n",              'usr/local/share/ca-certificates', '.crt', 'update-ca-certificates' ],
+  alpine => [ "ID=alpine\n",                              'usr/local/share/ca-certificates', '.crt', 'update-ca-certificates' ],
+  rocky  => [ "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", 'etc/pki/ca-trust/source/anchors', '.pem', 'update-ca-trust extract' ],
+  fedora => [ "ID=fedora\n",                              'etc/pki/ca-trust/source/anchors', '.pem', 'update-ca-trust extract' ],
+);
+
+for my $os ( sort keys %family ) {
+  subtest 'trust-linux.sh on '.$os.': refuses without the right fingerprints, installs the roots, removes them' => sub {
+    my ( $release, $store, $ext, $update ) = @{ $family{$os} };
+    my $box = $sandbox.'/linux-'.$os;
+    mkdir $box; mkdir $box.'/etc';
+    spew( $box.'/etc/os-release', $release );
+    my $file = $site.'/trust-linux.sh';
+    unlink $log;
+
+    my ( $exit, $out, $err ) = script( $file, $box, 'install' );
+    is $exit, 1, 'no fingerprint: refused with exit code 1';
+    like $err, qr/refused/, '... saying so';
+    like $err, qr/from the person who runs/, '... and where the fingerprint comes from';
+    like $out, qr/\Q${\ $colons_of->( $sha->($_) ) }\E/, '... printing the fingerprint it computed for '.$_->subject_dn for @site_roots;
+
+    ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', $others_sha, '--fingerprint', $sha->($next_facts) );
+    is $exit, 1, 'the fingerprint of another root instead of the current one: refused';
+    like $err, qr/refused/, '... saying so';
+    like $out, qr/\Q${\ $colons_of->($others_sha) }\E/, '... and naming the fingerprint that fits no certificate';
+
+    ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', $sha->($facts) );
+    is $exit, 1, 'only one of the two roots: refused, the set has to match';
+    ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots, $facts );
+    is $exit, 0, 'a fingerprint given twice is still the same set' or diag $err;
+    script( $file, $box, 'remove' );
+    unlink $log;
+    ( $exit, $out, $err ) = script( $file, $box, 'install', ( map { ( '--fingerprint', $sha->($_) ) } @site_roots ), '--fingerprint', $others_sha );
+    is $exit, 1, 'one fingerprint too many: refused';
+    ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', 'not-a-fingerprint' );
+    is $exit, 1, 'something that is no fingerprint: refused';
+    like $err, qr/not a SHA-256 fingerprint/, '... saying so';
+    is_deeply tree( $box.'/'.$store ), [], 'after all refusals nothing is in the store';
+    ok !-e $log, '... and no program was called';
+
+    ( $exit, $out, $err ) = script( $file, $box, 'install',
+      '--fingerprint', $colons_of->( $sha->($facts) ), '--fingerprint', uc $sha->($next_facts) );
+    is $exit, 0, 'both fingerprints, one with colons, one in capitals: installed' or diag $err;
+    my @stored = @{ tree( $box.'/'.$store ) };
+    is scalar @stored, 2, '... two files in /'.$store;
+    like $_, qr/\Asick-root-[0-9a-f]{16}\Q$ext\E\z/, '... '.$_.' named by its fingerprint' for @stored;
+    is_deeply [ sort map { slurp( $box.'/'.$store.'/'.$_ ) } @stored ], [ sort $root->{pem}, $next->{pem} ],
+      '... holding exactly the two roots';
+    unlike join( q{}, map { slurp($_) } map { $box.'/'.$store.'/'.$_ } @stored ), qr/\Q${\ substr( $inter->{pem}, 30, 60 ) }\E/,
+      '... and never the intermediate';
+    is_deeply [ grep { !m{\A\Q$store\E/} && $_ ne 'etc/os-release' } @{ tree($box) } ], [], '... and nothing anywhere else';
+    like slurp($log), qr/^\Q$update\E$/m, '... then '.$update;
+    like $out, qr/restart/i, '... and it says what still needs a restart';
+
+    spew( $box.'/'.$store.'/somebody-else.crt', "not ours\n" );
+    unlink $log;
+    ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+    is $exit, 0, 'remove: exit code 0' or diag $err;
+    is_deeply tree( $box.'/'.$store ), ['somebody-else.crt'], '... both roots are gone, the file of somebody else stays';
+    like $out, qr/removed/, '... saying what it removed';
+    like slurp($log), qr/^\Q$update\E$/m, '... and the store is updated';
+
+    unlink $log;
+    ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+    is $exit, 0, 'remove again: exit code 0, nothing to do is no error';
+    like $out, qr/not installed/, '... saying so';
+    is_deeply tree( $box.'/'.$store ), ['somebody-else.crt'], '... and touching nothing';
+  };
+}
+
+subtest 'trust-linux.sh with p11-kit (Arch and others)' => sub {
+  my $box = $sandbox.'/linux-arch';
+  mkdir $box; mkdir $box.'/etc';
+  spew( $box.'/etc/os-release', "ID=arch\n" );
+  my $file = $site.'/trust-linux.sh';
+  unlink $log;
+  my ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', $others_sha );
+  is $exit, 1, 'a wrong fingerprint: refused';
+  ok !-e $log, '... and trust was not called';
+
+  ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
+  is $exit, 0, 'the right ones: exit code 0' or diag $err;
+  is_deeply tree( $box.'/p11kit' ), [ sort map { $sha->($_).'.pem' } @site_roots ], '... trust anchor --store for each root, and for nothing else';
+  like slurp($log), qr/^trust anchor --store /m, '... called as trust anchor --store';
+  ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
+  is $exit, 0, 'installing again: exit code 0' or diag $err;
+
+  ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+  is $exit, 0, 'remove: exit code 0' or diag $err;
+  is_deeply tree( $box.'/p11kit' ), [], '... both anchors gone';
+  ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+  is $exit, 0, 'remove again: exit code 0';
+  like $out, qr/not installed/, '... saying so';
+};
+
+subtest 'trust-linux.sh on a system it does not know, and as somebody who is not root' => sub {
+  my @real = grep { -x } map { my $d = $_; map { $d.'/'.$_ } qw( trust update-ca-trust update-ca-certificates ) } qw( /usr/bin /bin );
+  my ( $out, $err, $exit );
+SKIP: {
+    skip 'this machine has '.$real[0].' in /usr/bin:/bin, which the script would find', 2 if @real;
+    my $box = $sandbox.'/linux-unknown';
+    mkdir $box; mkdir $box.'/etc';
+    spew( $box.'/etc/os-release', "ID=plan9\n" );
+    ( $out, $err, $exit ) = SICK::Command::run(
+      [ 'sh', $site.'/trust-linux.sh', 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots ],
+      env => { PATH => '/usr/bin:/bin', SICK_TRUST_ROOT => $box, SICK_TEST_LOG => $log } );
+    is $exit, 1, 'an unknown family without update-ca-certificates, update-ca-trust or trust: refused';
+    like $err, qr/do not know the trust store/, '... saying so';
+  }
+
+SKIP: {
+    skip 'this test runs as root', 2 unless $>;
+    ( $out, $err, $exit ) = SICK::Command::run( [ 'sh', $site.'/trust-linux.sh', 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots ],
+      env => { PATH => $fakebin.':'.$ENV{PATH}, SICK_TRUST_ROOT => undef, SICK_TEST_LOG => $log } );
+    is $exit, 1, 'not root and no sandbox: refused';
+    like $err, qr/as root/, '... saying it needs root';
+  }
+};
+
+subtest 'trust-nss.sh: roots trusted as CA, intermediates without trust, removed again' => sub {
+  my $db = $sandbox.'/nssdb';
+  mkdir $db or die 'mkdir: '.$!;
+  my $file = $site.'/trust-nss.sh';
+
+  my ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', ( map { ( '--fingerprint', $sha->($_) ) } @site_roots ), $db );
+  is $exit, 1, 'a directory without cert9.db: refused';
+  like $err, qr/cert9\.db/, '... saying what is missing';
+  spew( $db.'/cert9.db', q{} );
+
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', '--fingerprint', $sha->($facts), $db );
+  is $exit, 1, 'one root of two: refused';
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', $db );
+  is $exit, 1, 'no fingerprint: refused';
+  is_deeply tree($db), ['cert9.db'], '... nothing added';
+
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', ( map { ( '--fingerprint', $sha->($_) ) } @site_roots ), $db );
+  is $exit, 0, 'both fingerprints: installed' or diag $err;
+  my @entries = grep { /\.trust\z/ } @{ tree($db) };
+  is scalar @entries, 3, '... three certificates in the database';
+  my %trust = map { ( slurp( $db.'/'.( s/\.trust\z/.pem/r ) ) => slurp( $db.'/'.$_ ) ) } @entries;
+  is $trust{ $root->{pem} },  "C,,\n", '... the root trusted as a CA for websites (C,,)';
+  is $trust{ $next->{pem} },  "C,,\n", '... the additional root as well';
+  is $trust{ $inter->{pem} }, ",,\n",  '... the intermediate without any trust (,,)';
+  like $out, qr/restart/i, '... and it says Firefox needs a restart';
+
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', ( map { ( '--fingerprint', $sha->($_) ) } @site_roots ), $db );
+  is $exit, 0, 'installing again: exit code 0' or diag $err;
+
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'remove', $db );
+  is $exit, 0, 'remove: exit code 0' or diag $err;
+  is_deeply tree($db), ['cert9.db'], '... all three gone';
+  ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'remove', $db );
+  is $exit, 0, 'remove again: exit code 0';
+  like $out, qr/not installed/, '... saying so';
+};
+
+subtest 'trust-macos.sh: roots trusted in the System keychain, intermediates added without trust' => sub {
+  my $box  = $sandbox.'/macos';
+  my $file = $site.'/trust-macos.sh';
+  my ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', $others_sha, '--fingerprint', $sha->($facts) );
+  is $exit, 1, 'a wrong fingerprint: refused';
+  is_deeply tree( $box.'/keychain' ), [], '... nothing in the keychain';
+
+  ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
+  is $exit, 0, 'the right ones: installed' or diag $err;
+  my %der_of = ( $root->{pem} => 'root_ca.crt', $next->{pem} => 'root_ca_2.crt', $inter->{pem} => 'intermediate_ca.crt' );
+  my $sha1 = sub { my ( $pem ) = @_; uc sha1_hex( raw( $site.'/'.$der_of{$pem} ) ) };
+  my %in = map { $_ => 1 } @{ tree( $box.'/keychain' ) };
+  ok $in{ $sha1->( $_->[1] ).'.pem' },   '... '.$_->[0].' is in the keychain' for [ 'the root', $root->{pem} ], [ 'the additional root', $next->{pem} ], [ 'the intermediate', $inter->{pem} ];
+  ok $in{ $sha1->( $_->[1] ).'.trust' }, '... '.$_->[0].' is trusted as a root' for [ 'the root', $root->{pem} ], [ 'the additional root', $next->{pem} ];
+  ok !$in{ $sha1->( $inter->{pem} ).'.trust' }, '... the intermediate has no trust setting';
+  is slurp( $box.'/keychain/'.$sha1->( $root->{pem} ).'.trust' ), "trustRoot\n", '... the roots with -r trustRoot';
+
+  ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
+  is $exit, 0, 'installing again: exit code 0' or diag $err;
+
+  ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+  is $exit, 0, 'remove: exit code 0' or diag $err;
+  is_deeply tree( $box.'/keychain' ), [], '... certificates and trust settings gone';
+  ( $exit, $out, $err ) = script( $file, $box, 'remove' );
+  is $exit, 0, 'remove again: exit code 0';
+  like $out, qr/not installed/, '... saying so';
+};
+
+subtest 'the page: the fingerprint from another channel first, the scripts, removal, the limits' => sub {
+  my $page = slurp( $site.'/index.html' );
+  ( my $text = $page ) =~ s/\s+/ /g;
+  my $oob = index $text, 'not from this page';
+  ok $oob > 0, 'the page says the fingerprint does not come from this page';
+  ok $oob < index( $text, '<dl>' ), '... before it shows any fingerprint';
+  ok $oob < index( $text, 'href="root_ca' ), '... and before it offers any file';
+  like $text, qr/this page is not authenticated/i, '... because the page is not authenticated';
+
+  like $page, qr/<a href="\Q$_\E"/, 'a link to '.$_ for @scripts;
+  my %section = map { /\A<h2 id="([a-z]+)">/ ? ( $1 => $_ ) : () } split /(?=<h2 id=")/, $page;
+  my $two = '--fingerprint &lt;from your admin&gt; --fingerprint &lt;from your admin&gt;';
+  like $section{linux},   qr/sudo sh trust-linux\.sh install \Q$two\E/,  'Linux: the script, one placeholder per root';
+  like $section{macos},   qr/sudo sh trust-macos\.sh install \Q$two\E/,  'macOS: the script';
+  like $section{windows}, qr/trust-windows\.ps1 install \Q$two\E/,       'Windows: the script';
+  like $section{firefox}, qr/sh trust-nss\.sh install \Q$two\E/,         'Firefox: trust-nss.sh';
+  like $section{chrome},  qr/trust-nss\.sh/,                             'Chrome on Linux: trust-nss.sh';
+  unlike $text, qr/--fingerprint [0-9A-Fa-f]{2}:/, 'no command on the page carries a fingerprint';
+  my $one = slurp( $dir.'/index.html' );
+  like $one, qr/trust-linux\.sh install --fingerprint &lt;from your admin&gt;<\/pre>/, 'one root: one placeholder';
+
+  for my $platform (qw( ios android macos windows linux firefox chrome )) {
+    like $section{$platform}, qr/<h3>Remove<\/h3>/, $platform.': how to remove it again';
+  }
+  like $section{linux},   qr/trust-linux\.sh remove/,   'Linux: the script removes';
+  like $section{macos},   qr/trust-macos\.sh remove/,   'macOS: the script removes';
+  like $section{windows}, qr/trust-windows\.ps1 remove/, 'Windows: the script removes';
+  like $section{firefox}, qr/trust-nss\.sh remove/,     'Firefox: the script removes';
+
+  ( my $android = $section{android} ) =~ s/\s+/ /g;
+  like $android, qr/Network Security Config/, 'Android: apps opt in through the Network Security Configuration';
+  like $android, qr/API level 24/, '... from API level 24 on';
+  like $android, qr/Chrome/, '... Chrome uses them';
+  ( my $ios = $section{ios} ) =~ s/\s+/ /g;
+  like $ios, qr/Not Verified/, 'iPhone: the profile is unsigned and shows Not Verified';
+  like $ios, qr/compare/i, '... so the fingerprint is compared after the installation';
+  like $section{macos}, qr/Not Verified/, 'macOS: the same';
+  like $section{$_}, qr/[Nn]ot tried/, $_.': not tried on a device yet' for qw( ios android macos windows );
+
+  ok $section{runtimes}, 'a section for programs with a store of their own';
+  ( my $runtimes = $section{runtimes} ) =~ s/\s+/ /g;
+  like $runtimes, qr/\Q$_\E/, '... '.$_ for qw( keytool certifi SSL_CERT_FILE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS --use-system-ca Go curl http.sslCAInfo /etc/docker/certs.d Dockerfile Kubernetes );
+  unlike $runtimes, qr/verified/i, '... none marked verified yet';
+  like $text, qr/2026-10-10/, 'the date the dated claims were checked';
+
+  unlike $page, qr/[ \t]\n|<!--|\n\n\n/, 'no trailing blanks, no placeholder, no hole';
+  my %anchor = map { $_ => 1 } $page =~ /\bid="([a-z]+)"/g;
+  is_deeply [ grep { /\A#/ && !$anchor{ substr $_, 1 } } $page =~ /href="([^"]*)"/g ], [], 'every section that is linked exists';
 };
 
 done_testing;

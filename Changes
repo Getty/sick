@@ -134,3 +134,10 @@ Revision history for SICK
       carry both; docker/compose.ca-next.yml runs the CA of a new root on a
       second volume; t/e2e/ca-rollover.sh proves both with OpenSSL and
       GnuTLS clients.
+    - sick trust writes trust-linux.sh, trust-macos.sh, trust-windows.ps1
+      and trust-nss.sh, which carry the certificates, install only when
+      given the SHA-256 fingerprint of every root (from the CA's operator,
+      not the page) and remove exactly what they installed; the page now
+      puts that out-of-band check first and adds removal per platform,
+      Android's Network Security Configuration limits, the unsigned-profile
+      warning and programs with their own trust store.

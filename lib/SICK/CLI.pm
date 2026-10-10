@@ -43,9 +43,9 @@ Commands:
   check    Show which certificate every device presents. Changes nothing.
   run      Renew what is due: check, issue, deploy, check again.
   trust    Write the certificates clients have to know - the root, and the
-           intermediate and further roots when the CA has them -, an Apple
-           configuration profile and a page with instructions into a
-           directory.
+           intermediate and further roots when the CA has them -, install
+           and remove scripts, an Apple configuration profile and a page
+           with instructions into a directory.
 
 Options:
   -c, --config <file>  The device list. Default: $SICK_CONFIG, otherwise

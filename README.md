@@ -81,9 +81,11 @@ grafana  renewed    missing
   `--dry-run` only says what would be renewed, `--force` renews also what is
   fine, `--verbose` reports each step on standard error.
 - **`sick trust <directory>`** – writes `root_ca.pem`, `root_ca.crt` (DER),
-  `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac) and an
-  `index.html` with the fingerprints and the installation steps for Firefox,
-  Chrome, Linux, macOS, Windows, iOS and Android. With `ca.intermediates` set
+  `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac), install and
+  remove scripts (`trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`,
+  `trust-nss.sh`) and an `index.html` with the fingerprints and the steps to
+  install and remove for Firefox, Chrome, Linux, macOS, Windows, iOS and
+  Android. With `ca.intermediates` set
   it adds `intermediate_ca.pem`, `intermediate_ca.crt` and `ca_bundle.pem`,
   with `ca.additional_roots` set `root_ca_2.pem`, `root_ca_2.crt` … and
   `ca_bundle.pem`.
@@ -117,7 +119,40 @@ it. `sick trust` writes what they need, and one page that says where it goes.
 | `intermediate_ca.pem`, `intermediate_ca.crt` | the intermediate certificate – what a client has to know, not to trust |
 | `ca_bundle.pem` | root and intermediate in one PEM file, for programs that take one file: `curl --cacert ca_bundle.pem` |
 | `root_ca.mobileconfig` | a configuration profile for iPhone, iPad and Mac with the root as trusted root and the intermediate as a plain certificate: one installation |
-| `index.html` | fingerprints, downloads and the steps for each platform |
+| `trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`, `trust-nss.sh` | install and remove scripts with the certificates in them, see below |
+| `index.html` | fingerprints, downloads, the scripts and the steps to install and remove for each platform |
+
+**The fingerprint comes by another channel.** The page is served to clients
+that do not trust anything yet, so it proves nothing about itself: whoever
+can change it can change the fingerprint on it too. Hand out the SHA-256
+fingerprint of the root yourself – on paper, by phone, in a chat people
+already trust – and the page says so before anything else. The scripts
+refuse to install unless they are given the fingerprint of every root they
+carry, and no other; colons and case do not matter:
+
+```sh
+sudo sh trust-linux.sh install --fingerprint <sha256> [--fingerprint <sha256> ...]
+sudo sh trust-linux.sh remove
+sudo sh trust-macos.sh install --fingerprint <sha256> ...       # and remove
+powershell -ExecutionPolicy Bypass -File trust-windows.ps1 install --fingerprint <sha256> ...   # and remove
+sh trust-nss.sh install --fingerprint <sha256> ... <firefox profile or NSS database>           # and remove <dir>
+```
+
+| Script | Where | Root | Intermediate |
+|---|---|---|---|
+| `trust-linux.sh` | Debian, Ubuntu, Alpine (`update-ca-certificates`), Fedora, RHEL, Rocky (`update-ca-trust`), Arch and other p11-kit systems (`trust anchor`) | a file `sick-root-<fingerprint>` in the anchors | not carried – a store of anchors |
+| `trust-macos.sh` | System keychain (`security`) | `add-trusted-cert -r trustRoot` | `add-certificates`, no trust |
+| `trust-windows.ps1` | local machine (`Import-Certificate`) | `LocalMachine\Root` | `LocalMachine\CA` |
+| `trust-nss.sh` | a Firefox profile, Chrome's `~/.pki/nssdb` (`certutil`) | trust `C,,` | trust `,,` |
+
+Each script computes the fingerprints itself (`openssl`, or `base64` and
+`sha256sum`/`shasum`; `Get-FileHash` on Windows) and prints them; a missing
+or wrong fingerprint is exit code 1 with nothing changed. `remove` takes out
+what `install` put in – by file name, keychain hash, thumbprint or nickname,
+all derived from the fingerprints – is content when there is nothing left,
+and needs no fingerprint. No script replaces a system bundle or restarts
+anything; each says what still needs a restart. `SICK_TRUST_ROOT` in the two
+Unix system scripts is for the test suite only.
 
 The three files in the middle are there when the `ca` section names
 `intermediates`, and this is why. step-ca signs through its intermediate, and
@@ -192,7 +227,9 @@ GnuTLS and NSS on Debian 13 and Fedora 44
 ([docs/findings/trust-anchors.md](docs/findings/trust-anchors.md)). The steps for
 iPhone, iPad, Android, macOS, Windows and the browsers themselves are written
 from the documentation of those platforms and have not been walked through
-on a device yet.
+on a device yet. The scripts have been run in the test suite against
+recording stand-ins for `update-ca-certificates`, `update-ca-trust`, p11-kit
+`trust`, `certutil` and `security`; on the real platforms not yet.
 
 ## The handbook
 

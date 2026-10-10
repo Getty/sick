@@ -99,10 +99,16 @@ and the programs they call have to say.
 
 Writes the root certificate of the CA into the directory, as PEM
 (C<root_ca.pem>), as DER (C<root_ca.crt>) and as a configuration profile
-for Apple devices (C<root_ca.mobileconfig>), together with an C<index.html>
-that shows the fingerprint and explains the installation for Firefox,
-Chrome, Linux, macOS, Windows, iOS and Android. Put the directory behind a
-web server and send people the link. See L<SICK::Trust>.
+for Apple devices (C<root_ca.mobileconfig>), install and remove scripts
+(C<trust-linux.sh>, C<trust-macos.sh>, C<trust-windows.ps1>,
+C<trust-nss.sh>), and an C<index.html> that shows the fingerprint and
+explains installing and removing for Firefox, Chrome, Linux, macOS,
+Windows, iOS and Android. Put the directory behind a web server and send
+people the link - and the SHA-256 fingerprint of the root by another
+channel: the page is not authenticated, and the scripts install nothing
+unless they are given that fingerprint
+(C<sudo sh trust-linux.sh install --fingerprint E<lt>sha256E<gt>>). See
+L<SICK::Trust> and L<SICK::Trust::Scripts>.
 
 When the C<ca> section names C<intermediates>, they are written as well:
 C<intermediate_ca.pem>, C<intermediate_ca.crt> (DER) and C<ca_bundle.pem>,

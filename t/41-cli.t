@@ -257,9 +257,9 @@ subtest 'trust' => sub {
   my $dir  = $tmp.'/trust/site';
   my ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $path );
   is $code, 0, 'exit code 0';
-  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca.mobileconfig, index.html to '.$dir."\n", '... saying what was written';
+  is $out, 'wrote root_ca.pem, root_ca.crt, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n", '... saying what was written';
   is $err, q{}, '... nothing on standard error';
-  ok -s $dir.'/'.$_, $_.' is there' for qw( root_ca.pem root_ca.crt root_ca.mobileconfig index.html );
+  ok -s $dir.'/'.$_, $_.' is there' for qw( root_ca.pem root_ca.crt trust-linux.sh trust-macos.sh trust-windows.ps1 trust-nss.sh root_ca.mobileconfig index.html );
   is slurp( $dir.'/root_ca.pem' ), slurp( $tmp.'/ca/ca.crt' ), 'the root certificate is the one of the CA';
   like slurp( $dir.'/index.html' ), qr/<h1>Trust Example &lt;Internal&gt; CA<\/h1>/, 'the page uses the name of the ca section';
 
@@ -292,7 +292,7 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   my $dir = $tmp.'/trust/chained';
   my ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->( intermediates => $inter->{cert} ) );
   is $code, 0, 'exit code 0';
-  is $out, 'wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to '.$dir."\n",
+  is $out, 'wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n",
     '... saying what was written: the intermediate and the bundle as well';
   is $err, q{}, '... nothing on standard error';
   is slurp( $dir.'/intermediate_ca.pem' ), $inter->{pem}, 'the intermediate is the one of the ca section';
@@ -301,7 +301,7 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
 
   ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->() );
   is $code, 0, 'the same CA without intermediates in its section: exit code 0';
-  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca.mobileconfig, index.html to '.$dir."\n", '... the four files';
+  is $out, 'wrote root_ca.pem, root_ca.crt, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n", '... the root files, the scripts and the page';
   ok !-e $dir.'/'.$_, '... and '.$_.' is no longer offered' for qw( intermediate_ca.pem intermediate_ca.crt ca_bundle.pem );
 
   my $missing = $tmp.'/no-such-intermediate.crt';
@@ -315,7 +315,7 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   my $next = new_ca( dir => $pki, name => 'next', cn => 'Example Internal Root CA 2' );
   ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->( additional_roots => '[ '.$next->{cert}.' ]' ) );
   is $code, 0, 'a section with additional_roots: exit code 0';
-  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca_2.pem, root_ca_2.crt, ca_bundle.pem, root_ca.mobileconfig, index.html to '.$dir."\n",
+  is $out, 'wrote root_ca.pem, root_ca.crt, root_ca_2.pem, root_ca_2.crt, ca_bundle.pem, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n",
     '... the additional root and the bundle as well';
   is slurp( $dir.'/root_ca.pem' ),   $root->{pem}, 'root_ca.pem stays the root of the section';
   is slurp( $dir.'/root_ca_2.pem' ), $next->{pem}, 'root_ca_2.pem is the additional root';
