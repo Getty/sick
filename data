@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T17:25:23Z
+created: 2026-10-10T15:50:30Z
+id: 25
+priority: medium
+started: 2026-10-10T17:19:49Z
+status: done
+tags:
+- pki
+- finding
+title: Check that key and certificate belong together before deploying
+updated: 2026-10-10T17:25:34Z
+---
+
+Finding from k6. Nothing in lib/ checks that the private key matches the certificate before a target publishes it; Files and Acmesh install whatever bundle they get, and a mismatch only shows after the reload as a broken service. ssl-tls-pki asks for candidate validation before activation (key correspondence, names, purpose, validity, chain). Done when: SICK::Bundle (via openssl, public key comparison) or the runner refuses a mismatched bundle before deploy, the device result is failed with a clear reason, and a test covers it.
+
+sick-worker: done, tree commit-ready (not committed). SICK::Bundle::key_matches (additive: pkey -pubout on the key via stdin vs x509 -pubkey, both normalized by pkey -pubin -pubout); SICK::Runner::_run_device calls it after issuing, before target->deploy, for bundles with a key: 'not deployed: the private key does not belong to the certificate'. Tests t/12 + t/40 red before, green after; prove -lr t 18 files/178 tests no skip; ciscosb suite green (90-live skipped, no switch vars). Note for ../sick-target-ciscosb board: CiscoSB::_public_key (rsa -pubout) could use SICK::Bundle::key_matches once this is released; the runner now refuses a mismatched bundle before CiscoSB->deploy, its own check stays as defence.
+
+Committed as d71f55a
