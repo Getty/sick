@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T18:44:30Z
+created: 2026-10-10T06:22:49Z
+id: 13
+priority: high
+started: 2026-10-10T16:52:20Z
+status: done
+tags:
+- ca
+title: 'P3 The CA done properly: offline root, name constraints, ceremony, backup,
+  rollovers, revocation'
+updated: 2026-10-10T18:44:41Z
+---
+
+Root key off the CA, constrained intermediate, lifetimes with reasons, backup/restore, intermediate and root rollover, passive revocation and optional CRL. Package, result and 'done when': docs/roadmap.md, section P3 The CA done properly.
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: ceremony record; profiles and enrollment table; enrollment negatives (out-of-scope name, CA:true, excessive lifetime); out-of-scope leaf refused by OpenSSL and an independent implementation; restore isolated without a second live CA; RTO/RPO; provisioner password rotation; compromise drills; planned vs compromise rollback.
+
+P3 complete: k29 87d5abf, k30 90a4489, k31 4fd3d10+72e2d3f, k21/k22 68d9201, k25 d71f55a, k28 87803b5+a6d5ccf, handbook 8ecbd34 + 8be6ed2; open findings k34 (low)
