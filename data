@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-10T20:34:58Z
+created: 2026-10-10T19:11:53Z
+id: 37
+priority: high
+started: 2026-10-10T19:55:29Z
+status: done
+tags:
+- trust
+- p4
+title: P4c OS trust matrix with the generated scripts
+updated: 2026-10-10T20:35:10Z
+---
+
+Debian, Ubuntu, Fedora, Rocky, Arch, Alpine, Firefox/NSS profile: install with the script, positive and negatives, wrong fingerprint refused, remove, fails again. Part of P4 (k14); binding 'done when': docs/roadmap.md, section P4, and the findings note on k14.
+
+Committed as 5319b9a (fix ddf3769)
