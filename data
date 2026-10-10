@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-10T17:17:32Z
+created: 2026-10-10T16:51:18Z
+id: 29
+priority: high
+started: 2026-10-10T16:52:43Z
+status: done
+tags:
+- ca
+- p3
+title: 'P3a Ceremony: offline root, constrained intermediate, init-ca import mode,
+  path negatives'
+updated: 2026-10-10T17:18:34Z
+---
+
+Ceremony script (root and intermediate outside step-ca, root key to an operator-named place, ceremony record without secrets, constraints read back), init-ca.sh mode for an existing hierarchy, container test: step-ca on the result issues through SICK; enrollment negatives (out-of-scope name, CA:true CSR, lifetime above max, no cert left); out-of-scope leaf signed directly with the intermediate key refused by OpenSSL and GnuTLS/NSS. Part of P3 (k13); the binding 'done when' is docs/roadmap.md, section P3.
+
+sick-worker: ceremony.sh, init-ca import mode, compose.import.yml, JWK leaf template serverAuth only, curl healthcheck on the CA's first host name, t/e2e/ca-ceremony.sh (81 PASS, 4 RECORD, twice clean), run-local green, prove -lr t green without skips. Findings for cards: step-ca enforces the intermediate's name constraints at enrollment itself; CA:true CSR comes out as plain leaf; step-ca logs the OTT of refused requests; ACME provisioner keeps serverAuth+clientAuth and 24h; README transcript predates 'serverAuth only'; k8s probes use localhost (lab mode only). Rest of P3 not in this card.
+
+Committed as 01ed49e
+
+Hash corrected: 87d5abf
