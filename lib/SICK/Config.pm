@@ -1,14 +1,16 @@
 package SICK::Config;
 # ABSTRACT: The SICK device list
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
+use Path::Tiny ();
 use SICK::Device;
 use SICK::Duration;
 use SICK::Names;
+use Types::Standard qw( ArrayRef HashRef InstanceOf Maybe Str );
 use YAML::PP;
 use YAML::PP::Common qw( PRESERVE_ORDER );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -107,12 +109,8 @@ my %BUILTIN      = ( lifetime => '397d', renew_before => '30d', key => 'rsa2048'
 sub load {
   my ( $class, $path ) = @_;
   croak 'SICK::Config->load needs the path of a device list' unless defined $path && length $path;
-  open my $fh, '<', $path
-    or croak 'cannot read config file \''.$path.'\': '.$!;
-  croak 'cannot read config file \''.$path.'\': Is a directory' if -d $fh;
-  my $yaml = do { local $/; <$fh> };
-  close $fh;
-  return $class->load_string( defined $yaml ? $yaml : q{}, $path );
+  my $yaml = $class->_slurp( 'config', $path, 'slurp_raw' );
+  return $class->load_string( $yaml, $path );
 }
 
 =method load
@@ -128,7 +126,7 @@ with C<< <path>: <place>: <problem> >> for everything that is wrong in it.
 
 sub load_string {
   my ( $class, $yaml, $label ) = @_;
-  my $self = bless { path => defined $label ? $label : 'device list' }, $class;
+  $label = 'device list' unless defined $label;
 
   my @documents = eval {
     YAML::PP->new(
@@ -136,18 +134,17 @@ sub load_string {
       preserve       => PRESERVE_ORDER,
       cyclic_refs    => 'fatal',
       duplicate_keys => 0,
-    )->load_string($yaml);
+    )->load_string( defined $yaml ? $yaml : q{} );
   };
   if ( my $error = $@ ) {
     $error =~ s/ at \S+ line [0-9]+\.?\s.*\z//s;
     $error =~ s/\s+/ /g;
     $error =~ s/ \z//;
-    croak $self->path.': invalid YAML: '.$error;
+    croak $label.': invalid YAML: '.$error;
   }
-  croak $self->path.': must contain exactly one YAML document' unless @documents == 1;
+  croak $label.': must contain exactly one YAML document' unless @documents == 1;
 
-  $self->_build( $documents[0] );
-  return $self;
+  return $class->new( path => $label, data => $documents[0] );
 }
 
 =method load_string
@@ -159,22 +156,44 @@ the file name in error messages and in L</path>.
 
 =cut
 
-sub path     { $_[0]->{path} }
-sub ca       { $_[0]->{ca} }
-sub ca_name  { $_[0]->{ca}{name} }
-sub defaults { $_[0]->{defaults} }
-sub devices  { @{ $_[0]->{devices} } }
+has path => ( is => 'ro', isa => Str, required => 1 );
+
+# The document as YAML::PP read it. Not typed: what is wrong with it is
+# reported by the checks below, with its place in the list.
+has _data => ( is => 'ro', init_arg => 'data', required => 1 );
+
+has ca       => ( is => 'lazy', isa => HashRef[ Maybe[Str] ], init_arg => undef );
+has defaults => ( is => 'lazy', isa => HashRef[Str],          init_arg => undef );
+has _devices => ( is => 'lazy', isa => ArrayRef[ InstanceOf['SICK::Device'] ], init_arg => undef );
+has _by_name => ( is => 'lazy', isa => HashRef[ InstanceOf['SICK::Device'] ],  init_arg => undef );
+
+# Everything is checked when the list is loaded, in the order of the file's
+# sections, not on first use.
+sub BUILD {
+  my ( $self ) = @_;
+  my $data = $self->_data;
+  $self->_fail( undef, 'must be a mapping with the keys '.join( ', ', @TOP_KEYS ) )
+    unless ref $data eq 'HASH';
+  $self->_unknown( undef, $data, @TOP_KEYS );
+  $self->ca;
+  $self->defaults;
+  $self->_by_name;
+  return;
+}
+
+sub ca_name { $_[0]->ca->{name} }
+sub devices { @{ $_[0]->_devices } }
 
 sub device {
   my ( $self, $name ) = @_;
-  return defined $name ? $self->{by_name}{$name} : undef;
+  return defined $name ? $self->_by_name->{$name} : undef;
 }
 
-=method path
+=attr path
 
 The file the list was loaded from.
 
-=method ca
+=attr ca
 
 Hash reference with the C<ca> section as written: plain strings.
 
@@ -185,7 +204,7 @@ Hash reference with the C<ca> section as written: plain strings.
 The C<name> of the C<ca> section: what the CA is called in front of humans.
 C<undef> when the list does not give one.
 
-=method defaults
+=attr defaults
 
 Hash reference with C<lifetime> and C<renew_before> in seconds and C<key>:
 the C<defaults> section on top of the built-in defaults.
@@ -207,11 +226,7 @@ The device of that name, or C<undef>.
 sub read_secret {
   my ( $self, $path ) = @_;
   croak 'read_secret needs the path of a secret file' unless defined $path && length $path;
-  open my $fh, '<', $path
-    or croak 'cannot read secret file \''.$path.'\': '.$!;
-  croak 'cannot read secret file \''.$path.'\': Is a directory' if -d $fh;
-  my $line = <$fh>;
-  close $fh;
+  my ($line) = $self->_slurp( 'secret', $path, 'lines_raw', { count => 1 } );
   $line = q{} unless defined $line;
   $line =~ s/\r?\n\z//;
   return $line;
@@ -229,6 +244,22 @@ is missing or unreadable. The message carries the path and the reason of the
 system, never anything from the file.
 
 =cut
+
+#### reading
+
+# Path::Tiny reads; the message is ours: the path and the reason of the
+# system, never anything from the file.
+sub _slurp {
+  my ( $self, $kind, $path, $method, @arg ) = @_;
+  my $file = Path::Tiny::path($path);
+  croak 'cannot read '.$kind.' file \''.$path.'\': Is a directory' if $file->is_dir;
+  my @content = eval { $file->$method(@arg) };
+  if ( my $error = $@ ) {
+    my $reason = ref $error eq 'Path::Tiny::Error' ? $error->{err} : 'unknown error';
+    croak 'cannot read '.$kind.' file \''.$path.'\': '.$reason;
+  }
+  return wantarray ? @content : $content[0];
+}
 
 #### checks
 
@@ -277,13 +308,9 @@ sub _plain {
   return $value;
 }
 
-sub _build {
-  my ( $self, $data ) = @_;
-  $self->_fail( undef, 'must be a mapping with the keys '.join( ', ', @TOP_KEYS ) )
-    unless ref $data eq 'HASH';
-  $self->_unknown( undef, $data, @TOP_KEYS );
-
-  my $ca = $self->_section( 'ca', $data->{ca} );
+sub _build_ca {
+  my ( $self ) = @_;
+  my $ca = $self->_section( 'ca', $self->_data->{ca} );
   $self->_unknown( 'ca', $ca, @CA_KEYS );
   for my $key ( sort keys %$ca ) {
     $self->_fail( 'ca.'.$key, 'must be a plain value' ) if ref $ca->{$key};
@@ -294,27 +321,28 @@ sub _build {
     $self->_fail( 'ca.name', 'must be one line of at most 100 characters' )
       if $name =~ /[\x00-\x1f\x7f]/ || length $name > 100;
   }
-  $self->{ca} = { %$ca };
+  return { %$ca };
+}
 
-  my $defaults = $self->_section( 'defaults', $data->{defaults} );
+sub _build_defaults {
+  my ( $self ) = @_;
+  my $defaults = $self->_section( 'defaults', $self->_data->{defaults} );
   $self->_unknown( 'defaults', $defaults, @DEFAULT_KEYS );
   my %raw = ( %BUILTIN, %$defaults );
-  $self->{defaults} = {
+  return {
     lifetime     => $self->_duration( 'defaults.lifetime',     $raw{lifetime} ),
     renew_before => $self->_duration( 'defaults.renew_before', $raw{renew_before} ),
     key          => $self->_key_type( 'defaults.key', $raw{key} )
   };
-
-  my $devices = $self->_section( 'devices', $data->{devices} );
-  $self->{devices} = [];
-  $self->{by_name} = {};
-  for my $name ( keys %$devices ) {
-    my $device = $self->_device( $name, $devices->{$name} );
-    push @{ $self->{devices} }, $device;
-    $self->{by_name}{$name} = $device;
-  }
-  return;
 }
+
+sub _build__devices {
+  my ( $self ) = @_;
+  my $devices = $self->_section( 'devices', $self->_data->{devices} );
+  return [ map { $self->_device( $_, $devices->{$_} ) } keys %$devices ];
+}
+
+sub _build__by_name { +{ map { $_->name => $_ } $_[0]->devices } }
 
 sub _device {
   my ( $self, $name, $entry ) = @_;
@@ -353,7 +381,7 @@ sub _device {
     $port += 0;
   }
 
-  my $defaults = $self->{defaults};
+  my $defaults = $self->defaults;
   my $lifetime = exists $entry->{lifetime}
     ? $self->_duration( $where.'.lifetime', $entry->{lifetime} )
     : $defaults->{lifetime};
