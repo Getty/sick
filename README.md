@@ -14,8 +14,9 @@ SICK is not a CA and not an ACME client. The CA is step-ca, X.509 is done by
 the `openssl` command line, and where [acme.sh](https://github.com/acmesh-official/acme.sh)
 already has a deploy hook for a device, SICK uses that hook. What SICK adds is
 the device list, the decision, the connections to the devices and the run that
-ties them together. Besides core Perl, the core depends on `Moo` for its
-classes and `YAML::PP` for the device list.
+ties them together. Besides core Perl, the core depends on `Moo`,
+`namespace::autoclean` and `Type::Tiny` for its classes and `YAML::PP` for the
+device list.
 
 > Status: early, not released. The command line, the `files` and `acmesh`
 > targets, `sick trust` and a Docker Compose setup ([docker/](docker/README.md):

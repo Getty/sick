@@ -16,6 +16,7 @@ requires 'POSIX';
 requires 'Socket';
 requires 'Time::HiRes';
 requires 'Time::Local';
+requires 'Type::Tiny';
 requires 'YAML::PP', '0.027';
 
 on test => sub {

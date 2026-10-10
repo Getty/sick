@@ -34,7 +34,7 @@ Revision history for SICK
     - "name" in the ca section: what the CA is called on that page
     - X.509 handling goes through the openssl command line, started without
       a shell; runtime dependencies beyond core Perl are Moo (with
-      namespace::autoclean) and YAML::PP
+      namespace::autoclean and Type::Tiny) and YAML::PP
     - "intermediates" in the ca section: the intermediate certificate of
       the CA. step-ca signs through an intermediate, and a device that
       presents its certificate alone (a switch with one certificate per

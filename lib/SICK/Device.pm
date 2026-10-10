@@ -3,6 +3,7 @@ package SICK::Device;
 
 use Moo;
 use Carp qw( croak );
+use Types::Standard qw( ArrayRef HashRef Int Maybe Str );
 use namespace::autoclean;
 
 our $VERSION = '0.001';
@@ -65,15 +66,15 @@ work of L<SICK::Config/load>.
 
 =cut
 
-has name         => ( is => 'ro', required => 1 );
-has type         => ( is => 'ro', required => 1 );
-has host         => ( is => 'ro' );
-has port         => ( is => 'ro', default => 443 );
-has _names       => ( is => 'ro', required => 1, init_arg => 'names' );
-has lifetime     => ( is => 'ro', required => 1 );
-has renew_before => ( is => 'ro', required => 1 );
-has key          => ( is => 'ro', required => 1 );
-has options      => ( is => 'ro', default => sub { {} } );
+has name         => ( is => 'ro', isa => Str,           required => 1 );
+has type         => ( is => 'ro', isa => Str,           required => 1 );
+has host         => ( is => 'ro', isa => Maybe[Str] );
+has port         => ( is => 'ro', isa => Int,           default  => 443 );
+has _names       => ( is => 'ro', isa => ArrayRef[Str], required => 1, init_arg => 'names' );
+has lifetime     => ( is => 'ro', isa => Int,           required => 1 );
+has renew_before => ( is => 'ro', isa => Int,           required => 1 );
+has key          => ( is => 'ro', isa => Str,           required => 1 );
+has options      => ( is => 'ro', isa => HashRef,       default  => sub { {} } );
 
 sub names { [ @{ shift->_names } ] }
 
