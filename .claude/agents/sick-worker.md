@@ -5,6 +5,7 @@ model: inherit
 briefing:
   skills:
     - sick-core
+    - ssl-tls-pki
     - getty-perl-core
     - getty-perl-moo
     - getty-perl-pod

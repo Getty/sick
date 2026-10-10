@@ -59,6 +59,13 @@ agent delegates rather than loading them. `.claude/skills/sick-core` holds the i
 and is this repo's own; the other skills there are installed by skilletor
 (`.claude/skilletor.json`) and are changed in their source, never here.
 
+One of them is domain knowledge rather than convention: `ssl-tls-pki` (CA hierarchy,
+name constraints, revocation, trust stores per platform, ACME, mTLS, debugging a
+handshake). The main agent loads it too — before a design decision on the CA, on trust
+distribution or on a service recipe, and before writing the handbook chapter for it.
+What it says about a client or a policy is dated; check the claim before it goes into
+the handbook.
+
 ## Layout
 
 ```
