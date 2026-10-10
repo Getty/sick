@@ -1,0 +1,31 @@
+---
+class: standard
+completed: 2026-10-10T15:13:37Z
+created: 2026-10-10T06:03:36Z
+id: 2
+priority: high
+started: 2026-10-10T15:13:37Z
+status: done
+tags:
+- stack
+- moo
+- path-tiny
+title: Convert SICK::Temp to Moo on Path::Tiny
+updated: 2026-10-10T15:13:48Z
+---
+
+SICK::Temp (168 lines) is the private temporary directory every key passes through. It becomes a Moo class with Path::Tiny underneath.
+
+What must survive, each pinned by t/22-temp.t:
+- the directory is 0700, files in it are created 0600 and exclusively (O_EXCL): a key file never exists with a wider mode, not even for a moment;
+- the directory is removed when the object goes out of scope (DESTROY today, DEMOLISH then), and cleanup removes everything this process created, at END and from a signal handler;
+- the object stringifies to its path.
+
+Trap to decide and name in the report: SICK::Command::run refuses references in its argument list (grep { !defined || ref } @$argv), so a Path::Tiny object handed to openssl or step as an argument croaks today. Either path and file return strings, or Command::run learns to accept objects that stringify. Callers are SICK::Bundle, both issuers, both targets and ../sick-target-ciscosb.
+
+Done when: Moo class, Path::Tiny for the paths, the three properties above still tested and green, cpanfile updated, prove -lr t green with skips named, and the Cisco suite still passes:
+( cd ../sick-target-ciscosb && PERL5LIB=$OLDPWD/lib:$PERL5LIB prove -lr t )
+
+Temp is Moo on Path::Tiny (_dir InstanceOf Path::Tiny, _pid Int, DEMOLISH). Trap decided: path/file keep returning plain strings; Command::run stays strict. Key files still sysopen O_EXCL with mode (Path::Tiny has no exclusive create with a mode). cpanfile/Dockerfile/README/SICK.pm/Changes name Path::Tiny. prove -lr t and Cisco suite green; e2e not run.
+
+Committed: a243ae8
