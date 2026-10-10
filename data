@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-10T21:30:55Z
+created: 2026-10-10T15:50:18Z
+id: 24
+priority: medium
+started: 2026-10-10T21:00:24Z
+status: done
+tags:
+- pki
+- finding
+title: 'Files: publish cert, chain and key as one generation, not file by file'
+updated: 2026-10-10T21:31:07Z
+---
+
+Finding from k6 (sick-worker, 2026-10-10). SICK::Target::Files deploy renames the four files one after the other (key first, cert last): for a moment the directory holds the new key next to the old certificate, a mismatched pair a service reading at that moment fails on. ssl-tls-pki (acme/renewal-deployment) asks for one coherent generation published atomically, e.g. a versioned directory and a symlink swap. Also: a failed reload leaves the new files in place with no rollback (documented today); decide whether a rollback to the previous generation belongs in. Done when: a reader never sees a mixed pair (test), the layout change is documented, and existing reload commands keep working.
+
+sick-worker-files: started. Generations in dir/.sick/<ts>-<fp>, current/previous symlinks, top-level relative links, rollback on failed reload. t/32 first (red), then Files.pm, POD, README.
+
+sick-worker-files: done. Files publishes generations dir/.sick/<UTC µs>-<fp8>, current/previous switched by rename, names are relative links; rollback on failed reload (reload twice, new gen removed); plain files of an earlier SICK adopted as a generation; at most two kept. t/32 green (reader test 0 mixed pairs), ciscosb green, e2e run-local green from a clean HEAD+k24 export (project sick-e2e-k24; the shared tree's image build fails in the parallel State.pm work: JSON::MaybeXS not in the image). Open: t/40 lines 227 and 473 expect four names in dir, now also '.sick' (t/40 belongs to the parallel worker). Limit, documented: a reader opening the names one after another can straddle a switch; resolve the generation once to be sure.
+
+sick-worker-files: t/40 (.sick in two directory lists) and t/41 (first-deploy rollback tail in the reload error) adapted after 4499a46. prove -lr t green, no skips; run-local.sh on the shared tree green.
+
+Committed as 5a6b5d6
