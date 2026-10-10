@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-10T17:17:09Z
+created: 2026-10-10T15:41:19Z
+id: 22
+priority: low
+started: 2026-10-10T16:55:27Z
+status: done
+tags:
+- pki
+- finding
+title: 'StepCA: check that ca.intermediates are CA certificates chaining to the root'
+updated: 2026-10-10T17:18:23Z
+---
+
+Finding from k5. intermediates_pem accepts any file; a wrong one only shows as devices being foreign-ca on every run (and renewed every run). Done when: each block is a CA certificate that verifies against ca.root, else an error naming ca.intermediates; test.
+
+sick-worker: worked together with k21 (same module, same tests).
+
+sick-worker: done with k21, same tree. intermediates_pem: each block (except the root itself) must be CA:TRUE and verify to ca.root with the other blocks as untrusted. Drift (not in scope): SICK::Trust::_intermediates checks the chain to the root but not CA:TRUE, so a leaf of the root given by another issuer would be published as intermediate.
+
+Committed as 1d3da4e
+
+Hash corrected: 68d9201
