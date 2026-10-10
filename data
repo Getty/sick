@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-10T23:21:04Z
+created: 2026-10-10T22:49:34Z
+id: 44
+priority: medium
+started: 2026-10-10T23:21:04Z
+status: done
+tags:
+- ops
+- decision
+- finding
+title: 'Decide: a device rolled back to an older valid certificate stays ''ok'
+updated: 2026-10-10T23:21:04Z
+---
+
+Finding from k41 (2026-10-10). The decision judges only the presented certificate: a device that falls back to an older valid certificate of our CA with the right names is 'ok' and sick run never fixes it; only the SickDeviceStale alert notices (live fingerprint != last issued). Options: treat 'stale' (presents a certificate older than the last one issued and deployed) as a reason to redeploy; or keep alerting only. Done when: decided, documented, tested.
+
+Decision 2026-10-10 (orchestrator, agreeing with the hub's view): alert only, no automatic redeploy. The older certificate is valid and falls into renewal through the normal renew_before threshold anyway; a device that loses its state needs a human; redeploying on every fallback would issue a certificate each time and hide the problem. SickDeviceStale is the signal. Documented in handbook chapter 6.
