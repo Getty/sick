@@ -24,13 +24,14 @@ FROM smallstep/step-cli:${STEP_VERSION} AS step
 FROM debian:${DEBIAN_RELEASE}-slim AS base
 
 # perl brings every core module SICK uses; Moo, namespace::autoclean,
-# Type::Tiny and YAML::PP come as Debian packages.
+# Path::Tiny, Type::Tiny and YAML::PP come as Debian packages.
 # curl is for the deploy hooks of acme.sh that talk to an HTTP API,
 # openssh-client for SICK-Target-CiscoSB and for hooks that use ssh and scp.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl libmoo-perl libnamespace-autoclean-perl \
-      libtype-tiny-perl libyaml-pp-perl openssh-client openssl perl \
+      libpath-tiny-perl libtype-tiny-perl libyaml-pp-perl \
+      openssh-client openssl perl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=step /usr/local/bin/step /usr/local/bin/step

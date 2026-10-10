@@ -118,8 +118,8 @@ Docker Compose: a step-ca that sets itself up on first start, SICK on a
 schedule, and a small web server for the page of C<sick trust>.
 
 Besides core Perl, the core distribution depends on L<Moo>,
-L<namespace::autoclean> and L<Type::Tiny> for its classes and L<YAML::PP>
-for the device list.
+L<namespace::autoclean> and L<Type::Tiny> for its classes, L<Path::Tiny> for
+files and L<YAML::PP> for the device list.
 The programs it calls - C<openssl>, C<step>, C<acme.sh> - are prerequisites
 of a run, not of the installation; when one is missing, the error says
 which. A device

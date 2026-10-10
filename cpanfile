@@ -12,6 +12,7 @@ requires 'IO::Select';
 requires 'MIME::Base64';
 requires 'Moo';
 requires 'namespace::autoclean', '0.16';
+requires 'Path::Tiny';
 requires 'POSIX';
 requires 'Socket';
 requires 'Time::HiRes';

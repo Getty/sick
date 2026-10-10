@@ -15,8 +15,8 @@ the `openssl` command line, and where [acme.sh](https://github.com/acmesh-offici
 already has a deploy hook for a device, SICK uses that hook. What SICK adds is
 the device list, the decision, the connections to the devices and the run that
 ties them together. Besides core Perl, the core depends on `Moo`,
-`namespace::autoclean` and `Type::Tiny` for its classes and `YAML::PP` for the
-device list.
+`namespace::autoclean` and `Type::Tiny` for its classes, `Path::Tiny` for files
+and `YAML::PP` for the device list.
 
 > Status: early, not released. The command line, the `files` and `acmesh`
 > targets, `sick trust` and a Docker Compose setup ([docker/](docker/README.md):

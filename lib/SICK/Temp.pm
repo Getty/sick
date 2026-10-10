@@ -1,12 +1,12 @@
 package SICK::Temp;
 # ABSTRACT: A private temporary directory that disappears with its object
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
 use Fcntl qw( O_CREAT O_EXCL O_WRONLY );
-use File::Path qw( remove_tree );
-use File::Temp ();
+use Path::Tiny ();
+use Types::Standard qw( InstanceOf Int );
+use namespace::autoclean;
 use overload
   q{""}    => sub { $_[0]->path },
   bool     => sub { 1 },
@@ -43,16 +43,32 @@ signal handler that calls C<exit>, or calls L</cleanup>.
 # The directories of this process that still exist, for END and cleanup.
 my %LIVE;
 
-sub dir {
-  my ( $class ) = @_;
-  my $path = eval { File::Temp::tempdir( 'sick-XXXXXXXXXX', TMPDIR => 1 ) };
+has _dir => (
+  is       => 'ro',
+  isa      => InstanceOf['Path::Tiny'],
+  init_arg => undef,
+  builder  => 1
+);
+
+sub _build__dir {
+  my ( $self ) = @_;
+  my $dir = eval { Path::Tiny->tempdir( 'sick-XXXXXXXXXX', CLEANUP => 0 ) };
   croak 'cannot create a temporary directory: '.( $@ =~ s/ at \S+ line [0-9]+\.?\s*\z//r )
-    unless defined $path;
-  chmod 0700, $path
-    or croak 'cannot restrict temporary directory \''.$path.'\': '.$!;
-  $LIVE{$path} = $$;
-  return bless { path => $path, pid => $$ }, $class;
+    unless defined $dir;
+  chmod 0700, $dir->stringify
+    or croak 'cannot restrict temporary directory \''.$dir.'\': '.$!;
+  return $dir;
 }
+
+has _pid => ( is => 'ro', isa => Int, init_arg => undef, default => sub { $$ } );
+
+sub BUILD {
+  my ( $self ) = @_;
+  $LIVE{ $self->path } = $self->_pid;
+  return;
+}
+
+sub dir { shift->new }
 
 =method dir
 
@@ -60,17 +76,18 @@ sub dir {
 
 Creates a new directory with mode C<0700> below the system's temporary
 directory (C<$TMPDIR>) and returns the object that owns it. The object
-stringifies to the path.
+stringifies to the path. C<< SICK::Temp->new >> is the same.
 
 =cut
 
-sub path { $_[0]->{path} }
+sub path { $_[0]->_dir->stringify }
 
 =method path
 
     my $path = $tmp->path;
 
-The absolute path of the directory.
+The absolute path of the directory, as a plain string: it goes into the
+argument lists of external programs (L<SICK::Command/run>).
 
 =cut
 
@@ -78,15 +95,15 @@ sub file {
   my ( $self, $name ) = @_;
   croak 'SICK::Temp->file needs a plain file name'
     if !defined $name || !length $name || $name =~ m{/} || $name =~ /\A\.\.?\z/;
-  return $self->path.'/'.$name;
+  return $self->_dir->child($name)->stringify;
 }
 
 =method file
 
     my $path = $tmp->file('key.pem');
 
-The path of a file with that name inside the directory. The file is not
-created.
+The path of a file with that name inside the directory, as a plain string.
+The file is not created.
 
 =cut
 
@@ -117,10 +134,9 @@ C<0600> and does not depend on the umask. Croaks when the file exists.
 
 sub remove {
   my ( $self ) = @_;
-  return unless $self->{pid} == $$;
-  my $path = $self->{path};
-  delete $LIVE{$path};
-  remove_tree( $path, { safe => 0, error => \my $errors } ) if -d $path;
+  return unless $self->_pid == $$;
+  delete $LIVE{ $self->path };
+  $self->_remove_tree( $self->path );
   return;
 }
 
@@ -138,8 +154,15 @@ sub cleanup {
   for my $path ( keys %LIVE ) {
     next unless $LIVE{$path} == $$;
     delete $LIVE{$path};
-    remove_tree( $path, { safe => 0, error => \my $errors } ) if -d $path;
+    $class->_remove_tree($path);
   }
+  return;
+}
+
+sub _remove_tree {
+  my ( $self, $path ) = @_;
+  my $dir = Path::Tiny::path($path);
+  $dir->remove_tree( { safe => 0, error => \my $errors } ) if $dir->is_dir;
   return;
 }
 
@@ -153,8 +176,11 @@ as well.
 
 =cut
 
-sub DESTROY {
-  my ( $self ) = @_;
+# During global destruction END has already removed every directory of this
+# process, and the attributes may be gone.
+sub DEMOLISH {
+  my ( $self, $in_global_destruction ) = @_;
+  return if $in_global_destruction;
   local ( $@, $!, $? );
   $self->remove;
   return;
