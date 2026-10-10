@@ -1,13 +1,15 @@
 package SICK::Bundle;
 # ABSTRACT: A certificate with its chain and key, and what openssl says about it
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
+use Path::Tiny qw( path );
 use SICK::Names;
 use SICK::OpenSSL;
 use SICK::Temp;
 use Time::Local qw( timegm );
+use Types::Standard qw( HashRef Maybe Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -56,29 +58,25 @@ my %MONTH = (
   Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11
 );
 
-sub new {
-  my ( $class, %arg ) = @_;
-  my $self = bless {}, $class;
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my $arg = $class->$orig(@args);
 
-  my @certs = $self->_cert_blocks( $arg{cert} );
+  my @certs = $class->_cert_blocks( $arg->{cert} );
   croak 'cert is not a PEM certificate' unless @certs;
-  my @extra = $self->_cert_blocks( $arg{chain} );
+  my @extra = $class->_cert_blocks( $arg->{chain} );
   croak 'chain is not a list of PEM certificates'
-    if defined $arg{chain} && $arg{chain} =~ /\S/ && !@extra;
+    if defined $arg->{chain} && $arg->{chain} =~ /\S/ && !@extra;
   my @chain = ( @certs[ 1 .. $#certs ], @extra );
 
-  $self->{cert}  = $certs[0];
-  $self->{chain} = @chain ? join( q{}, @chain ) : undef;
-
-  if ( defined $arg{key} ) {
-    croak 'key is not a PEM private key' unless $arg{key} =~ /($KEY_BLOCK)/;
-    my $key = $1;
-    $key =~ s/\r\n/\n/g;
-    $self->{key} = $key."\n";
+  my %bundle = ( cert => $certs[0], @chain ? ( chain => join( q{}, @chain ) ) : () );
+  if ( defined $arg->{key} ) {
+    croak 'key is not a PEM private key' unless $arg->{key} =~ /($KEY_BLOCK)/;
+    ( $bundle{key} = $1 ) =~ s/\r\n/\n/g;
+    $bundle{key} .= "\n";
   }
-
-  return $self;
-}
+  return \%bundle;
+};
 
 =method new
 
@@ -118,19 +116,25 @@ C<key file>) when a given file cannot be read.
 
 =cut
 
-sub cert  { $_[0]->{cert} }
-sub chain { $_[0]->{chain} }
-sub key   { $_[0]->{key} }
+has cert  => ( is => 'ro', isa => Str, required => 1 );
+has chain => ( is => 'ro', isa => Maybe[Str] );
 
-=method cert
+# Not a Type::Tiny type: its explanation of a failure repeats the value, and
+# this value is a private key. A coderef fails with this text alone.
+has key => (
+  is  => 'ro',
+  isa => sub { croak 'key is not a PEM private key' if defined $_[0] && $_[0] !~ /\A$KEY_BLOCK\n\z/ }
+);
+
+=attr cert
 
 The certificate as PEM, one block with a trailing newline.
 
-=method chain
+=attr chain
 
 The intermediate certificates as PEM, or C<undef> when there are none.
 
-=method key
+=attr key
 
 The private key as PEM, or C<undef> when the bundle has none.
 
@@ -147,11 +151,7 @@ The certificate followed by its chain, the way servers want it in one file.
 
 =cut
 
-sub names {
-  my ( $self ) = @_;
-  $self->_read_names;
-  return [ @{ $self->{names} } ];
-}
+sub names { [ @{ shift->_sans->{names} } ] }
 
 =method names
 
@@ -163,17 +163,8 @@ its common name. See L<SICK::Names/normalize> for the spelling.
 
 =cut
 
-sub dns_names {
-  my ( $self ) = @_;
-  $self->_read_names;
-  return [ @{ $self->{dns_names} } ];
-}
-
-sub ip_names {
-  my ( $self ) = @_;
-  $self->_read_names;
-  return [ @{ $self->{ip_names} } ];
-}
+sub dns_names { [ @{ shift->_sans->{dns} } ] }
+sub ip_names  { [ @{ shift->_sans->{ip} } ] }
 
 =method dns_names
 
@@ -194,20 +185,7 @@ sub fingerprint_sha256 { $_[0]->_info->{fingerprint_sha256} }
 sub subject_dn         { $_[0]->_info->{subject_dn} }
 sub issuer_dn          { $_[0]->_info->{issuer_dn} }
 
-sub common_name {
-  my ( $self ) = @_;
-  unless ( exists $self->{common_name} ) {
-    my $subject = eval {
-      SICK::OpenSSL::run_checked(
-        [ 'x509', '-noout', '-subject', '-nameopt', 'multiline,utf8,-esc_msb' ],
-        stdin => $self->cert,
-      );
-    };
-    croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $subject;
-    $self->{common_name} = SICK::Names::cn_from_text($subject);
-  }
-  return $self->{common_name};
-}
+sub common_name { shift->_common_name }
 
 sub is_self_signed {
   my ( $self ) = @_;
@@ -312,43 +290,43 @@ sub _cert_blocks {
 }
 
 sub _slurp {
-  my ( $self, $path, $label ) = @_;
-  open my $fh, '<', $path
-    or croak 'cannot read '.$label.' file \''.$path.'\': '.$!;
-  croak 'cannot read '.$label.' file \''.$path.'\': Is a directory' if -d $fh;
-  local $/;
-  my $content = <$fh>;
-  return defined $content ? $content : q{};
+  my ( $self, $name, $label ) = @_;
+  my $file = path($name);
+  croak 'cannot read '.$label.' file \''.$name.'\': Is a directory' if $file->is_dir;
+  my $content = eval { $file->slurp_raw };
+  croak 'cannot read '.$label.' file \''.$name.'\': '.( ref $@ ? $@->{err} : $self->_first_line($@) )
+    unless defined $content;
+  return $content;
 }
 
-sub _info {
-  my ( $self ) = @_;
-  return $self->{info} ||= do {
-    my $out = eval {
-      SICK::OpenSSL::run_checked(
-        [ 'x509', '-noout', '-subject', '-issuer', '-startdate', '-enddate',
-          '-fingerprint', '-sha256', '-nameopt', 'RFC2253' ],
-        stdin => $self->cert,
-      );
-    };
-    croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $out;
+has _info => ( is => 'lazy', isa => HashRef, init_arg => undef );
 
-    my %info;
-    for my $line ( split /\r?\n/, $out ) {
-      if    ( $line =~ /\Asubject=\s*(.*)\z/ )   { $info{subject_dn} = $1 }
-      elsif ( $line =~ /\Aissuer=\s*(.*)\z/ )    { $info{issuer_dn}  = $1 }
-      elsif ( $line =~ /\AnotBefore=(.*)\z/ )    { $info{not_before} = $self->_epoch($1) }
-      elsif ( $line =~ /\AnotAfter=(.*)\z/ )     { $info{not_after}  = $self->_epoch($1) }
-      elsif ( $line =~ /\Asha256 Fingerprint=([0-9A-Fa-f:]+)\z/i ) {
-        ( $info{fingerprint_sha256} = lc $1 ) =~ tr/://d;
-      }
-    }
-    for my $field (qw( subject_dn issuer_dn not_before not_after fingerprint_sha256 )) {
-      croak 'cannot read the certificate: openssl did not report its '.$field
-        unless defined $info{$field};
-    }
-    \%info;
+sub _build__info {
+  my ( $self ) = @_;
+  my $out = eval {
+    SICK::OpenSSL::run_checked(
+      [ 'x509', '-noout', '-subject', '-issuer', '-startdate', '-enddate',
+        '-fingerprint', '-sha256', '-nameopt', 'RFC2253' ],
+      stdin => $self->cert,
+    );
   };
+  croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $out;
+
+  my %info;
+  for my $line ( split /\r?\n/, $out ) {
+    if    ( $line =~ /\Asubject=\s*(.*)\z/ )   { $info{subject_dn} = $1 }
+    elsif ( $line =~ /\Aissuer=\s*(.*)\z/ )    { $info{issuer_dn}  = $1 }
+    elsif ( $line =~ /\AnotBefore=(.*)\z/ )    { $info{not_before} = $self->_epoch($1) }
+    elsif ( $line =~ /\AnotAfter=(.*)\z/ )     { $info{not_after}  = $self->_epoch($1) }
+    elsif ( $line =~ /\Asha256 Fingerprint=([0-9A-Fa-f:]+)\z/i ) {
+      ( $info{fingerprint_sha256} = lc $1 ) =~ tr/://d;
+    }
+  }
+  for my $field (qw( subject_dn issuer_dn not_before not_after fingerprint_sha256 )) {
+    croak 'cannot read the certificate: openssl did not report its '.$field
+      unless defined $info{$field};
+  }
+  return \%info;
 }
 
 sub _epoch {
@@ -359,10 +337,10 @@ sub _epoch {
   return timegm( $5, $4, $3, $2, $MONTH{$1}, $6 );
 }
 
-sub _read_names {
-  my ( $self ) = @_;
-  return if $self->{names};
+has _sans => ( is => 'lazy', isa => HashRef, init_arg => undef );
 
+sub _build__sans {
+  my ( $self ) = @_;
   my $text = eval {
     SICK::OpenSSL::run_checked(
       [ 'x509', '-noout', '-text', '-certopt',
@@ -374,21 +352,24 @@ sub _read_names {
   my ( $dns, $ip ) = SICK::Names::san_from_text($text);
 
   unless ( @$dns || @$ip ) {
-    my $subject = eval {
-      SICK::OpenSSL::run_checked(
-        [ 'x509', '-noout', '-subject', '-nameopt', 'multiline,utf8,-esc_msb' ],
-        stdin => $self->cert,
-      );
-    };
-    croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $subject;
-    my $cn = SICK::Names::cn_from_text($subject);
+    my $cn = $self->common_name;
     $dns = SICK::Names::canonical( [$cn] ) if defined $cn;
   }
+  return { dns => $dns, ip => $ip, names => [ sort @$dns, @$ip ] };
+}
 
-  $self->{dns_names} = $dns;
-  $self->{ip_names}  = $ip;
-  $self->{names}     = [ sort @$dns, @$ip ];
-  return;
+has _common_name => ( is => 'lazy', isa => Maybe[Str], init_arg => undef );
+
+sub _build__common_name {
+  my ( $self ) = @_;
+  my $subject = eval {
+    SICK::OpenSSL::run_checked(
+      [ 'x509', '-noout', '-subject', '-nameopt', 'multiline,utf8,-esc_msb' ],
+      stdin => $self->cert,
+    );
+  };
+  croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $subject;
+  return SICK::Names::cn_from_text($subject);
 }
 
 sub _first_line {
