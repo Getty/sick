@@ -51,6 +51,8 @@ Revision history for SICK
       proves it with Docker alone (a web container as the device),
       t/e2e/run-lab.sh against a real switch; t/e2e/install-tools.sh puts
       step, step-ca and acme.sh in pinned versions into ~/.local
+    - docker/README.md: the sick container has no capabilities, so the device
+      list and the secrets must be owned by root or readable by everyone
     - The example device list no longer sets ROUTER_OS_PASSWORD, which the
       routeros hook of acme.sh does not read (it logs in with an SSH key);
       the env_files example is the API token of the proxmoxve hook
