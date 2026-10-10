@@ -1,0 +1,31 @@
+---
+class: standard
+completed: 2026-10-10T15:19:20Z
+created: 2026-10-10T06:03:40Z
+depends_on:
+- 2
+id: 3
+priority: medium
+started: 2026-10-10T15:19:20Z
+status: done
+tags:
+- stack
+- moo
+- path-tiny
+title: Convert SICK::Bundle to Moo
+updated: 2026-10-10T15:19:32Z
+---
+
+SICK::Bundle (402 lines): certificate, chain and key as PEM plus the facts openssl reads from the certificate.
+
+Done when:
+- Moo class: cert, chain, key as ro attributes; the facts behind _info (names, validity, fingerprint, subject, issuer) become a lazy attribute instead of a hand-filled hash slot;
+- from_files reads through Path::Tiny;
+- is_issued_by is unchanged in what it answers: the anchor is the root alone, the chain may run through intermediates the device did not send (skill sick-core, "Root and intermediates");
+- t/12-bundle.t and everything that builds a bundle stays green; the Cisco suite too (it receives bundles in deploy).
+
+SICK::Bundle is used by the SICK-Target-* distributions: constructor arguments and method names stay, additions only.
+
+Bundle is Moo: cert Str, chain Maybe[Str], key with a coderef isa (Type::Tiny's explanation would repeat the key); BUILDARGS keeps the messages; facts lazy (_info, _sans, _common_name); from_files on Path::Tiny; is_issued_by untouched. prove -lr t and Cisco suite green; no dependency change; e2e not run.
+
+Committed: 00a1ce7
