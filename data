@@ -1,0 +1,27 @@
+---
+class: standard
+completed: 2026-10-10T16:02:17Z
+created: 2026-10-10T06:04:01Z
+depends_on:
+- 3
+id: 8
+priority: medium
+started: 2026-10-10T16:02:17Z
+status: done
+tags:
+- stack
+- path-tiny
+title: Move SICK::Trust to Path::Tiny
+updated: 2026-10-10T16:02:28Z
+---
+
+SICK::Trust (764 lines) writes the trust page: root and intermediate as PEM and DER, the Apple profile, index.html. It is a function module, and the house rules let it stay one; if you make it a class, say why.
+
+Done when:
+- directory and file handling (make_path, File::Temp, opendir in _put and _sweep) go through Path::Tiny;
+- a reader of the directory never sees half a file: the page is served by a web server while sick trust runs;
+- the files written and their content are byte for byte what they were: t/50-trust.t.
+
+sick-worker: Trust on Path::Tiny (mkdir, children/remove in _sweep, tempfile + CORE rename in _put); stays a function module. Output byte-identical to HEAD (diffed). prove -lr t 172 PASS, no skips. Tree commit-ready, not moved.
+
+Committed as 4870023
