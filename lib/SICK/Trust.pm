@@ -59,6 +59,17 @@ for every platform where the root goes, where the intermediate goes and
 whether that takes a trust setting. The root is what a client trusts; the
 intermediate only has to be known to it.
 
+An intermediate never goes where every certificate is a trust anchor: the
+system stores of Linux and the CA list of Android get the root alone. An
+intermediate there would be trusted by itself and stay trusted after the
+root is removed (F<docs/findings/trust-anchors.md> in the repository). The
+page names three ways to the intermediate instead: the device sends the
+chain, which is the better one; a program takes F<ca_bundle.pem> as its own
+CA file, where the intermediate is an anchor inside that one file; or a
+place that keeps it without trust - Firefox and Chrome on Linux with nothing
+ticked, the store of intermediates of Windows, the keychain of macOS, the
+profile.
+
 With more than one intermediate, F<intermediate_ca.pem> holds all of them
 in the order they were given, and each one has files of its own for the
 programs that take a single certificate: F<intermediate_ca_1.pem>,
@@ -457,30 +468,28 @@ sub _chain_parts {
   my $and  = sub { @_ > 1 ? join( ', ', @_[ 0 .. $#_ - 1 ] ).' and '.$_[-1] : $_[0] };
   # ... continuing a list that began with the file of the root
   my $more = sub { join( q{}, map { ', '.$_ } @_[ 0 .. $#_ - 1 ] ).' and '.$_[-1] };
-  # the name a certificate file gets in a system store
-  my $stored = sub { 'internal-intermediate-ca'.( $many ? '-'.( $_[0] + 1 ) : q{} ) };
 
   %$t = (
     %$t,
     profile_holds => ' with the root and '.$the,
-    and_der       => $more->( map { $link->($_) } @der ),
     and_pem       => $more->( map { $link->($_) } @pem ),
     terminal      => 'the root as PEM and '.$the.' as DER',
     mac_more      => join( q{}, map { "\nsudo security add-certificates \\\n  -k /Library/Keychains/System.keychain ".$_ } @der ),
     windows_more  => join( q{}, map { "\ncertutil -addstore -f CA ".$_ } @der ),
-    pem_files     => 'PEM files',
-    arch_more     => join( q{}, map { q{ }.$_ } @pem ),
     check_more    => join( q{}, map { "\nopenssl x509 -in ".$_.' -noout -fingerprint -sha256' } @pem ),
     the_file      => '<code>root_ca.pem</code>',
-    from_system   => ' They find '.$the.' there as well.',
+    from_system   => ' On Windows, macOS and iOS they find '.$the.' there as well; on Android they do not.',
   );
 
   $part->{INTRO} = <<"HTML";
 <p>This authority does not sign with its root but through $certs, and a device normally hands
-$that to your browser together with its own certificate. Some devices cannot: a switch has room for exactly one
-certificate and presents it alone, and nothing in it leads to the root. For those, this page offers $the as
-well, and the steps below install $it. The root is what you trust; $the $is the link between a device and the
-root and only $needs to be known.</p>
+$that to your browser together with its own certificate. That is the better way, and such a device needs
+nothing but the root. Some devices cannot: a switch has room for exactly one certificate and presents it
+alone, and nothing in it leads to the root. For those, this page offers $the as well. The root is what you
+trust; $the $is the link between a device and the root and only $needs to be known. So $the $is never
+put where every certificate is trusted by itself &ndash; the system store of Linux, the CA certificates of
+Android &ndash; but only into <a href="ca_bundle.pem" download>ca_bundle.pem</a> for a program, or where a
+platform keeps $it without trust.</p>
 
 HTML
 
@@ -498,55 +507,60 @@ HTML
 
 HTML
   $part->{FACTS} .= <<'HTML';
-<p class="soft">An intermediate certificate is no second root. It counts only because the root signed it, and
-installing it gives nobody a power the root has not given already.</p>
+<p class="soft">Installed without trust, an intermediate certificate is no second root: it counts only because the
+root signed it, and gives nobody a power the root has not given already. That holds for the steps below for
+Windows, macOS, iPhone and iPad, Firefox and Chrome. In a store that knows nothing but trusted certificates it is a
+second root, trusted by itself and still trusted when the root is gone. The only such place this page names is
+<code>ca_bundle.pem</code>, one file for the programs you give it to, see <a href="#linux">Linux</a>.</p>
 
 HTML
 
   $part->{DOWNLOADS} = join q{},
     ( map { '  <li>'.$link->( $_->{der_file} ).' <span class="soft">&ndash; '._escape( $_->{label} )
-          .', the intermediate certificate, binary (DER). Windows, Android, macOS.</span></li>'."\n"
-          .'  <li>'.$link->( $_->{pem_file} ).' <span class="soft">&ndash; the same as text (PEM). Linux, Firefox, Chrome.</span></li>'."\n" }
+          .', the intermediate certificate, binary (DER). Windows, macOS.</span></li>'."\n"
+          .'  <li>'.$link->( $_->{pem_file} ).' <span class="soft">&ndash; the same as text (PEM). Firefox, Chrome on Linux.</span></li>'."\n" }
       @chain ),
     ( $many
       ? '  <li>'.$link->('intermediate_ca.pem').' <span class="soft">&ndash; '.( @chain == 2 ? 'both' : 'all '.@chain )
         .' intermediate certificates in one file (PEM). Tools.</span></li>'."\n"
       : () ),
     '  <li>'.$link->('ca_bundle.pem').' <span class="soft">&ndash; the root and '.$the
-      .' in one file (PEM). Programs that take one file with their CAs.</span></li>'."\n";
+      .' in one file (PEM). Programs that take one file with their CAs, see <a href="#linux">Linux</a>.</span></li>'."\n";
 
   $part->{IOS} = <<"HTML";
-<p class="soft">The profile holds $the as well, so this one installation also covers the devices that present
-their certificate alone. Full trust is switched on for the root only; $the $needs no setting.</p>
+<p class="soft">The profile holds $the as well, as a plain certificate, so this one installation also covers the
+devices that present their certificate alone. Full trust is switched on for the root only; $the $needs no
+setting. Not tried on a device yet.</p>
 HTML
 
-  $part->{ANDROID} = '  <li>Do the same for '.$and->( map { $code->($_) } @der )
-    .': Android takes one certificate at a time, and '.$the.' '.( $many ? 'go' : 'goes' )
-    .' into the same list of CA certificates as the root.</li>'."\n";
+  $part->{ANDROID} = <<"HTML";
+<p class="soft">Only the root goes here, not $the. Android keeps one list of CA certificates, and every certificate
+in it is trusted by itself: $the would stay trusted even after the root is removed. So a device that presents its
+certificate without $the is not accepted on Android; only one that sends the chain is.</p>
+HTML
 
   $part->{MACOS} = <<"HTML";
 <p class="soft">Only the root is marked as trusted. $The $is added to the keychain and $needs no trust setting.
-The profile installs $it along with the root.</p>
+The profile installs $it along with the root. Not tried on a Mac yet.</p>
 HTML
 
   $part->{WINDOWS} = '<p>Then '.$the.': download '.$and->( map { $link->($_) } @der ).' and install '.$it
     .' the same way, but into the store'."\n"
     .'<em>Intermediate Certification Authorities</em>. A certificate in that store is trusted for nothing; it only helps'."\n"
-    .'Windows to find the way from a device to the root.</p>'."\n";
-
-  $part->{DEBIAN} = join q{},
-    map { 'sudo cp '.$pem[$_].' /usr/local/share/ca-certificates/'.$stored->($_).'.crt'."\n" } 0 .. $#pem;
-  $part->{FEDORA} = join q{},
-    map { 'sudo cp '.$pem[$_].' /etc/pki/ca-trust/source/anchors/'.$stored->($_).'.pem'."\n" } 0 .. $#pem;
+    .'Windows to find the way from a device to the root. Not tried on Windows yet.</p>'."\n";
 
   $part->{LINUX} = <<"HTML";
-<p class="soft">Every file is one certificate; these stores take them one by one. They also know nothing but trusted
-certificates: $the $is trusted there directly, next to the root. Take $it out again together with the
-root.</p>
-<p>A program that wants its CA certificates as one file gets <a href="ca_bundle.pem" download>ca_bundle.pem</a>,
-the root and $the together:</p>
+<p class="soft">Only the root goes into these stores. They know nothing but trusted certificates: $the would be
+trusted there without the root, and stay trusted after the root is removed or replaced.</p>
+<p>A device that sends $the along with its own certificate needs nothing more. For a device that presents its
+certificate alone, a switch with room for one certificate, give the program
+<a href="ca_bundle.pem" download>ca_bundle.pem</a>, the root and $the together, as its own CA file:</p>
 <pre>curl --cacert ca_bundle.pem https://device.example.internal/
+git config http.sslCAInfo /path/to/ca_bundle.pem
 openssl s_client -connect device.example.internal:443 -CAfile ca_bundle.pem</pre>
+<p class="soft">Inside that one file, programs built on OpenSSL or GnuTLS, curl among them, take $the as a
+trust anchor: they accept what $the signed even without the root. That stays within the file and the programs you
+give it to. When this authority replaces $the, replace the file as well.</p>
 HTML
 
   $part->{FIREFOXSTEP} = '  <li>Choose <em>Import&hellip;</em> again, pick '.$and->( map { $code->($_) } @pem )
@@ -565,7 +579,8 @@ HTML
 
   $part->{CHROMESTEP} = '  <li>Import '.$and->( map { $code->($_) } @pem )
     .' in the same place under <em>Intermediate certificates</em> (older versions: tab'."\n"
-    .'      <em>Authorities</em> again, without ticking a trust setting).</li>'."\n";
+    .'      <em>Authorities</em> again, without ticking a trust setting). Chrome keeps '.$it.' in NSS, as Firefox'."\n"
+    .'      does; not tried yet.</li>'."\n";
 
   return;
 }
@@ -583,13 +598,10 @@ sub _page {
   # that only name a part (<!--PART-->) leave nothing behind.
   my %t = (
     profile_holds => q{},
-    and_der       => q{},
     and_pem       => q{},
     terminal      => 'with the PEM file',
     mac_more      => q{},
     windows_more  => q{},
-    pem_files     => 'PEM file',
-    arch_more     => q{},
     check_more    => q{},
     the_file      => 'the file',
     from_system   => q{},
@@ -687,13 +699,13 @@ page over a connection you have no reason to trust, ask the person who runs the 
 
 <h2 id="android">Android</h2>
 <ol>
-  <li>Download <a href="root_ca.crt" download>root_ca.crt</a>$t{and_der}.</li>
+  <li>Download <a href="root_ca.crt" download>root_ca.crt</a>.</li>
   <li>Open <em>Settings</em> and search for <em>CA certificate</em>. The entry is usually found under
       <em>Security &rarr; More security settings &rarr; Encryption &amp; credentials &rarr; Install a certificate
       &rarr; CA certificate</em>; the names differ between manufacturers.</li>
   <li>Confirm the warning with <em>Install anyway</em> and pick the downloaded file.</li>
-<!--ANDROID-->
 </ol>
+<!--ANDROID-->
 <p class="soft">Chrome and most browsers use certificates installed this way. Other apps only do so when their
 developers allowed it.</p>
 
@@ -721,16 +733,14 @@ select <em>$name</em> and choose <em>Install</em>.</p>
 <p>Edge and Chrome use the Windows store. Firefox has its own list, see <a href="#firefox">below</a>.</p>
 
 <h2 id="linux">Linux</h2>
-<p>The system store wants the $t{pem_files}. Debian, Ubuntu and relatives:</p>
+<p>The system store wants the PEM file. Debian, Ubuntu and relatives:</p>
 <pre>sudo cp root_ca.pem /usr/local/share/ca-certificates/internal-root-ca.crt
-<!--DEBIAN-->
 sudo update-ca-certificates</pre>
 <p>Fedora, RHEL, Rocky and relatives:</p>
 <pre>sudo cp root_ca.pem /etc/pki/ca-trust/source/anchors/internal-root-ca.pem
-<!--FEDORA-->
 sudo update-ca-trust</pre>
 <p>Arch and others with <code>p11-kit</code>:</p>
-<pre>sudo trust anchor --store root_ca.pem$t{arch_more}</pre>
+<pre>sudo trust anchor --store root_ca.pem</pre>
 <p>Check the fingerprint of what you downloaded before you install it:</p>
 <pre>openssl x509 -in root_ca.pem -noout -fingerprint -sha256$t{check_more}</pre>
 <p class="soft">That covers <code>curl</code>, <code>git</code>, <code>wget</code> and most programs. Browsers keep

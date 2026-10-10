@@ -86,3 +86,11 @@ Revision history for SICK
     - SICK::Runner is a Moo class; now, verify_timeout and verify_interval
       can be read back as attributes.
     - SICK::CLI is a Moo class; the sick command line is unchanged.
+    - The trust page no longer tells anyone to put the intermediate
+      certificate into the system store of Debian, Fedora or Arch, or into
+      Android's CA list. There it became a trust anchor that stayed trusted
+      after the root was removed. Those stores get the root only. A device
+      that presents its certificate alone is reached through ca_bundle.pem
+      as a program's own CA file, or through an intermediate kept without
+      trust (Firefox, Chrome on Linux, Windows, macOS, the Apple profile).
+      On Android only devices that send their chain are accepted.

@@ -144,8 +144,8 @@ Your clients are in the same position. A browser that trusts the root and
 nothing else still refuses a device that does not send the intermediate
 along. The same key of the `ca` section takes care of that: with
 `intermediates:` set, `sick trust` publishes the intermediate next to the
-root, and [the trust page](#the-trust-service) tells every platform where to
-put it.
+root, and [the trust page](#the-trust-service) tells every platform where it
+may go without becoming a trust anchor.
 
 ## The CA
 
@@ -289,15 +289,21 @@ media types that make a browser or a phone offer to install them
 | On the page | For |
 |---|---|
 | `root_ca.pem`, `root_ca.crt` (DER) | the root: what a client trusts |
-| `intermediate_ca.pem`, `intermediate_ca.crt` (DER) | the intermediate: what a client has to know for a device that presents its certificate alone. No trust anchor – except where a platform has nothing but anchors (the system store of Linux, Android) |
-| `ca_bundle.pem` | both in one file: `curl --cacert`, `openssl -CAfile`, `SSL_CERT_FILE` |
+| `intermediate_ca.pem`, `intermediate_ca.crt` (DER) | the intermediate: what a client has to know for a device that presents its certificate alone. Never a trust anchor: it goes only where a platform keeps it without trust (Firefox and Chrome on Linux with nothing ticked, the Windows store of intermediates, the macOS keychain, the profile). The system store of Linux and Android get the root alone |
+| `ca_bundle.pem` | both in one file, as a program's own CA file: `curl --cacert`, `git config http.sslCAInfo`, `openssl -CAfile`, `SSL_CERT_FILE`. Inside it the intermediate is an anchor for OpenSSL and GnuTLS programs; replace the file when the intermediate is replaced |
 | `root_ca.mobileconfig` | iPhone, iPad, Mac: the root as trusted root, the intermediate as a plain certificate, one installation. On iPhone and iPad full trust for the root has to be switched on afterwards; the page says where |
 | `index.html` | fingerprints of both, and the steps for iPhone and iPad, Android, macOS, Windows, Linux, Firefox and Chrome: where the root goes, where the intermediate goes, and whether that takes a trust setting |
 
 One visit to that page is meant to be all a browser, a phone or a tablet
-needs to accept every device SICK looks after – also the switch that sends
-no intermediate. From the client's side, with the two files of the page and
-nothing else:
+needs to accept every device SICK looks after. A device that sends its chain
+needs the root alone. The switch that sends no intermediate is reached
+through `ca_bundle.pem` in a program, or through an intermediate kept
+without trust (Firefox, Chrome on Linux, Windows, macOS, iPhone and iPad) –
+on Android not at all: there every installed CA certificate is an anchor,
+and the page installs none but the root. Why an intermediate must not go
+into a store of anchors: it stays trusted when the root is gone
+([docs/findings/trust-anchors.md](../docs/findings/trust-anchors.md)).
+From the client's side, with the two files of the page and nothing else:
 
 ```text
 $ curl -sO http://<host>:8080/ca_bundle.pem -O http://<host>:8080/root_ca.pem
@@ -312,8 +318,9 @@ switch. With the files of the lab's page and the certificate that switch
 presents, in throwaway containers: the system store of Debian 13
 (`update-ca-certificates`; OpenSSL and GnuTLS accept the certificate with
 root and intermediate installed and refuse it with the root alone), of
-Fedora 44 (`update-ca-trust`, and `trust anchor --store` with both files),
-and an NSS database – what Firefox keeps its certificates in – with the root
+Fedora 44 (`update-ca-trust`, and `trust anchor --store` with both files) –
+the placement the page has dropped since, because the intermediate is an
+anchor there –, and an NSS database – what Firefox keeps its certificates in – with the root
 trusted and the intermediate present without any trust (`certutil -V`:
 valid; without the intermediate: issuer not recognized). The steps for
 iPhone, iPad, Android, macOS, Windows and the browsers themselves are

@@ -422,15 +422,26 @@ subtest 'the page with an intermediate' => sub {
   like $section{ios}, qr/root_ca\.mobileconfig/, 'iPhone: the profile';
   like $section{ios}, qr/Certificate Trust\s+Settings/, '... and full trust for the root';
   unlike $section{ios}, qr/href="intermediate_ca/, '... and no second file: the profile has the intermediate';
-  like $section{android}, qr/href="\Q$_\E"/, 'Android: '.$_ for qw( root_ca.crt intermediate_ca.crt );
+  like $section{android}, qr/href="root_ca\.crt"/, 'Android: the root';
+  unlike $section{android}, qr/intermediate_ca/, '... and no intermediate: its CA list is a list of anchors';
+  like $section{android}, qr/not accepted on Android/, '... which a device without the chain is told';
   like $section{macos}, qr/add-trusted-cert -d -r trustRoot[^<]*root_ca\.pem/, 'macOS: the root is trusted as a root';
   like $section{macos}, qr/security add-certificates[^<]*intermediate_ca\.crt/, '... the intermediate is added, not trusted';
   like $section{windows}, qr/certutil -addstore -f Root root_ca\.crt/, 'Windows: the root into the root store';
   like $section{windows}, qr/certutil -addstore -f CA intermediate_ca\.crt/, '... the intermediate into the store of intermediates';
   like $section{windows}, qr/Intermediate Certification Authorities/, '... which the page calls by its name';
-  like $section{linux}, qr{cp intermediate_ca\.pem /usr/local/share/ca-certificates/[a-z-]+\.crt\n[^<]*update-ca-certificates}, 'Debian: both files, then update-ca-certificates';
-  like $section{linux}, qr{cp intermediate_ca\.pem /etc/pki/ca-trust/source/anchors/[a-z-]+\.pem\n[^<]*update-ca-trust}, 'Fedora: both files, then update-ca-trust';
+  like $section{linux}, qr{cp root_ca\.pem /usr/local/share/ca-certificates/[a-z-]+\.crt\nsudo update-ca-certificates}, 'Debian: the root, then update-ca-certificates';
+  like $section{linux}, qr{cp root_ca\.pem /etc/pki/ca-trust/source/anchors/[a-z-]+\.pem\nsudo update-ca-trust}, 'Fedora: the root, then update-ca-trust';
+  like $section{linux}, qr{trust anchor --store root_ca\.pem</pre>}, 'p11-kit: the root alone';
+  # An intermediate in a store of anchors stays trusted when the root is gone
+  # (docs/findings/trust-anchors.md): no system store, no p11-kit anchor.
+  unlike $page, qr{intermediate[^\n<]*(?:/usr/local/share/ca-certificates|/etc/pki/ca-trust|/etc/ssl/certs)}, 'no intermediate is copied into a system store';
+  unlike $page, qr{trust anchor --store[^\n<]*intermediate}, '... nor stored as a p11-kit anchor';
   like $section{linux}, qr/--cacert ca_bundle\.pem/, 'the bundle for a program that takes one file';
+  like $section{linux}, qr/http\.sslCAInfo [^\n<]*ca_bundle\.pem/, '... git as well';
+  like $section{linux}, qr/take the intermediate as a\s+trust anchor/, '... saying that the intermediate is an anchor inside it';
+  like $section{linux}, qr/replace the file/, '... and that the file goes when the intermediate goes';
+  like $section{firefox}, qr/pick <code>intermediate_ca\.pem<\/code> and tick nothing/, 'Firefox: the intermediate without trust';
   like $section{firefox}, qr/href="\Q$_\E"/, 'Firefox: '.$_ for qw( root_ca.pem intermediate_ca.pem );
   like $section{firefox}, qr/Firefox for Android/, '... and Firefox for Android';
   like $section{chrome}, qr/href="\Q$_\E"/, 'Chrome on Linux: '.$_ for qw( root_ca.pem intermediate_ca.pem );
@@ -500,6 +511,8 @@ subtest 'several intermediates' => sub {
   like $page, qr/<a href="\Q$_\E"/, '... and to '.$_ for grep { $_ ne 'index.html' } @names;
   like $page, qr/certutil -addstore -f CA intermediate_ca_1\.crt\ncertutil -addstore -f CA intermediate_ca_2\.crt/,
     'a command for each of them';
+  unlike $page, qr{intermediate[^\n<]*(?:/usr/local/share/ca-certificates|/etc/pki/ca-trust|/etc/ssl/certs)|trust anchor --store[^\n<]*intermediate},
+    'none of them into a system store or a p11-kit anchor';
   unlike $page, qr/[ \t]\n|<!--|\n\n\n/, 'no trailing blanks, no placeholder, no hole';
 };
 

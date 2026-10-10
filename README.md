@@ -130,17 +130,35 @@ $ openssl s_client -connect switch.example.internal:443 -CAfile ca_bundle.pem -n
 Verify return code: 0 (ok)
 ```
 
-So the page tells people to install both, and where each one belongs:
+The better way is the device sending the chain; then nothing but the root is
+needed. For a device that cannot, the intermediate has to reach the client –
+but never as a trust anchor. In a store that knows nothing but trusted
+certificates (the system stores of Linux, the CA list of Android), an
+intermediate is trusted by itself and stays trusted after the root is
+removed or replaced: curl, GnuTLS and NSS still accept what it signed
+([docs/findings/trust-anchors.md](docs/findings/trust-anchors.md)). So the
+page puts the root alone there and hands the intermediate over in one of
+three ways:
+
+1. **the device sends the chain** – preferred, and the only way on Android;
+2. **`ca_bundle.pem` as a program's own CA file** (`curl --cacert`,
+   `git config http.sslCAInfo`, `openssl -CAfile`). Inside that one file
+   OpenSSL- and GnuTLS-based programs take the intermediate as an anchor;
+   the risk stays with that file, and the file is replaced when the
+   intermediate is;
+3. **a place that keeps it without trust**: Firefox with nothing ticked
+   (tried, NSS), Chrome on Linux under *Intermediate certificates*, the
+   Windows store of intermediates, the macOS keychain, the Apple profile.
 
 | Platform | Root | Intermediate |
 |---|---|---|
-| iPhone, iPad | the profile, then full trust under *Certificate Trust Settings* | in the same profile; no setting |
-| macOS | the profile, or `security add-trusted-cert` | in the same profile, or `security add-certificates`; no trust setting |
-| Windows | *Trusted Root Certification Authorities* | *Intermediate Certification Authorities* |
-| Android | *Install a certificate → CA certificate* | the same way – Android has one list. Browsers use it, most other apps do not |
-| Linux system store | `update-ca-certificates`, `update-ca-trust` | the same directory, as a file of its own; trusted directly there, such a store knows nothing else |
+| iPhone, iPad | the profile, then full trust under *Certificate Trust Settings* | in the same profile, as a plain certificate; no setting (not tried) |
+| macOS | the profile, or `security add-trusted-cert` | in the same profile, or `security add-certificates`; no trust setting (not tried) |
+| Windows | *Trusted Root Certification Authorities* | *Intermediate Certification Authorities* (not tried) |
+| Android | *Install a certificate → CA certificate* | nowhere – Android has one list, and everything in it is an anchor. A device that sends no chain is not accepted there |
+| Linux system store | `update-ca-certificates`, `update-ca-trust`, `trust anchor --store` | nowhere – such a store knows nothing but anchors. A program that has to reach a device without chain gets `ca_bundle.pem` as its CA file |
 | Firefox | *Authorities → Import*, trusted for websites | imported the same way, nothing ticked |
-| Chrome on Linux | certificate manager, as a trusted certificate | certificate manager, under *Intermediate certificates* |
+| Chrome on Linux | certificate manager, as a trusted certificate | certificate manager, under *Intermediate certificates*, no trust (NSS, as Firefox; not tried) |
 
 A CA with several intermediates gets `intermediate_ca.pem` with all of them
 and `intermediate_ca_1.pem`, `intermediate_ca_1.crt`, `intermediate_ca_2.pem`
@@ -153,7 +171,10 @@ What of this has been tried: `openssl` with the bundle, with a directory of
 certificates, and with the root alone (the test suite, and a real switch in
 the lab); the system stores of Debian and Fedora and an NSS database – what
 Firefox keeps its certificates in – with the certificate of that switch
-([docker/README.md](docker/README.md#the-trust-service)). The steps for
+([docker/README.md](docker/README.md#the-trust-service)); and which of these
+places turn an intermediate into an anchor, with curl, `openssl s_client`,
+GnuTLS and NSS on Debian 13 and Fedora 44
+([docs/findings/trust-anchors.md](docs/findings/trust-anchors.md)). The steps for
 iPhone, iPad, Android, macOS, Windows and the browsers themselves are written
 from the documentation of those platforms and have not been walked through
 on a device yet.
