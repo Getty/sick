@@ -55,8 +55,11 @@ house rules say about environment variables.
 - **The image is built from the directory above this checkout** and needs
   `../sick-target-ciscosb` beside it. `docker/Dockerfile.dockerignore` is an allow list:
   a new file the image needs has to be added there, or the build does not see it.
-- **There is no Docker on this machine.** A change under `docker/` or `k8s/` is checked
-  by reading and by `t/60-k8s.t`; say in your report that it was not run.
+- **A change under `docker/` is proven by `t/e2e/run-local.sh`** where the host has
+  Docker (project `sick-e2e`, ports on 127.0.0.1, torn down at exit). Without Docker it is
+  checked by reading; one under `k8s/` by reading and by `t/60-k8s.t`. Say in your report
+  which of these happened. On a shared Docker host touch nothing that is not `sick-*`
+  and prune nothing.
 - User-visible change → propose the `Changes` bullet in your report.
 
 ## Verification
@@ -71,5 +74,5 @@ skipped is not a run that passed, and your report says which files skipped.
 `git add` a new file as soon as it exists: `dzil build` and `dzil test` take tracked
 files only, while `prove` runs the untracked one and stays green.
 
-Never run `dzil release`, `t/e2e/run-lab.sh` (it changes a real switch) or anything that
-starts a container.
+Never run `dzil release` or `t/e2e/run-lab.sh` (it changes a real switch). The only thing
+you start containers with is `t/e2e/run-local.sh`.
