@@ -10,7 +10,8 @@ packages below are mostly recipes, scripts and proof in containers around
 step-ca, `step` and acme.sh, plus a handbook. Perl code is written only where
 nothing existing does the job.
 
-Status as of 2026-10-10. Each package is a card on the karr board of this
+Status as of 2026-10-10 (P1 done; P2 in progress, k1 done). Sharpened the same
+day against the skill `ssl-tls-pki`. Each package is a card on the karr board of this
 repository (`karr list`); the card number is given in brackets.
 
 ## Inventory
@@ -67,6 +68,31 @@ Notes on the inventory:
    final pass that walks the whole path from zero in containers and fixes
    what does not match.
 
+## How every package is tested
+
+Taken from the skill `ssl-tls-pki` (acceptance tests, trust distribution,
+rotation), and binding for P3–P9:
+
+- **Positive and negative with the real consuming client.** Every "it
+  works" has a matching "it is refused": unknown root, missing
+  intermediate, wrong name, expired leaf, name outside the constraints,
+  certificate removed from the store. A refusal that was expected is a
+  passing test.
+- **Independent implementations count, the same library twice does not.**
+  curl, Python and the `openssl` CLI all use OpenSSL. Where a result
+  matters (name constraints, chain building), at least one of GnuTLS, NSS,
+  Go or Java checks it as well.
+- **The live endpoint is the evidence.** A written file, a Secret or a
+  "Ready" status proves nothing: the fingerprint presented on the port is
+  compared with the one issued (SICK already does this for its devices; the
+  recipes do it too).
+- **Bootstrap is not operation.** Making the hierarchy, the first trust of
+  a client and recovery are separate procedures from issuing and renewing,
+  and each has its own test.
+- **Every test record says** scope, versions, expected result, observed
+  result and what it does not cover. What was not run is marked "not
+  tried".
+
 ## Packages
 
 ### P1 Lab on this machine [k12]
@@ -97,85 +123,178 @@ in both repositories, and the image builds and passes the P1 e2e run.
 
 ### P3 The CA done properly [k13]
 
-- **Root offline.** A ceremony script that makes root and intermediate
-  outside step-ca (`step certificate create --profile root-ca`, then the
-  intermediate with an X.509 template carrying `nameConstraints`), writes
-  the root key to a place given by the operator and never into the CA
-  volume. `init-ca.sh` gets a mode that takes an existing root certificate
-  and intermediate instead of making its own; the current "make everything"
-  mode stays for labs.
-- **Name constraints** in the intermediate (DNS domains, IP ranges),
-  configurable; the running-CA policy stays as the second line.
-- **Lifetimes and key types** with reasons: root (e.g. 20 years, EC P-256 or
-  RSA 4096), intermediate (e.g. 5 years), devices (397 days default; 825
-  days is Apple's ceiling), ACME services (short, e.g. 30–90 days, renewed
-  by the client). All configurable.
-- **Backup and restore** of the CA volume (keys, `ca.json`, database),
-  restore into an empty volume.
-- **Renewing the intermediate** with the offline root, while devices keep
-  their certificates; `ca.intermediates` and the trust page carry old and new
-  during the overlap.
-- **Replacing the root**: new root, overlap period with both on the trust
-  page, re-issue, retire the old one.
-- **Revocation**: passive by default, step-ca's CRL as an option; what SICK
-  does instead (short lifetimes, `sick run --force` for affected devices).
+Bootstrap (once, offline):
 
-Done when: a test in containers runs the ceremony, starts step-ca on the
-result, issues through SICK, and shows (a) `openssl verify` refuses a
-certificate for a name outside the constraints even when signed by the
-intermediate directly, (b) a backup restored into a fresh volume issues
-certificates that chain to the same root, (c) an intermediate rollover and
-(d) a root rollover leave clients that followed the trust page able to
-connect throughout. Handbook chapters "Planning" and "The CA" exist.
+- **Ceremony script.** It makes root and intermediate outside step-ca
+  (`step certificate create --profile root-ca`, then the intermediate with
+  an X.509 template: `nameConstraints` with DNS domains and IP ranges,
+  `pathLen 0`, key usage `certSign, crlSign`). It writes the root key to a
+  place the operator names and never into the CA volume. It writes a
+  **ceremony record**: who ran it and when, the versions, the fingerprints,
+  the constraints as read back from the certificates with `openssl x509
+  -text` (an independent check of what the template produced), and where
+  the root key went. The record holds no secret.
+- `init-ca.sh` gets a mode that takes the existing root certificate and
+  intermediate instead of making its own. The current "make everything"
+  mode stays for labs and is called that.
+
+Operation (online, step-ca):
+
+- **Name constraints** in the intermediate as the first line, the CA policy
+  (`SICK_CA_ALLOW_*`) as the second.
+- **Profiles and enrollment.** A table of who may obtain what. The JWK
+  provisioner `sick` holds a password that can ask for any allowed name; the
+  ACME provisioner gives certificates to whoever answers the challenge.
+  Server leaves get `serverAuth` only. Lifetimes per provisioner are set,
+  not left at defaults.
+- **Lifetimes and key types** with reasons. Root (e.g. 20 years, EC P-256 or
+  RSA 4096), intermediate (e.g. 5 years), devices (397 days by default;
+  825 days is Apple's ceiling), ACME services (short, renewed by the
+  client). The reason for each includes the recovery budget: how long a CA
+  outage the lifetime survives.
+- **Backup and restore.** Restore into an isolated, empty volume without a
+  second CA going live, and check that the restored intermediate is still
+  valid. RTO and RPO are written down. Recovery must not depend on anything
+  the CA itself issues (pinned images and tools kept independently).
+- **Renewing the intermediate** with the offline root while devices keep
+  their certificates. `ca.intermediates` and the trust page carry old and
+  new during the overlap.
+- **Replacing the root.** Distribute a bundle with both roots, verify that
+  clients accept the new one, issue under the new one, re-issue all leaves,
+  watch convergence, and only then remove the old one. A planned rollback
+  returns to the old root; after a compromise rollback is forbidden, and
+  the procedure says so.
+- **Revocation.** Passive by default (`step ca revoke` blocks renewal),
+  step-ca's CRL as an option. What SICK adds: short lifetimes and `sick run
+  --force`. A compromise also revokes the enrollment grant: rotate the
+  provisioner password, deactivate ACME accounts. Otherwise the attacker
+  just asks again.
+- **Compromise drills**, each as a written procedure: leaf key exposed,
+  provisioner password exposed, intermediate compromised (stop issuing, new
+  intermediate, `sick run --force` for every device), root compromised
+  (authenticated trust replacement on every client), CA unavailable, the
+  CA's own TLS certificate expired.
+
+Done when a test in containers does all of the following:
+- it runs the ceremony, starts step-ca on the result and issues through
+  SICK;
+- **negative, enrollment:** step-ca refuses an out-of-scope name, a CSR
+  asking for `CA:true` and a lifetime above the provisioner maximum, and a
+  refused request leaves no certificate;
+- **negative, path:** a certificate for an out-of-scope name, signed with
+  the intermediate key directly (bypassing step-ca), is refused by the
+  OpenSSL CLI *and* by at least one independent implementation (GnuTLS or
+  NSS, or Go if it is in the image);
+- a backup restored into a fresh, isolated volume issues certificates that
+  chain to the same root, and the original CA stays the only one in the
+  service;
+- an intermediate rollover and a root rollover leave clients that followed
+  the trust page able to connect throughout, a client with only the old
+  root refuses new leaves after the old root is retired, and the e2e run
+  stays green;
+- the provisioner password is rotated and the old one is refused.
+
+The handbook chapters "Planning", "The CA" and "Emergencies: CA side"
+exist.
 
 ### P4 Clients trust the CA [k14]
 
-- `sick trust` writes install **and** remove scripts: `install-debian.sh`
-  (Debian, Ubuntu), RHEL family, Arch, Alpine, macOS (`security`), Windows
-  (PowerShell, `certutil`), Firefox policy (`policies.json`) / NSS
-  `certutil`; the `.mobileconfig` stays. Each script checks the fingerprint
-  it was written with.
-- The page gets sections for runtimes with their own store: Java
-  (`keytool`), Python (`certifi`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`),
-  Node (`NODE_EXTRA_CA_CERTS`), curl, git, Docker daemon
-  (`/etc/docker/certs.d`), container images (a Dockerfile snippet),
-  Kubernetes pods (ConfigMap / trust-manager).
-- Android: what a user CA does and does not do (apps targeting API 24 or
-  newer ignore it unless they opt in; Chrome uses it).
+- **Authenticated bootstrap.** The trust page is served over plain HTTP, and
+  a page that a client fetches before it trusts anything proves nothing by
+  itself. The fingerprint from the ceremony record therefore travels by
+  another channel (handbook, printout, chat), and every install script stops
+  unless the root it installs has that fingerprint. The page says this
+  first, not last.
+- `sick trust` writes install **and** remove scripts. Covered:
+  `install-debian.sh` (Debian, Ubuntu), the RHEL family, Arch, Alpine,
+  macOS (`security`), Windows (PowerShell, `certutil`), Firefox (policy
+  `policies.json`, or NSS `certutil`). The `.mobileconfig` stays, with the
+  extra step on iOS (*Certificate Trust Settings*). Each script installs
+  into the right store and nothing more: it never replaces the system
+  bundle.
+- **One inventory row per consumer**, with how it loads trust:
+  - at start only, on reload, on every connection, or baked into the image;
+  - whether a restart is needed;
+  - how to remove it again.
+  The consumers: the system stores, Firefox/NSS, Chrome, Java (`keytool`,
+  the JDK's own `cacerts`), Python (`certifi` vs system, `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`), Node (`NODE_EXTRA_CA_CERTS`, `--use-system-ca`),
+  Go, curl, git, the Docker daemon (`/etc/docker/certs.d`), BuildKit,
+  container images (a Dockerfile snippet), Kubernetes pods (trust-manager or
+  a ConfigMap). Where possible the page recommends a bundle for one
+  application over a system-wide root.
+- Android: user CAs and Network Security Configuration, written down
+  honestly. Apps that target API 24 or newer ignore user CAs unless they
+  opt in; Chrome uses them.
 
-Done when: a container matrix (Debian, Ubuntu, Fedora, Rocky, Arch, Alpine;
-Java, Python, Node images; a Firefox/NSS profile) installs from the trust
-page, reaches a test service with a SICK certificate, removes, and fails
-again – each step asserted. Windows, macOS, iOS, Android are marked "not
-tried" on the page and in the handbook until someone walks them through.
+Done when a container matrix runs these steps for each consumer and asserts
+every one:
+1. install from the trust page, with the fingerprint checked;
+2. reach a test service with a SICK certificate;
+3. **refuse** a service whose certificate comes from another CA, one with
+   the wrong name and one outside the name constraints;
+4. remove, and fail again.
+
+The matrix covers Debian, Ubuntu, Fedora, Rocky, Arch, Alpine, plus Java,
+Python, Node and Go images, plus a Firefox/NSS profile. It records which TLS
+library each consumer used. An install script given a root with a different
+fingerprint stops. Windows, macOS, iOS and Android are marked "not tried" on
+the page and in the handbook until someone walks them through.
 
 ### P5 Operations [k15]
 
-- `sick check --format json` and a Prometheus text exposition of remaining
-  lifetime per device (textfile collector), with tests.
+- `sick check --format json` and a Prometheus text exposition (textfile
+  collector). Per device: the remaining lifetime of the live leaf **and**
+  of the intermediate and root in its path, and the live fingerprint. Per
+  run: the time of the last successful issue and of the last full run.
+- **Alert thresholds relative to lifetime** (e.g. a fraction of the
+  lifetime plus the recovery budget from P3), not a fixed 30 days.
+  Issuance failures alert long before expiry does.
 - Notification on failure: a documented hook (systemd `OnFailure=`, cron
-  `MAILTO`, a webhook command in the device list if a gap remains).
+  `MAILTO`, a webhook command in the device list if a gap remains). A test
+  shows that the alert fires and names the device.
 - systemd service and timer, cron line, Kubernetes CronJob, each in the
   repository.
-- Inventory: what was issued, for which device and names, until when –
-  from the run records SICK keeps in its state directory.
+- **Inventory of the deployed certificates**, not only of the issued ones.
+  Per device: names, issuer, serial, fingerprint, until when, how it is
+  deployed, owner. It comes from the run records SICK keeps in its state
+  directory and never holds a key.
 
-Done when: the JSON and Prometheus output have tests; the CronJob runs in a
-throw-away k3d cluster `sick-…`; the systemd units pass
-`systemd-analyze verify`; a failing device triggers the documented
-notification in a container test. Handbook chapter "Operations" exists.
+Done when:
+- the JSON and Prometheus output have tests, including an intermediate
+  close to expiry;
+- the CronJob runs in a throw-away k3d cluster `sick-…`;
+- the systemd units pass `systemd-analyze verify`;
+- a failing device, a device serving a stale certificate and an
+  unreachable CA each trigger the documented notification in a container
+  test.
+
+The handbook chapter "Operations" exists.
 
 ### P6 Services that speak ACME [k16]
 
 Recipes against step-ca's ACME endpoint, each with root trust on the client
-side: Traefik, Caddy, nginx with acme.sh (or lego), cert-manager with an
-ACME `ClusterIssuer` and with `step-issuer`, Proxmox VE with its custom ACME
-directory. ACME provisioner lifetimes set by `init-ca.sh`.
+side: Traefik, Caddy, nginx with acme.sh (or lego) and a reload hook,
+cert-manager with an ACME `ClusterIssuer` and with `step-issuer`, Proxmox VE
+with its custom ACME directory.
+- **Enrollment authorization** is written down: the challenge type each
+  recipe uses, who can reach the ACME endpoint, and that the CA policy
+  bounds the names.
+- ACME lifetimes are set by `init-ca.sh`, short enough to exercise renewal
+  and long enough for the recovery budget.
 
-Done when: Traefik, Caddy, nginx and cert-manager (k3d) each obtain a
-certificate from the lab CA in a test and serve it, verified with
-`curl --cacert`. Proxmox VE is a written recipe marked "not tried" (no PVE
-here).
+Done when Traefik, Caddy, nginx and cert-manager (k3d) each do all of the
+following in a test:
+- they obtain a certificate from the lab CA;
+- they **renew it within the test** (short test lifetime), and the
+  fingerprint presented on the port changes to the new certificate without
+  a manual step;
+- a request for a name outside the CA policy is refused;
+- a challenge for a name the client does not control fails.
+
+Proxmox VE is a written recipe marked "not tried" (no PVE here). For
+cert-manager, "Ready" counts only when a probe of the pod sees the new
+fingerprint.
 
 ### P7 Devices that cannot [k17, iDRAC k18 deferred]
 
@@ -195,24 +314,52 @@ against a container has a test, and the card for iDRAC lists what it needs.
 
 ### P8 Client certificates (mTLS) [k19]
 
-Recipe: a provisioner for client certificates, `step ca certificate` for a
-person and for a machine, PKCS#12 for import into browsers and OS stores,
-nginx checking client certificates.
+- **A separate trust set for clients.** Either a client intermediate of its
+  own, or at least a provisioner whose template issues `clientAuth` only.
+  The server's client-CA file is not the server's own chain; it is named
+  for its role.
+- `step ca certificate` for a person and for a machine, a key per holder
+  (never one key shared by a fleet), PKCS#12 for import into browsers and
+  OS stores.
+- **Identity is not authorization.** The nginx recipe maps a specific SAN to
+  an allowed principal. A valid certificate of the CA alone does not get
+  in. Behind a terminating proxy, identity headers are overwritten by the
+  proxy and accepted only from it.
 
-Done when: a container test issues a client certificate and nginx accepts it
-and refuses a request without it.
+Done when a container test has nginx accept the approved client and refuse
+each of these:
+- no certificate;
+- a certificate from another CA;
+- a `serverAuth`-only leaf presented as a client;
+- an expired client certificate;
+- a valid certificate for an identity that is not allowed (403, not a TLS
+  error);
+- a spoofed identity header sent directly to the backend.
 
 ### P9 Handbook [k20]
 
 `docs/handbook/` in English, one path from zero to operations and
-emergencies (key lost, CA compromised, certificate expired, device locked
-out); every step with command and expected output; the README points to it.
-Each decision that is the maintainer's (below) has a recommendation with
-reasons.
+emergencies; every step with command and expected output; the README points
+to it. The path:
+- planning: names, networks, lifetimes, a trust graph and the
+  profile/enrollment table;
+- setting up the CA: the ceremony;
+- clients trusting it: authenticated bootstrap first;
+- the first device, then all devices and services;
+- operations;
+- emergencies: the recovery matrix of P3, plus certificate expired and
+  device locked out.
 
-Done when: the whole path has been walked once in containers from an empty
-machine, the transcripts are in the handbook with neutral names, and every
-"not tried" is marked as such.
+Each decision that is the maintainer's (below) has a recommendation with
+reasons, in the form of a decision record (decision, alternatives, why).
+
+Done when:
+- the whole path has been walked once in containers from an empty machine,
+  and the transcripts are in the handbook with neutral names;
+- every test record states scope, versions, expected and observed result;
+- every proposal is marked as a proposal and every "not tried" as such;
+- the restore drill and a compromise drill (intermediate) have been run
+  from the handbook text alone.
 
 ## Decisions that are the maintainer's
 

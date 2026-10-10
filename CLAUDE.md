@@ -20,6 +20,8 @@ export PATH=$HOME/.local/bin:$PATH      # step, step-ca, acme.sh, xmllint
 `t/e2e/install-tools.sh` puts step, step-ca and acme.sh there in pinned, checksummed
 versions; with them `prove -lr t` runs without a skip. `xmllint` (for `t/50-trust.t`)
 was unpacked by hand from Debian's `libxml2-utils` (`apt-get download`, `dpkg -x`).
+`skilletor` is not in the `PATH`: `~/.claude/plugins/cache/getty/skilletor/*/bin/skilletor`
+(`skilletor sync` installs the skills named in `.claude/skilletor.json`).
 
 ## Rules of this repo
 
