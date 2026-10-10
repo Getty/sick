@@ -117,7 +117,8 @@ The F<docker/> directory of the repository puts the three together with
 Docker Compose: a step-ca that sets itself up on first start, SICK on a
 schedule, and a small web server for the page of C<sick trust>.
 
-The core distribution depends on core Perl and L<YAML::PP>, nothing else.
+Besides core Perl, the core distribution depends on L<Moo> for its classes
+and L<YAML::PP> for the device list.
 The programs it calls - C<openssl>, C<step>, C<acme.sh> - are prerequisites
 of a run, not of the installation; when one is missing, the error says
 which. A device
@@ -183,6 +184,8 @@ directories, one spelling for names, durations in seconds.
 =item * L<OpenSSL|https://www.openssl.org/> - everything X.509
 
 =item * L<acme.sh|https://github.com/acmesh-official/acme.sh> - its deploy hooks, through L<SICK::Target::Acmesh>
+
+=item * L<Moo> - the classes
 
 =item * L<YAML::PP> - reads the device list
 

@@ -1,9 +1,9 @@
 package SICK::Device;
 # ABSTRACT: One entry of the SICK device list
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -33,25 +33,19 @@ changed afterwards.
 
 =cut
 
-sub new {
-  my ( $class, %arg ) = @_;
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   for my $required (qw( name type names lifetime renew_before key )) {
     croak 'SICK::Device->new needs '.$required unless defined $arg{$required};
   }
   croak 'SICK::Device->new needs names as a non-empty array reference'
     unless ref $arg{names} eq 'ARRAY' && @{ $arg{names} };
-  return bless {
-    name         => $arg{name},
-    type         => $arg{type},
-    host         => $arg{host},
-    port         => defined $arg{port} ? $arg{port} : 443,
-    names        => [ @{ $arg{names} } ],
-    lifetime     => $arg{lifetime},
-    renew_before => $arg{renew_before},
-    key          => $arg{key},
-    options      => $arg{options} || {}
-  }, $class;
-}
+  $arg{names} = [ @{ $arg{names} } ];
+  delete $arg{port}    unless defined $arg{port};
+  delete $arg{options} unless $arg{options};
+  return \%arg;
+};
 
 =method new
 
@@ -71,52 +65,55 @@ work of L<SICK::Config/load>.
 
 =cut
 
-sub name         { $_[0]->{name} }
-sub type         { $_[0]->{type} }
-sub host         { $_[0]->{host} }
-sub port         { $_[0]->{port} }
-sub names        { [ @{ $_[0]->{names} } ] }
-sub lifetime     { $_[0]->{lifetime} }
-sub renew_before { $_[0]->{renew_before} }
-sub key          { $_[0]->{key} }
-sub options      { $_[0]->{options} }
+has name         => ( is => 'ro', required => 1 );
+has type         => ( is => 'ro', required => 1 );
+has host         => ( is => 'ro' );
+has port         => ( is => 'ro', default => 443 );
+has _names       => ( is => 'ro', required => 1, init_arg => 'names' );
+has lifetime     => ( is => 'ro', required => 1 );
+has renew_before => ( is => 'ro', required => 1 );
+has key          => ( is => 'ro', required => 1 );
+has options      => ( is => 'ro', default => sub { {} } );
 
-=method name
+sub names { [ @{ shift->_names } ] }
+
+=attr name
 
 The key of the entry in the device list.
 
-=method type
+=attr type
 
 The device type as written in the list, for instance C<cisco-sb>. See
 L<SICK::Target/class_for>.
 
-=method host
+=attr host
 
 Where the device is reached, or C<undef> when the entry has no C<host>.
 
-=method port
+=attr port
 
 The TLS port of the device. Defaults to C<443>.
 
 =method names
 
 The names the certificate has to carry, in the order of the list, lower
-case. The first one becomes the subject.
+case. The first one becomes the subject. Every call returns a new array
+reference: changing it changes nothing in the device.
 
-=method lifetime
+=attr lifetime
 
 How long a new certificate is valid, in seconds.
 
-=method renew_before
+=attr renew_before
 
 How long before its end a certificate is renewed, in seconds.
 
-=method key
+=attr key
 
 The key type of a new certificate: C<rsa2048>, C<rsa3072>, C<rsa4096> or
 C<ec256>.
 
-=method options
+=attr options
 
 Hash reference of the keys of the entry that belong to the device type, such
 as C<dir> and C<reload> of a C<files> device.
