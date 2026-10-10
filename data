@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-10T18:44:07Z
+created: 2026-10-10T16:51:51Z
+id: 32
+priority: high
+started: 2026-10-10T17:39:01Z
+status: done
+tags:
+- ca
+- p3
+title: 'P3d Handbook: Planning, The CA, Emergencies (CA side), with test report'
+updated: 2026-10-10T18:44:18Z
+---
+
+docs/handbook chapters in English with commands and expected output, profile/enrollment table, lifetimes and key types with reasons and recovery budget, revocation (passive, optional CRL), compromise drills, YubiKey/HSM recipe marked not tried, test report in the roadmap format; decision table entries for the maintainer. Part of P3 (k13); the binding 'done when' is docs/roadmap.md, section P3.
+
+From k29 for the handbook: step-ca 0.30.2 enforces the intermediate's name constraints at issuance (403) even without policy - constraints are a first line at enrollment too; a CSR asking CA:true comes out as a plain leaf (template decides); step-ca logs the one-time token (ott=) of refused requests at warning level - treat CA logs as sensitive; import mode needs SICK_CA_DNS (ca/localhost are outside constraints); refresh the transcript at the end of docker/README.md (new init-ca wording).
+
+From k30: a password change of the JWK provisioner is no rotation (the encrypted key is served publicly at /provisioners/<kid>/encrypted-key) - rekey with init-ca.sh --rotate-provisioner; step ca provisioner update --create fails in 0.30.2 against a local ca.json (remove+add works); keep the backup manifest apart from the archive (or sign it); observed lab RTO 3-4 s, RPO = time since last backup; ACME account deactivation documented, not tried (P6); a restore onto another host is not tried.
+
+Committed as 8ecbd34: chapters planning, the CA, emergencies (CA side); rollovers chapter still to come
+
+Committed as 8be6ed2
