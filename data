@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-10T21:25:18Z
+created: 2026-10-10T15:56:49Z
+id: 26
+priority: medium
+started: 2026-10-10T21:00:01Z
+status: done
+tags:
+- ops
+- finding
+title: 'One sick run at a time: lock per device list'
+updated: 2026-10-10T21:25:29Z
+---
+
+Finding from k7 (sick-worker, 2026-10-10). Nothing stops two sick run on the same list at once (timer plus a manual run): both issue and both deploy to the same device - Files can mix generations, acme.sh hooks run concurrently against one device. ssl-tls-pki (renewal-deployment) asks for a single owner or a lock. Done when: sick run takes an flock (per list or per device), a second run waits or exits with a clear message and its own exit code, sick check stays lock-free, and a test runs two at once.
+
+sick-worker: started. Design by orchestrator: flock on <state>/sick.lock, exit code 3, check/trust lock-free.
+
+sick-worker: implemented. SICK::State->lock: flock LOCK_EX|LOCK_NB on <state>/sick.lock, pid in the file; sick run exits 3 'another sick run holds the lock ...'; check, trust and run --dry-run take no lock. Tests in t/41 (lock held from test process, bin/sick too, lock released after die).
+
+Committed as 4499a46
