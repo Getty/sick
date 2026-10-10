@@ -10,9 +10,9 @@ packages below are mostly recipes, scripts and proof in containers around
 step-ca, `step` and acme.sh, plus a handbook. Perl code is written only where
 nothing existing does the job.
 
-Status as of 2026-10-10: P1, P2 (both repositories; sick-target-ciscosb 63ed4c4)
-and P3 done; the handbook has
-chapters 1, 2 and 7. Sharpened on 2026-10-10 against the skill `ssl-tls-pki`. Each package is a card on the karr board of this
+Status as of 2026-10-10: P1, P2 (both repositories; sick-target-ciscosb 63ed4c4),
+P3 and P4 done; the handbook has
+chapters 1, 2, 3 and 7. Sharpened on 2026-10-10 against the skill `ssl-tls-pki`. Each package is a card on the karr board of this
 repository (`karr list`); the card number is given in brackets.
 
 ## Inventory
