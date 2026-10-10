@@ -497,10 +497,12 @@ if [ "$ACTION" = install ]; then
 SH
   say 'Nothing was restarted. Still to do:'
   say '- restart what reads the store only when it starts: long-running services,'
-  say '  Java (where its cacerts follows the system store), anything started before;'
+  say '  anything started before, and Java from the Debian packages, whose cacerts'
+  say '  follows this store (ca-certificates-java);'
   say '- Firefox and Chrome on Linux keep a store of their own: trust-nss.sh;'
-  say '- Java with its own cacerts, Python with certifi, Node without --use-system-ca'
-  say '  and container images do not read this store: see the page.'
+  say '- Temurin and other JDKs keep their own cacerts (keytool), and Python with'
+  say '  certifi, Node without --use-system-ca and container images do not read this'
+  say '  store either: see the page.'
   exit 0
 fi
 

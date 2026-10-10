@@ -166,3 +166,6 @@ Revision history for SICK
       again; plain files of an earlier version become a generation on the
       first deploy. Mount the directory into containers, not the single
       files.
+    - trust-linux.sh: the closing note says that Java from the Debian
+      packages follows the system store, while Temurin and other JDKs keep
+      their own cacerts (keytool).
