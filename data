@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T14:48:57Z
+created: 2026-10-10T06:22:38Z
+id: 12
+priority: high
+started: 2026-10-10T06:24:28Z
+status: done
+tags:
+- lab
+- e2e
+title: 'P1 Lab: step, step-ca, acme.sh here and a Docker-only e2e run'
+updated: 2026-10-10T14:49:12Z
+---
+
+Tools on agent-lab and t/e2e without a real switch. Package, result and 'done when': docs/roadmap.md, section P1 Lab on this machine.
+
+Proof 2026-10-10 on agent-lab: t/e2e/install-tools.sh installs step 0.30.2, step-ca 0.30.2, acme.sh 3.1.6 (sha256-checked, idempotent). prove -lr t: Files=18, Tests=172, PASS, no skip (xmllint unpacked from libxml2-utils). t/e2e/run-local.sh: exit 0, ALL PASSED (32 PASS lines; 3 runs by sick-test-writer, 1 by the orchestrator), afterwards 0 containers/volumes/networks sick-e2e. docker/README.md: sick.yml and secrets must be root-owned or world-readable (cap_drop ALL).
+
+Committed: 3150ec8 (run-local, install-tools, CLAUDE.md, Changes), e6818f0 (docker/README root-owned secrets, Changes)
