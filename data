@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-10T20:36:06Z
+created: 2026-10-10T06:23:01Z
+id: 14
+priority: high
+started: 2026-10-10T19:12:17Z
+status: done
+tags:
+- trust
+title: 'P4 Clients trust the CA: scripts per platform, runtimes, container matrix'
+updated: 2026-10-10T20:36:18Z
+---
+
+Install/remove per platform and runtime from sick trust, proven in containers; the rest marked not tried. Package, result and 'done when': docs/roadmap.md, section P4 Clients trust the CA.
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: authenticated bootstrap (fingerprint by another channel, scripts refuse a mismatch); per-consumer inventory (how trust is loaded, restart, removal); negatives per consumer (other CA, wrong name, out-of-constraint name); TLS library recorded; Go and BuildKit added; prefer per-application bundles.
+
+Findings from k8 for P4: (1) see the new card on intermediates as anchors; (2) the fingerprint check on the page is circular - out-of-band verification must come first, not as a fallback; (3) no scoping: offer name constraints, per-application bundles, Android NSC, a separate Firefox profile; (4) no removal procedure per platform; (5) the .mobileconfig is unsigned and shows 'Not Verified' - say so or decide on signing; (6) recheck dated claims before copying: Firefox 120+ using system/Android CAs, chrome://certificate-manager, the Android menu path, user CAs only for apps that opt in (API 24+).
+
+P4 complete: k35 7629487+a966808, k36 b134244, k37 5319b9a + fix ddf3769, k38 handbook a4ef5e6; HQ list in chapter 3
