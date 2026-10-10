@@ -1,0 +1,42 @@
+---
+class: standard
+completed: 2026-10-10T15:51:26Z
+created: 2026-10-10T06:03:53Z
+depends_on:
+- 2
+- 3
+id: 6
+priority: high
+started: 2026-10-10T15:51:26Z
+status: done
+tags:
+- stack
+- moo
+- path-tiny
+- contract
+title: 'Convert the targets to Moo: SICK::Target, Files, Acmesh'
+updated: 2026-10-10T15:51:38Z
+---
+
+SICK::Target (358 lines) is the base class of every device type, in this repository (Files 252, Acmesh 383) and in the SICK-Target-* distributions. It is a published interface: this card changes how it is built, not what it promises.
+
+What stays, word for word (skill sick-core, "Target contract" and "presented_cert has three outcomes"):
+- new( device => $device, log => $code ), and the checks on both;
+- required_options, optional_options, validate with its messages, option, log;
+- deploy, csr, endpoint, connect_timeout, verify_timeout, presented_cert with its three outcomes and the prefix unreachable: ;
+- explicit return undef in csr and presented_cert.
+
+To do:
+- the three become Moo classes;
+- a subclass written with use parent (SICK::Target::CiscoSB today) keeps working until that repository is converted: run its suite before and after;
+- class_for is true run-time plugin loading: the class name comes from the device list. That is the one case the house rules name Module::Runtime for;
+- Files and Acmesh write through Path::Tiny. The property to keep: a key file never exists with a mode wider than 0600 and a reader never sees half a file (temporary file plus rename today). t/32-target-files.t and t/42-target-acmesh.t pin it;
+- the acme.sh command line and environment are unchanged: t/42 reads back what t/bin/fake-acme-sh recorded; docs/findings/acmesh-deploy.md says why it looks the way it does.
+
+Done when: t/30, t/32, t/33, t/42 green with skips named, the Cisco suite green, and the report says for the maintainers of SICK-Target-* what they have to change (expected: nothing).
+
+sick-target-ciscosb#3 waits on this card: the Cisco device type is converted after the base class. That board is local only (the repository has no remote).
+
+sick-worker: Target, Files, Acmesh converted (Moo; constructor checks in around BUILDARGS; class_for via Module::Runtime use_module; files via Path::Tiny tempfile filled in place, published with CORE rename). cpanfile + Dockerfile get Module::Runtime. prove -lr t 172 PASS no skips; Cisco suite PASS before and after (90-live skipped). Docker not run. Tree commit-ready, not moved.
+
+Committed as adde463
