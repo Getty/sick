@@ -85,6 +85,14 @@ subtest 'the CA appears on first use' => sub {
   is $issuer->root_pem, $root_pem, 'asking again does not make a new one';
   is( SICK::Issuer::SelfSigned->new( dir => $ca_dir )->root_pem, $root_pem, 'another object on the same dir uses the same CA' );
   isnt( SICK::Issuer::SelfSigned->new( dir => $tmp.'/other-ca' )->root_pem, $root_pem, 'another dir is another CA' );
+
+  my $blocked = $tmp.'/blocked-ca';
+  mkdir $blocked, 0700 or die $!;
+  mkdir $blocked.'/ca.key', 0700 or die $!;
+  my $ok = eval { SICK::Issuer::SelfSigned->new( dir => $blocked )->root_pem; 1 };
+  ok !$ok, 'a directory in the place of ca.key is an error';
+  like $@, qr/^cannot create the CA in '\Q$blocked\E': cannot write '\Q$blocked\E\/ca\.key': \S/, '... naming it';
+  is_deeply [ glob( $blocked.'/ca.key/{.,}*' ) ], [ $blocked.'/ca.key/.', $blocked.'/ca.key/..' ], '... and the key is not moved into it';
 };
 
 subtest 'issue' => sub {

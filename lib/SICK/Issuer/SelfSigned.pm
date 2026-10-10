@@ -247,8 +247,13 @@ sub _ensure_ca {
     );
     $self->_file_op( 'cannot protect the CA key', $new_key, chmod => 0600 );
     $self->_file_op( 'cannot set the mode of the CA certificate', $new_cert, chmod => 0644 );
-    $self->_file_op( 'cannot write \''.$self->_ca_key.'\'',  $new_key,  move => $self->_ca_key );
-    $self->_file_op( 'cannot write \''.$self->_ca_cert.'\'', $new_cert, move => $self->_ca_cert );
+    # CORE rename, not Path::Tiny's move: that one copies when renaming
+    # fails, with a mode from the umask, and moves into a directory of that
+    # name
+    rename $new_key, $self->_ca_key
+      or die 'cannot write \''.$self->_ca_key.'\': '.$!."\n";
+    rename $new_cert, $self->_ca_cert
+      or die 'cannot write \''.$self->_ca_cert.'\': '.$!."\n";
     1;
   };
   unless ($done) {

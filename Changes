@@ -81,3 +81,5 @@ Revision history for SICK
     - SICK::Target, SICK::Target::Files and SICK::Target::Acmesh are Moo
       classes; class_for loads device types with Module::Runtime (new
       prerequisite). Targets written with use parent keep working.
+    - SICK::Issuer::SelfSigned no longer moves a new CA key into a directory
+      that stands where ca.key belongs; it fails instead.
