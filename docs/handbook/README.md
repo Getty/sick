@@ -16,7 +16,7 @@ them together. This handbook is the path through all of it.
 | [3. Clients trust the CA](03-clients.md) | every machine and program you care about trusts the root – and only the root –, checked against a fingerprint from a second channel, and you can take it back |
 | 4. The first device | one device served with a certificate of your CA, renewed on a schedule (to come) |
 | 5. All devices and services | devices through SICK, services through ACME (P6, P7, to come) |
-| 6. Operations | timer, monitoring, alerts, inventory (P5, to come) |
+| [6. Operations](06-operations.md) | a schedule, a notification when a run fails, Prometheus metrics with alert rules relative to each device, an inventory of what is deployed |
 | [7. Emergencies](07-emergencies.md) | what to do when a key is lost or exposed, the CA is down or compromised, a certificate expired, a device is locked out |
 
 Conventions:

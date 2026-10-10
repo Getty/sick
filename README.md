@@ -121,11 +121,12 @@ there is nothing to clean up. `sick check`, `sick inventory`,
 `sick run --dry-run` and `sick trust` take no lock and write no record.
 
 SICK is no daemon. Renewal is `sick run` in a timer or a cron job; a run
-changes nothing when everything is current.
-
-```cron
-17 4 * * *  root  sick run; sick trust /srv/www/trust
-```
+changes nothing when everything is current. Ready-made: a systemd service
+and timer with a failure notification in [contrib/systemd/](contrib/systemd/),
+a cron line in [contrib/cron/sick](contrib/cron/sick), a Kubernetes CronJob
+in [k8s/cronjob/](k8s/cronjob/), and the notifier they use in
+[contrib/notify/](contrib/notify/). The handbook's chapter on
+[operations](docs/handbook/06-operations.md) puts them together.
 
 ## Monitoring
 
@@ -134,9 +135,12 @@ chain and of the CA in the text format of Prometheus; with `--output` into a
 file that is replaced at once (written beside it, mode `0644`, renamed), for
 the textfile collector of node_exporter:
 
-```cron
-17 4 * * *  root  sick run; sick check --format prometheus --output /var/lib/node_exporter/textfile/sick.prom
+```bash
+sick check --format prometheus --output /var/lib/prometheus/node-exporter/sick.prom
 ```
+
+(the directory of Debian's `prometheus-node-exporter` package; the systemd
+service and the cron line in `contrib/` write it after every run).
 
 ```text
 $ sick check --format prometheus switch
