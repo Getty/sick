@@ -127,6 +127,27 @@ subtest 'is_ca and signs_itself' => sub {
   }
 };
 
+subtest 'key_matches' => sub {
+  my $other = new_cert( ca => $root, dir => $tmp, name => 'other-key', cn => 'other.example.internal' );
+  ok( SICK::Bundle->new( cert => $leaf->{cert_pem}, key => $leaf->{key_pem} )->key_matches,
+    'the key of the certificate matches' );
+  ok( SICK::Bundle->from_files( cert => $deep->{cert}, chain => $inter->{cert}, key => $deep->{key} )->key_matches,
+    '... also with a chain' );
+  my $mixed = SICK::Bundle->new( cert => $leaf->{cert_pem}, key => $other->{key_pem} );
+  ok !$mixed->key_matches, 'the key of another certificate does not';
+
+  my $ok = eval { SICK::Bundle->new( cert => $leaf->{cert_pem} )->key_matches; 1 };
+  ok !$ok, 'key_matches dies for a bundle without a key';
+  like $@, qr/^key_matches: the bundle has no key/, '... saying so';
+
+  # a key block openssl cannot read: the message holds no key material
+  ( my $broken = $leaf->{key_pem} ) =~ s/(-----\n)[A-Za-z0-9+\/]{8}/${1}AAAAAAAA/;
+  $ok = eval { SICK::Bundle->new( cert => $leaf->{cert_pem}, key => $broken )->key_matches; 1 };
+  ok !$ok, 'key_matches dies for a key openssl cannot read';
+  like $@, qr/^cannot read the private key of the bundle: openssl/, '... saying so';
+  unlike $@, qr/PRIVATE KEY|AAAAAAAA/, '... without the key';
+};
+
 subtest 'is_issued_by' => sub {
   my $bundle = SICK::Bundle->new( cert => $leaf->{cert_pem} );
   ok $bundle->is_issued_by( $root->{pem} ), 'true for the CA that signed it';

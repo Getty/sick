@@ -55,7 +55,11 @@ certificate request of the device when the target hands one over
 
 =item 3. B<Deploy>
 
-The target installs it (L<SICK::Target/deploy>).
+The target installs it (L<SICK::Target/deploy>). A bundle with a key is
+checked first: when the key is not the key of the certificate
+(L<SICK::Bundle/key_matches>), the device fails with C<not deployed: the
+private key does not belong to the certificate> and the target is not
+called.
 
 =item 4. B<Check again>
 
@@ -397,6 +401,14 @@ sub _run_device {
       .' for '.join( ', ', @{ $spec->{names} } ) );
   my $bundle = eval { defined $csr ? $self->issuer->sign( $csr, $spec ) : $self->issuer->issue($spec) };
   return $failed->( 'issuing failed: '.$self->_message($@) ) unless ref $bundle;
+
+  # A certificate published beside a key that is not its own breaks the
+  # service; it is found out here, before the target is asked for anything.
+  if ( defined $bundle->key ) {
+    my $matches = eval { $bundle->key_matches };
+    return $failed->( 'not deployed: '.$self->_message($@) ) unless defined $matches;
+    return $failed->('not deployed: the private key does not belong to the certificate') unless $matches;
+  }
 
   $self->_log( $name.': deploying' );
   eval { $target->deploy($bundle); 1 }

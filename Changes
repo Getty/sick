@@ -107,3 +107,7 @@ Revision history for SICK
       the provisioner "sick" issues serverAuth-only certificates;
       t/e2e/ca-ceremony.sh proves enrollment and path negatives with
       OpenSSL and GnuTLS.
+    - A new certificate whose private key does not belong to it is no longer
+      deployed: the device fails with "not deployed: the private key does
+      not belong to the certificate" before its target is called. New
+      SICK::Bundle method key_matches.

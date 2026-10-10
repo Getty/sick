@@ -246,6 +246,28 @@ system play no part.
 
 =cut
 
+sub key_matches {
+  my ( $self ) = @_;
+  croak 'key_matches: the bundle has no key' unless defined $self->key;
+  return $self->_public_key( 'private key of the bundle', [ 'pkey', '-pubout', '-passin', 'pass:' ], $self->key )
+    eq $self->_public_key( 'certificate', [ 'x509', '-noout', '-pubkey' ], $self->cert ) ? 1 : 0;
+}
+
+=method key_matches
+
+True when the private key of the bundle is the key of its certificate:
+the public key derived from the key by C<openssl pkey> is the one in the
+certificate, both in the same encoding. Works for every kind of key. The
+key goes to C<openssl> on its standard input, never on the command line,
+and an encrypted key is not asked a passphrase for.
+
+Croaks with C<key_matches: the bundle has no key> for a bundle without
+one, and with C<< cannot read the private key of the bundle: openssl
+<command> failed (exit <N>) >> when C<openssl> cannot read it; what it
+said is left out, the key is never part of a message.
+
+=cut
+
 sub is_issued_by {
   my ( $self, $ca_pem, $intermediates_pem ) = @_;
   my @anchors = $self->_cert_blocks($ca_pem);
@@ -306,6 +328,19 @@ sub _verifies {
     env => { SSL_CERT_DIR => $tmp->path, SSL_CERT_FILE => $ca_file },
   );
   return $exit == 0 ? 1 : 0;
+}
+
+# The public key out of a certificate or a private key, written once more
+# by openssl pkey, so that both sides come out in the same encoding.
+sub _public_key {
+  my ( $self, $what, $args, $pem ) = @_;
+  my ( $out, $err, $exit ) = SICK::OpenSSL::run( $args, stdin => $pem );
+  if ( !$exit && $out =~ /-----BEGIN PUBLIC KEY-----/ ) {
+    ( my $public, $err, $exit ) = SICK::OpenSSL::run( [ 'pkey', '-pubin', '-pubout' ], stdin => $out );
+    return $public =~ s/\s+//gr if !$exit && $public =~ /-----BEGIN PUBLIC KEY-----/;
+    $args = [ 'pkey' ];
+  }
+  croak 'cannot read the '.$what.': openssl '.$args->[0].' failed (exit '.( $exit || 0 ).')';
 }
 
 sub _cert_blocks {

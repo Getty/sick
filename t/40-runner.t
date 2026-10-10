@@ -120,7 +120,11 @@ $INC{ 'SICK/Target/'.$_.'.pm' } = __FILE__ for qw( Lazy Fragile Keeper Bare Slow
     my ( $self, $spec ) = @_;
     $count{issue}++;
     Carp::croak('step failed (exit 1): the lifetime is longer than the provisioner allows') if $switch{ca_refuses};
-    return $self->SUPER::issue($spec);
+    my $bundle = $self->SUPER::issue($spec);
+    # a CA tool that wrote the key of another certificate
+    return SICK::Bundle->new( cert => $bundle->cert, chain => $bundle->chain, key => $switch{wrong_key} )
+      if $switch{wrong_key};
+    return $bundle;
   }
 
   sub sign {
@@ -566,6 +570,21 @@ subtest 'a CA whose root or intermediates are not what they say' => sub {
     'an intermediate of another CA: every device fails, none is renewed';
   like $_->{error}, qr/^ca\.intermediates '\Q$stray->{cert}\E': the certificate 'CN=Check Stray Intermediate' does not lead to ca\.root/,
     '... naming ca.intermediates, the path and the subject' for @results;
+  is_deeply leftovers(), [], 'no temporary directory is left';
+};
+
+subtest 'a bundle whose key does not belong to its certificate is not deployed' => sub {
+  my $stranger = new_cert( ca => new_ca( dir => $tmp, name => 'stranger-ca' ), dir => $tmp, name => 'stranger' );
+  local $switch{wrong_key} = $stranger->{key_pem};
+  %count = ();
+  my $runner  = runner( "devices:\n".device_yaml( 'mismatch', type => 'lazy' ) );
+  my @results = $runner->run;
+  is_deeply brief(@results), [ [ 'mismatch', 'failed', 'missing' ] ], 'the device fails';
+  is $results[0]{error}, 'not deployed: the private key does not belong to the certificate',
+    '... saying why, without the key';
+  is $count{issue}, 1, 'the certificate was issued';
+  is $count{lazy_deploy}, undef, '... and never handed to the target';
+  ok !-e $tmp.'/mismatch', 'the device is untouched';
   is_deeply leftovers(), [], 'no temporary directory is left';
 };
 
