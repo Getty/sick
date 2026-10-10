@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-10T17:37:06Z
+created: 2026-10-10T16:51:29Z
+id: 30
+priority: high
+started: 2026-10-10T17:20:00Z
+status: done
+tags:
+- ca
+- p3
+title: P3b Backup, isolated restore, provisioner password rotation
+updated: 2026-10-10T17:37:17Z
+---
+
+Backup of the CA volume, restore into an isolated fresh volume without a second live CA, restored intermediate checked, RTO/RPO written; provisioner password rotated and the old one refused; ACME account deactivation documented. Part of P3 (k13); the binding 'done when' is docs/roadmap.md, section P3.
+
+sick-worker: docker/ca-backup.sh (backup with CA stopped + manifest, restore with manifest check into empty volume), init-ca.sh --rotate-provisioner (remove+add --create: new key and password, handover, SIGHUP), t/e2e/ca-recovery.sh 51 PASS twice clean, run-local green, prove green. Observed RTO 3s (lab floor), backup downtime 1-2s. Findings: step ca provisioner update --create fails against a local ca.json in 0.30.2; password-only change keeps the key (encryptedKey is public); ACME deactivation documented, not tried (P6).
+
+Committed as 90a4489
