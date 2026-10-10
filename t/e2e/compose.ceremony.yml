@@ -1,0 +1,20 @@
+# Added by t/e2e/ca-ceremony.sh on top of docker/compose.yml,
+# docker/compose.import.yml and t/e2e/compose.local.yml.
+#
+# Under the name constraints of the ceremony (example.internal) the CA is
+# reached as ca.example.internal: "ca" and "localhost" lie outside them, and
+# no client accepts a certificate of the CA that names them. In a real
+# network that name comes from DNS; here it is an alias in the network of
+# the project.
+
+services:
+  ca:
+    networks:
+      default:
+        aliases: [ca.example.internal]
+
+  # the device sends its chain: GnuTLS and openssl verify it against the
+  # root alone
+  web:
+    environment:
+      SICK_E2E_WEB_CHAIN: "yes"

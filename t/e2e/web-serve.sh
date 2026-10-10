@@ -9,6 +9,10 @@
 # certificate - which is what the reload command of a real device does.
 # SICK's files target renames cert.pem last, after key.pem, chain.pem and
 # fullchain.pem, so cert.pem changing means the set is complete.
+#
+# s_server sends the first certificate of its -cert file and nothing else,
+# like a switch that presents its certificate alone. With
+# SICK_E2E_WEB_CHAIN=yes (t/e2e/ca-ceremony.sh) it sends chain.pem as well.
 
 set -u
 
@@ -23,7 +27,11 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=factory-default' \
 
 pid=
 start() {
-  openssl s_server -accept 443 -cert "$1" -key "$2" -www -quiet >/dev/null 2>&1 &
+  if [ -n "${3:-}" ]; then
+    openssl s_server -accept 443 -cert "$1" -key "$2" -cert_chain "$3" -www -quiet >/dev/null 2>&1 &
+  else
+    openssl s_server -accept 443 -cert "$1" -key "$2" -www -quiet >/dev/null 2>&1 &
+  fi
   pid=$!
 }
 stop() {
@@ -40,7 +48,11 @@ while :; do
     now=$(sha256sum <"$dir/cert.pem")
     if [ "$now" != "$serving" ]; then
       stop
-      start "$dir/fullchain.pem" "$dir/key.pem"
+      if [ "${SICK_E2E_WEB_CHAIN:-no}" = yes ]; then
+        start "$dir/fullchain.pem" "$dir/key.pem" "$dir/chain.pem"
+      else
+        start "$dir/fullchain.pem" "$dir/key.pem"
+      fi
       serving=$now
       log "restarted with the certificate in $dir"
     fi

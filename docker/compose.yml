@@ -12,7 +12,8 @@ name: sick
 
 services:
 
-  # The CA. The official image; init-ca.sh makes the CA at the first start.
+  # The CA. The official image; init-ca.sh makes the CA at the first start,
+  # or imports the output of ceremony.sh (compose.import.yml).
   ca:
     image: smallstep/step-ca:${STEP_VERSION:-0.30.2}
     restart: unless-stopped
@@ -33,7 +34,10 @@ services:
     ports:
       - "${SICK_CA_PORT:-9000}:9000"
     healthcheck:
-      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/home/step/certs/root_ca.crt"]
+      # the CA's TLS certificate checked against the root, under the first
+      # host name of the CA: in import mode "localhost" is not one of them,
+      # it would lie outside the name constraints of the intermediate
+      test: ["CMD-SHELL", "name=$$(jq -r '[.dnsNames[] | select(test(\"^[0-9.]+$$|:\") | not)][0]' /home/step/config/ca.json) && curl -fsS -o /dev/null --cacert /home/step/certs/root_ca.crt --resolve \"$$name:9000:127.0.0.1\" \"https://$$name:9000/health\""]
       interval: 30s
       timeout: 5s
       retries: 3

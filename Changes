@@ -100,3 +100,10 @@ Revision history for SICK
       and the reason. Messages say ca.root / ca.intermediates instead of
       "CA root" / "CA intermediates". New SICK::Bundle methods is_ca and
       signs_itself.
+    - Docker: docker/ceremony.sh makes root and name-constrained
+      intermediate offline and writes a ceremony record; init-ca.sh gains
+      an import mode (compose.import.yml) that builds the CA on that
+      hierarchy without the root key, the old behaviour is now "lab mode";
+      the provisioner "sick" issues serverAuth-only certificates;
+      t/e2e/ca-ceremony.sh proves enrollment and path negatives with
+      OpenSSL and GnuTLS.

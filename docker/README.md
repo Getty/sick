@@ -19,7 +19,7 @@ clients what they have to trust – three containers, one `docker compose up`.
 
 | Service | Image | What it does |
 |---|---|---|
-| `ca` | the official `smallstep/step-ca` | the CA. `init-ca.sh` makes it at the first start: root and intermediate certificate, a JWK provisioner `sick` that grants up to 825 days, an ACME provisioner `acme` |
+| `ca` | the official `smallstep/step-ca` | the CA. `init-ca.sh` sets it up at the first start – root and intermediate made there (lab mode) or imported from a ceremony (import mode) –, a JWK provisioner `sick` that grants up to 825 days, an ACME provisioner `acme` |
 | `sick` | built here: Debian, Perl, `SICK`, `SICK-Target-CiscoSB`, `step`, `acme.sh` with its deploy hooks, `openssl`, `ssh` | `sick run` now and then every `SICK_INTERVAL`, `sick trust` after every run |
 | `trust` | `busybox` (its `httpd`) | serves what `sick trust` wrote: `index.html`, the root (`root_ca.pem`, `root_ca.crt`), the intermediate (`intermediate_ca.pem`, `intermediate_ca.crt`), both in one file (`ca_bundle.pem`) and a profile for Apple devices with both (`root_ca.mobileconfig`) |
 
@@ -87,7 +87,8 @@ All of them are optional.
 | `SICK_INTERVAL` | `1d` | pause between two runs: `1d`, `12h`, `30m`, `90s` or seconds |
 | `SICK_RUN_OPTIONS` | `--verbose` | options of the scheduled `sick run`; set it to nothing for the table alone |
 | `SICK_CA_NAME` | `SICK Internal CA` | name of the CA. Used once, when the CA is made |
-| `SICK_CA_DNS` | | further names and addresses under which the CA is reached, comma separated – for its own TLS certificate. `ca` and `localhost` are always in. Used once |
+| `SICK_CA_DNS` | | further names and addresses under which the CA is reached, comma separated – for its own TLS certificate. Lab mode adds `ca` and `localhost`; import mode requires the list and takes it alone. Used once |
+| `SICK_CA_IMPORT` | | import mode, with `compose.import.yml`: the output directory of `ceremony.sh`. Read at the first start only |
 | `SICK_CA_MAX_LIFETIME` | `19800h` | the longest lifetime the provisioner `sick` grants (825 days, the most Apple accepts from a private CA). Hours, minutes, seconds – step-ca knows no days |
 | `SICK_CA_ALLOW_DNS` | | names the CA may issue for, comma separated: `*.example.internal`, `host.example.org` |
 | `SICK_CA_ALLOW_IP` | | addresses and networks the CA may issue for: `192.0.2.0/24`. Both empty: no restriction. One of them set: nothing but what is listed |
@@ -152,13 +153,17 @@ may go without becoming a trust anchor.
 `init-ca.sh` runs in front of step-ca at every start of the `ca` service.
 
 At the **first start** (no `config/ca.json` in the volume) it generates the
-two passwords and runs `step ca init`: root and intermediate certificate, the
-JWK provisioner `sick`, the ACME provisioner `acme`.
+provisioner password and sets the CA up in one of two modes (below): root
+and intermediate certificate, the JWK provisioner `sick`, the ACME
+provisioner `acme`.
 
 At **every start** it
 
 - sets the longest lifetime of the provisioner `sick` to
   `SICK_CA_MAX_LIFETIME` (step-ca would grant 24 hours),
+- gives that provisioner a template that issues server certificates with
+  `serverAuth` as their only extended key usage (step-ca's default adds
+  `clientAuth`),
 - sets the names the CA may issue for from `SICK_CA_ALLOW_DNS` and
   `SICK_CA_ALLOW_IP`, when at least one of them is given,
 - copies root certificate, intermediate certificate and provisioner password
@@ -169,7 +174,7 @@ everything in place changes nothing and says so:
 
 ```
 init-ca: the CA in /home/step exists: nothing to make
-init-ca: configuration unchanged: 'sick' grants up to 19800h, names not restricted
+init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted
 init-ca: root fingerprint (SHA-256): af22556f14379ec5a8db1ec01db94434c7a25282331cf01caa7e33916ffd6afc
 ```
 
@@ -180,6 +185,46 @@ CA). Taking `SICK_CA_ALLOW_*` away again does *not* lift the restriction:
 
 The container starts as root for `init-ca.sh`, which hands over the three
 files and then starts step-ca as the unprivileged user `step` of the image.
+
+### Lab mode and import mode
+
+| | lab mode | import mode |
+|---|---|---|
+| when | nothing to import: the default | `SICK_CA_IMPORT` names the output of `ceremony.sh` (`-f compose.import.yml`) |
+| root and intermediate | made by `step ca init` in the volume | made beforehand by `ceremony.sh`, offline |
+| root key | in the volume (`secrets/root_ca_key`) | never in the volume: where the operator put it |
+| name constraints | none | in the intermediate (`nameConstraints`, critical) |
+| names of the CA | `ca`, `localhost` and `SICK_CA_DNS` | `SICK_CA_DNS` alone – they have to lie inside the constraints |
+| log line | `init-ca: lab mode: …` | `init-ca: import mode: …` |
+
+Lab mode is for trying things out. For anything else, run the ceremony
+on a machine without network – the sick image has the tools – and give the
+CA its output:
+
+```bash
+docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/ceremony.sh:/ceremony.sh:ro" -v /media/offline:/work \
+  --entrypoint bash sick:local /ceremony.sh --operator 'A. Admin' \
+  --out /work/for-the-ca --root-key /work/root/root_ca_key \
+  --root-password-file /work/root/root.pw \
+  --dns example.internal --ip 192.0.2.0/24
+SICK_CA_IMPORT=/media/offline/for-the-ca SICK_CA_DNS=ca.example.internal \
+  docker compose -f compose.yml -f compose.import.yml up -d
+```
+
+`ceremony.sh --help` lists the options (key type, lifetimes – 20 years for
+the root, 5 for the intermediate by default –, names). It refuses a root key
+inside the output for the CA, warns when DNS domains come without IP ranges
+(an unconstrained name form stays open; `--exclude-all-ip` closes it), and
+writes `ceremony.txt`: operator, date, versions, fingerprints, and the
+constraints read back with `openssl x509 -text`, checked against what was
+asked for. Keep the root key and its password apart from the CA. After the
+first start the import directory is no longer read; the volume holds its
+contents.
+
+The CA's own names have to lie inside the constraints, or clients refuse its
+TLS certificate – and SICK reaches it as `https://ca.example.internal:9000`,
+not `https://ca:9000`. `t/e2e/ca-ceremony.sh` runs all of this in containers.
 
 ### Restricting the names
 
@@ -209,8 +254,12 @@ Know what this is: a *policy of the running CA*
 (`authority.policy.x509.allow` in `ca.json`). It keeps mistakes and a stolen
 provisioner password inside your names. It is not an X.509 name constraint in
 the CA certificates, so it does nothing against somebody who has the CA keys.
-Name constraints have to be in the root and intermediate certificate from the
-start; `step ca init` cannot do that, and this setup does not either.
+Name constraints have to be in the intermediate certificate from the start:
+import mode with a ceremony puts them there, lab mode cannot. With both, the
+constraints are the first line – step-ca refuses what lies outside them
+(`DNS name "outside.example.org" is not permitted by any constraint`) and
+clients refuse a certificate outside them even when it was signed with the
+stolen intermediate key – and the policy, narrower if you like, the second.
 
 ### The keys
 
@@ -218,10 +267,10 @@ The volume `ca` holds everything the CA is: both private keys (encrypted),
 the password that decrypts them, the configuration, the database of what was
 issued. Back it up, and protect the backup like the keys.
 
-step-ca only ever uses the intermediate key. The root key
-(`secrets/root_ca_key`) is needed again when the intermediate is replaced,
-in ten years or after an incident – so for anything but a lab, move it off
-the machine once the CA runs.
+step-ca only ever uses the intermediate key. The root key is needed again
+when the intermediate is replaced, in five or ten years or after an
+incident. In lab mode it lies in the volume (`secrets/root_ca_key`); import
+mode never has it there.
 
 The ACME provisioner keeps the defaults of step-ca: certificates for 24
 hours. `init-ca.sh` leaves it alone; `step ca provisioner update acme
@@ -456,7 +505,7 @@ PASS  ca.json: an ACME provisioner
 PASS  the second "up" leaves the running CA alone
 --- docker compose restart ca: init-ca.sh runs again
     init-ca: the CA in /home/step exists: nothing to make
-    init-ca: configuration unchanged: 'sick' grants up to 19800h, names not restricted
+    init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted
     init-ca: root fingerprint (SHA-256): af22556f14379ec5a8db1ec01db94434c7a25282331cf01caa7e33916ffd6afc
 PASS  init-ca.sh finds the CA
 PASS  ... and its configuration as it should be

@@ -1,0 +1,22 @@
+# Import mode: the first start of the CA builds it on the hierarchy of a
+# ceremony (ceremony.sh) instead of making its own. See README.md.
+#
+#   SICK_CA_IMPORT=/path/to/ceremony/out SICK_CA_DNS=ca.example.internal \
+#     docker compose -f docker/compose.yml -f docker/compose.import.yml up -d
+#
+# SICK_CA_IMPORT holds root_ca.crt, intermediate_ca.crt, intermediate_ca_key
+# and password - no root key. Once the CA has started, the directory is no
+# longer read: start without this file from then on and keep the directory
+# off the machine, or destroy it (the volume "ca" has its contents).
+
+services:
+  ca:
+    environment:
+      SICK_CA_IMPORT_DIR: /import
+    volumes:
+      - type: bind
+        source: ${SICK_CA_IMPORT:?SICK_CA_IMPORT names the output directory of ceremony.sh}
+        target: /import
+        read_only: true
+        bind:
+          create_host_path: false
