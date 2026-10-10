@@ -80,8 +80,11 @@ never read, comment on or close one unasked.
   on a real switch; `../sick-target-ciscosb/t/90-live.t` does so once its two
   `SICK_LIVE_CISCOSB_*` variables are set; `k8s/` and `docker/` describe a running lab.
   Edit them, never run or apply them without being told to.
-- **No Docker on this machine.** `prove` never starts a container; a change under
-  `docker/` or `k8s/` is unverified until someone runs it on a Docker host. Report it so.
+- **Docker only where the host has it.** `prove` never starts a container. A change under
+  `docker/` is verified by `t/e2e/run-local.sh` (project `sick-e2e`, ports on 127.0.0.1,
+  torn down at exit), one under `k8s/` only in a k3d cluster `sick-*` with its own
+  kubeconfig, never an existing context. Without such a run report the change as
+  unverified. On a shared Docker host touch nothing that is not `sick-*` and prune nothing.
 - **`unreachable` is not `missing`.** A device that does not answer must not be renewed.
   The runner tells the two apart by the prefix `unreachable: ` of the exception alone.
 - **A green run may have run nothing.** Most tests `skip_all` without `openssl`, half of
