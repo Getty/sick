@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-10T19:54:21Z
+created: 2026-10-10T19:11:42Z
+id: 36
+priority: high
+started: 2026-10-10T19:13:23Z
+status: done
+tags:
+- trust
+- p4
+title: 'P4b Runtime trust matrix: Java, Python, Node, Go, curl, git, Docker/BuildKit,
+  pods'
+updated: 2026-10-10T19:54:32Z
+---
+
+Container test per runtime: how it loads trust, restart needed, install/remove; positive and negatives (other CA, wrong name, out-of-constraint name); TLS library recorded. Part of P4 (k14); binding 'done when': docs/roadmap.md, section P4, and the findings note on k14.
+
+Committed as b134244
