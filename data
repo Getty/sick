@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-10T22:51:56Z
+created: 2026-10-10T20:59:50Z
+id: 42
+priority: high
+started: 2026-10-10T22:51:05Z
+status: done
+tags:
+- ops
+- p5
+title: 'P5d Handbook chapter 6: operations, with test report'
+updated: 2026-10-10T22:52:07Z
+---
+
+Chapter 6: schedule, monitoring, alert rules, inventory, logs, exit codes, lock and back-off, Files generations and rollback; test report against the committed state. Part of P5 (k15); binding 'done when': docs/roadmap.md, section P5.
+
+Committed as 950bf84
