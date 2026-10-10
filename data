@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-10T17:16:46Z
+created: 2026-10-10T15:41:08Z
+id: 21
+priority: medium
+started: 2026-10-10T16:52:32Z
+status: done
+tags:
+- pki
+- finding
+title: 'StepCA: check that ca.root is a self-signed CA certificate'
+updated: 2026-10-10T17:18:12Z
+---
+
+Finding from k5 (sick-worker, 2026-10-10). SICK::Issuer::StepCA root_pem does not check that ca.root is self-signed and a CA. Pointed at the intermediate, step still works (Go trusts any certificate in the pool as an anchor), SICK judges devices against the intermediate, and sick trust hands the intermediate to clients as their root - everything breaks at the next intermediate rotation. Done when: loading a non-self-signed or non-CA root is an error naming ca.root and the reason (SICK::Bundle::is_self_signed exists), with a test.
+
+sick-worker: started. Plan: checks in StepCA root_pem/intermediates_pem (runner already calls both inside the per-device eval), two additive SICK::Bundle methods is_ca and signs_itself; messages renamed from 'CA root'/'CA intermediates' to 'ca.root'/'ca.intermediates'.
+
+sick-worker: done, tree commit-ready (not committed). StepCA::_root checks single block, self-signed by name (issued by <issuer>), CA:TRUE, own signature (openssl verify -check_ss_sig); root_pem and every issue/sign/intermediates_pem go through it, the runner reports it per device. Additive SICK::Bundle methods is_ca, signs_itself (published interface). Messages renamed 'CA root' -> 'ca.root'. Tests t/12, t/21, t/40 (red on HEAD lib, green now); prove -lr t: 18 files, 176 tests, no skip.
+
+Committed as 1d3da4e
+
+Hash corrected: 68d9201 (earlier note named a superseded commit)
