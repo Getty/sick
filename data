@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-10-10T15:58:01Z
+created: 2026-10-10T06:03:57Z
+depends_on:
+- 5
+- 6
+id: 7
+priority: medium
+started: 2026-10-10T15:58:01Z
+status: done
+tags:
+- stack
+- moo
+title: Convert SICK::Runner to Moo
+updated: 2026-10-10T15:58:12Z
+---
+
+SICK::Runner (416 lines): check, issue, deploy, check again.
+
+Done when:
+- Moo class; config, issuer and the injected clock and timings (now, verify_timeout, verify_interval) are attributes;
+- every step of _run_device still ends in a result of that device and never in an exception of the run (skill sick-core, "The run");
+- the difference between unreachable and missing is untouched;
+- t/40-runner.t green.
+
+sick-worker: Runner converted (Moo; constructor checks in around BUILDARGS with the old messages; config, issuer, now, verify_timeout, verify_interval as attributes; root cache as lazy attribute). prove -lr t 172 PASS, no skips; Cisco suite PASS. Tree commit-ready, not moved.
+
+Committed as a5f78cd
