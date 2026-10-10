@@ -1,12 +1,13 @@
 package SICK::Runner;
 # ABSTRACT: Check, issue, deploy and check again - device by device
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
 use SICK::Decision;
 use SICK::Target;
 use Time::HiRes ();
+use Types::Standard qw( CodeRef HasMethods Maybe Num Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -73,8 +74,11 @@ over.
 
 =cut
 
-sub new {
-  my ( $class, %arg ) = @_;
+# The checks and messages of the constructor come first; the types are the
+# second line.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   croak 'SICK::Runner->new needs a config'
     unless ref $arg{config} && eval { $arg{config}->can('devices') && $arg{config}->can('device') };
   croak 'SICK::Runner->new needs an issuer'
@@ -87,15 +91,9 @@ sub new {
     croak 'SICK::Runner->new: '.$seconds.' must be a number of seconds'
       if defined $arg{$seconds} && $arg{$seconds} !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
   }
-  return bless {
-    config          => $arg{config},
-    issuer          => $arg{issuer},
-    now             => $arg{now} || sub { time },
-    log             => $arg{log},
-    verify_timeout  => $arg{verify_timeout},
-    verify_interval => defined $arg{verify_interval} ? $arg{verify_interval} : 2
-  }, $class;
-}
+  delete @arg{ grep { !defined $arg{$_} } qw( now log verify_timeout verify_interval ) };
+  return \%arg;
+};
 
 =method new
 
@@ -117,18 +115,47 @@ does not present the new certificate yet. Both in seconds.
 
 =cut
 
-sub config { $_[0]->{config} }
-sub issuer { $_[0]->{issuer} }
+has config => ( is => 'ro', isa => HasMethods [qw( devices device )], required => 1 );
+has issuer => ( is => 'ro', isa => HasMethods [qw( issue root_pem )], required => 1 );
 
-=method config
+=attr config
 
 The L<SICK::Config>.
 
-=method issuer
+=attr issuer
 
 The L<SICK::Issuer>.
 
 =cut
+
+has now => ( is => 'ro', isa => CodeRef, builder => 1 );
+
+sub _build_now { sub { time } }
+
+=attr now
+
+The clock of the decision: a code reference that returns the time as an
+epoch. Defaults to C<time>.
+
+=cut
+
+has verify_timeout  => ( is => 'ro', isa => Num, predicate => 1 );
+has verify_interval => ( is => 'ro', isa => Num, default   => 2 );
+
+=attr verify_timeout
+
+When given, it replaces the L<SICK::Target/verify_timeout> of every target;
+L</has_verify_timeout> says whether it was.
+
+=attr verify_interval
+
+The pause between two looks at a device that does not present the new
+certificate yet. C<2>.
+
+=cut
+
+# The callback of new( log => ... ); the method _log calls it.
+has _logger => ( is => 'ro', isa => CodeRef, init_arg => 'log', predicate => 1 );
 
 sub check {
   my ( $self, @names ) = @_;
@@ -137,7 +164,7 @@ sub check {
   for my $device (@devices) {
     my ( $target, $presented, $decision ) = eval { $self->_look($device) };
     unless ($decision) {
-      my $error = _message($@);
+      my $error = $self->_message($@);
       my $unreachable = $error =~ s/\Aunreachable: //;
       push @states, {
         device    => $device->name,
@@ -262,13 +289,13 @@ Croaks with C<< unknown device '<name>' >> before anything is done.
 
 sub _log {
   my ( $self, $message ) = @_;
-  $self->{log}->($message) if $self->{log};
+  $self->_logger->($message) if $self->_has_logger;
   return;
 }
 
 # What died, as one message without the place in the code.
 sub _message {
-  my ( $error ) = @_;
+  my ( $self, $error ) = @_;
   $error = defined $error ? q{}.$error : q{};
   $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
   $error =~ s/\s+\z//;
@@ -287,13 +314,12 @@ sub _devices {
   return @devices;
 }
 
-# The root is asked for once per runner; a failure is not kept, so that it
-# is reported for every device and not only for the first one.
-sub _root_pem {
-  my ( $self ) = @_;
-  $self->{root_pem} = $self->issuer->root_pem unless defined $self->{root_pem};
-  return $self->{root_pem};
-}
+# The root is asked for once per runner; a failure is not kept (a lazy
+# builder that dies sets nothing), so that it is reported for every device
+# and not only for the first one.
+has _root_pem => ( is => 'lazy', isa => Maybe [Str], init_arg => undef );
+
+sub _build__root_pem { $_[0]->issuer->root_pem }
 
 # Asked for with every look: an issuer may answer undef, and a file that
 # cannot be read is reported for every device.
@@ -324,7 +350,7 @@ sub _look {
     presented         => $presented,
     root_pem          => $root_pem,
     intermediates_pem => $intermediates,
-    now               => $self->{now}->(),
+    now               => $self->now->(),
   );
   return ( $target, $presented, $decision );
 }
@@ -341,7 +367,7 @@ sub _run_device {
 
   my ( $target, $presented, $decision ) = eval { $self->_look($device) };
   unless ($decision) {
-    my $error = _message($@);
+    my $error = $self->_message($@);
     $result{reason} = $error =~ /\Aunreachable: / ? 'unreachable' : 'error';
     return $failed->($error);
   }
@@ -364,17 +390,17 @@ sub _run_device {
   my $spec = $device->spec;
   my $csr;
   eval { $csr = $target->csr($spec); 1 }
-    or return $failed->( 'certificate request failed: '._message($@) );
+    or return $failed->( 'certificate request failed: '.$self->_message($@) );
 
   $self->_log( $name.': '
       .( defined $csr ? 'having the request of the device signed' : 'issuing a certificate' )
       .' for '.join( ', ', @{ $spec->{names} } ) );
   my $bundle = eval { defined $csr ? $self->issuer->sign( $csr, $spec ) : $self->issuer->issue($spec) };
-  return $failed->( 'issuing failed: '._message($@) ) unless ref $bundle;
+  return $failed->( 'issuing failed: '.$self->_message($@) ) unless ref $bundle;
 
   $self->_log( $name.': deploying' );
   eval { $target->deploy($bundle); 1 }
-    or return $failed->( 'deploy failed: '._message($@) );
+    or return $failed->( 'deploy failed: '.$self->_message($@) );
 
   my $problem = $self->_verify( $target, $bundle );
   return $failed->( 'verification failed: '.$problem ) if defined $problem;
@@ -389,13 +415,13 @@ sub _run_device {
 sub _verify {
   my ( $self, $target, $bundle ) = @_;
   my $issued   = $bundle->fingerprint_sha256;
-  my $timeout  = defined $self->{verify_timeout} ? $self->{verify_timeout} : $target->verify_timeout;
+  my $timeout  = $self->has_verify_timeout ? $self->verify_timeout : $target->verify_timeout;
   my $deadline = Time::HiRes::time() + $timeout;
 
   while (1) {
     my ( $presented, $problem );
     if ( !eval { $presented = $target->presented_cert; 1 } ) {
-      $problem = _message($@);
+      $problem = $self->_message($@);
     }
     elsif ( !defined $presented ) {
       $problem = 'the device presents no certificate';
@@ -408,7 +434,7 @@ sub _verify {
 
     my $left = $deadline - Time::HiRes::time();
     return $problem if $left <= 0;
-    my $pause = $self->{verify_interval} > 0.05 ? $self->{verify_interval} : 0.05;
+    my $pause = $self->verify_interval > 0.05 ? $self->verify_interval : 0.05;
     Time::HiRes::sleep( $left < $pause ? $left : $pause );
   }
 }

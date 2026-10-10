@@ -83,3 +83,5 @@ Revision history for SICK
       prerequisite). Targets written with use parent keep working.
     - SICK::Issuer::SelfSigned no longer moves a new CA key into a directory
       that stands where ca.key belongs; it fails instead.
+    - SICK::Runner is a Moo class; now, verify_timeout and verify_interval
+      can be read back as attributes.
