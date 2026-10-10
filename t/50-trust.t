@@ -1205,7 +1205,13 @@ subtest 'the page: the fingerprint from another channel first, the scripts, remo
   ok $section{runtimes}, 'a section for programs with a store of their own';
   ( my $runtimes = $section{runtimes} ) =~ s/\s+/ /g;
   like $runtimes, qr/\Q$_\E/, '... '.$_ for qw( keytool certifi SSL_CERT_FILE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS --use-system-ca Go curl http.sslCAInfo /etc/docker/certs.d Dockerfile Kubernetes );
-  unlike $runtimes, qr/verified/i, '... none marked verified yet';
+  like $runtimes, qr/does not make every program trust the root/, '... saying first that the system store is not enough';
+  my @lines = $runtimes =~ /<li>(.*?)<\/li>/g;
+  is scalar( grep { !/<em>(?:Tested in containers|Not tried)\.?<\/em>/ } @lines ), 0, '... every line marked tested in containers or not tried';
+  like $_, qr/Not tried/, '... Docker certs.d not tried' for grep { /certs\.d/ } @lines;
+  like $runtimes, qr/docs\/findings\/trust-runtimes\.md/, '... pointing to the findings';
+  like $runtimes, qr/requests<\/code> uses only <code>certifi<\/code>/, '... requests: certifi only';
+  like $runtimes, qr/subPath<\/code> it never follows/, '... a subPath mount never follows';
   like $text, qr/2026-10-10/, 'the date the dated claims were checked';
 
   unlike $page, qr/[ \t]\n|<!--|\n\n\n/, 'no trailing blanks, no placeholder, no hole';

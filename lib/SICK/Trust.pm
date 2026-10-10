@@ -112,7 +112,8 @@ remove it again; for Android that apps targeting API level 24 or newer use
 the CA list only when they opt in (Network Security Configuration), for iOS
 and macOS that the unsigned profile shows as I<Not Verified>, and a short
 section on programs with a store of their own (Java, Python, Node, Go, curl,
-git, Docker, container images, Kubernetes). What it says about Firefox 120,
+git, Docker, container images, Kubernetes), each line marked as tested in containers
+(F<docs/findings/trust-runtimes.md>) or not tried. What it says about Firefox 120,
 C<chrome://certificate-manager> (Chrome 134), Android's Network Security
 Configuration, Node's C<--use-system-ca> and C<NODE_EXTRA_CA_CERTS>, the
 C<security> commands of macOS and C<Import-Certificate> was checked against
@@ -1005,8 +1006,8 @@ sudo update-ca-trust</pre>
 <!--LINUXROOTS-->
 <p>Check the fingerprint of what you downloaded before you install it:</p>
 <pre>openssl x509 -in root_ca.pem -noout -fingerprint -sha256$t{check_more}</pre>
-<p class="soft">That covers <code>curl</code>, <code>git</code>, <code>wget</code> and most programs. Browsers keep
-their own lists on Linux, see below.</p>
+<p class="soft">That covers <code>curl</code>, <code>git</code>, Python&rsquo;s <code>ssl</code> and Go, but not Java,
+Node or <code>requests</code>: see <a href="#runtimes">below</a>. Browsers keep their own lists on Linux.</p>
 <!--LINUX-->
 <h3>Remove</h3>
 <pre>sudo sh trust-linux.sh remove</pre>
@@ -1054,34 +1055,40 @@ instructions for the platform above and restart the browser.$t{from_system}</p>
 <code>sh trust-nss.sh remove ~/.pki/nssdb</code>, or delete it in the certificate manager. Restart the browser.</p>
 
 <h2 id="runtimes">Programs with a store of their own</h2>
-<p>Many programs do not read the system store, and a system store makes every program on the machine trust the root.
-Where one program needs it, give that program the file instead. Each of them reads its certificates when it starts:
-restart it after a change.</p>
+<p><strong>The system store does not make every program trust the root.</strong> Java, Node and Python&rsquo;s
+<code>requests</code> ignore it; programs that do read it keep what they loaded until they restart. Where one program
+needs the root, give that program the file instead of the whole machine. After installing or removing: restart it.</p>
 <ul>
-  <li><strong>Java</strong> has its own <code>cacerts</code>: <code>keytool -importcert -cacerts -alias internal-root-ca
-      -file root_ca.pem</code>, removed with <code>keytool -delete -cacerts -alias internal-root-ca</code>. The JDK
-      packages of Debian and Fedora build theirs from the system store.</li>
-  <li><strong>Python</strong>: <code>requests</code> and many others use <code>certifi</code>, not the system store.
-      <code>REQUESTS_CA_BUNDLE</code> (requests) and <code>SSL_CERT_FILE</code> (the <code>ssl</code> module) point
-      them at a file, which then replaces their list: give them one with everything they need.</li>
-  <li><strong>Node</strong>: <code>NODE_EXTRA_CA_CERTS=/path/to/$t{one_file}</code> adds to its own list, read once at
-      start; <code>node --use-system-ca</code> (Node 23.8, on Linux since 23.9) or <code>NODE_USE_SYSTEM_CA=1</code>
-      (22.19, 24.6) uses the system store (checked 2026-10-10).</li>
-  <li><strong>Go</strong> programs read the system store on Linux, or <code>SSL_CERT_FILE</code> and
-      <code>SSL_CERT_DIR</code>; one built into an empty image has none.</li>
-  <li><strong>curl</strong> uses the system store; for one call <code>curl --cacert $t{one_file}</code>.</li>
-  <li><strong>git</strong>: <code>git config --global http.sslCAInfo /path/to/$t{one_file}</code>, or
-      <code>http.&lt;url&gt;.sslCAInfo</code> for one server; the file replaces the list of git.</li>
-  <li><strong>Docker</strong> pulling from a registry with a certificate of this authority: the root as
-      <code>/etc/docker/certs.d/&lt;registry&gt;:&lt;port&gt;/ca.crt</code> on every host that pulls.</li>
+  <li><strong>curl</strong>: the system store, read by every command; for one call <code>curl --cacert $t{one_file}</code>.
+      <em>Tested in containers.</em></li>
+  <li><strong>git</strong> (built on GnuTLS on Debian): the system store; <code>git config --global http.sslCAInfo
+      /path/to/$t{one_file}</code> replaces it for git. <em>Tested in containers.</em></li>
+  <li><strong>Python</strong>: <code>ssl</code> and <code>urllib</code> use the system store or <code>SSL_CERT_FILE</code>.
+      <code>requests</code> uses only <code>certifi</code> and ignores both: <code>REQUESTS_CA_BUNDLE=/path/to/$t{one_file}</code>,
+      or <code>truststore.inject_into_ssl()</code> for the system store. <em>Tested in containers.</em></li>
+  <li><strong>Java</strong> (Temurin): its own <code>cacerts</code>, not the system store:
+      <code>keytool -importcert -cacerts -alias internal-root-ca -file root_ca.pem</code> (removed with
+      <code>keytool -delete -cacerts -alias internal-root-ca</code>), or <code>-Djavax.net.ssl.trustStore</code>.
+      Restart the JVM. <em>Tested in containers.</em></li>
+  <li><strong>Node</strong>: its bundled list. <code>NODE_EXTRA_CA_CERTS=/path/to/$t{one_file}</code>, read at start, or
+      <code>node --use-system-ca</code> for the system store. Restart the process. <em>Tested in containers.</em></li>
+  <li><strong>Go</strong>: the system store or <code>SSL_CERT_FILE</code>, loaded once per process. Restart it.
+      <em>Tested in containers.</em></li>
   <li><strong>Container images</strong> do not see the store of the host. In the Dockerfile:
       <code>COPY root_ca.pem /usr/local/share/ca-certificates/internal-root-ca.crt</code>, then
-      <code>RUN update-ca-certificates</code> (Debian, Ubuntu, Alpine). That is baked in: removing it means building
-      the image again.</li>
-  <li><strong>Kubernetes pods</strong>: the root from a ConfigMap (or a trust-manager Bundle) mounted into the pod, and
-      the program pointed at it as above; restart the pods after a change.</li>
+      <code>RUN update-ca-certificates</code>. It is baked in: removing it means rebuilding and redeploying.
+      <em>Tested in containers</em> (Debian base).</li>
+  <li><strong>Kubernetes pods</strong>: the root from a ConfigMap mounted as a directory, the program pointed at it
+      (<code>SSL_CERT_FILE</code>, <code>--cacert</code>); the file follows a change of the ConfigMap after about a
+      minute and a half. Mounted with <code>subPath</code> it never follows: re-create the pod.
+      <em>Tested in containers.</em></li>
+  <li><strong>Docker</strong> pulling from a registry with a certificate of this authority: the root as
+      <code>/etc/docker/certs.d/&lt;registry&gt;:&lt;port&gt;/ca.crt</code> on every host that pulls. BuildKit and
+      trust-manager have their own ways. <em>Not tried.</em></li>
 </ul>
-<p class="soft">Not tried from this page yet. The handbook has the full table.</p>
+<p class="soft">&ldquo;Tested in containers&rdquo;: Debian and Ubuntu images on 2026-10-10, refusing a wrong name, another CA
+and a name outside a name constraint as well; see <code>docs/findings/trust-runtimes.md</code> in the
+SICK repository. The handbook has the full table.</p>
 </main>
 </body>
 </html>

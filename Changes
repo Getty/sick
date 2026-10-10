@@ -141,3 +141,7 @@ Revision history for SICK
       puts that out-of-band check first and adds removal per platform,
       Android's Network Security Configuration limits, the unsigned-profile
       warning and programs with their own trust store.
+    - The trust page's section on programs with their own store follows the
+      container matrix: requests ignores the system store, Temurin Java and
+      Node need their own setup, and loaded roots stay until a restart; each
+      line is marked tested in containers or not tried.
