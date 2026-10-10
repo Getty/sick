@@ -1,0 +1,28 @@
+---
+class: standard
+completed: 2026-10-10T22:02:30Z
+created: 2026-10-10T20:59:11Z
+id: 39
+priority: high
+started: 2026-10-10T21:32:47Z
+status: done
+tags:
+- ops
+- p5
+title: 'P5a Run state and inventory: what was issued, deployed and verified per device'
+updated: 2026-10-10T22:02:42Z
+---
+
+A state directory with one record per device (last check, last issue: serial, fingerprint, names, not_after; last deploy/verify result, consecutive failures, back-off), written atomically, never a key; sick inventory reads it together with a live look. Part of P5 (k15); binding 'done when': docs/roadmap.md, section P5.
+
+sick-worker: implementing the state part (SICK::State, records per device) together with k26/k27; inventory not in scope.
+
+sick-worker: state part done with k26/k27: SICK::State, records <state>/devices/<name>.json, written by sick run only (check and dry run write nothing). Inventory/format still open.
+
+State part committed as 4499a46
+
+sick-worker: started the inventory part: sick inventory [--format] [--live] from the records
+
+sick-worker: inventory done with k40: sick inventory [--format table|json] [--live] [device...], from records only by default (no network, exit 0), --live adds LIVE column (yes/no/?/-) and check's exit code. 'owner' (roadmap) is not in the device list; not added.
+
+Committed as 4629ccf
