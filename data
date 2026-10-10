@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-10T20:35:33Z
+created: 2026-10-10T19:12:05Z
+id: 38
+priority: high
+started: 2026-10-10T20:34:37Z
+status: done
+tags:
+- trust
+- p4
+title: 'P4d Handbook chapter 3: clients trust the CA, consumer inventory, list to
+  try at HQ'
+updated: 2026-10-10T20:35:44Z
+---
+
+Chapter 3 with the per-consumer table (how trust is loaded, restart, removal), platform steps, Android and Apple limits, the list of steps to try on real devices at HQ (Windows, macOS, iOS, Android, signed profile), and the test report against the committed state. Part of P4 (k14); binding 'done when': docs/roadmap.md, section P4, and the findings note on k14.
+
+Committed as a4ef5e6
