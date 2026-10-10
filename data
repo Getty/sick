@@ -1,0 +1,15 @@
+---
+class: standard
+created: 2026-10-10T18:41:10Z
+id: 34
+priority: low
+status: backlog
+tags:
+- trust
+- ca
+- finding
+title: 'Root replacement: publish the other hierarchy''s intermediate during the overlap'
+updated: 2026-10-10T18:41:10Z
+---
+
+Finding from k31 (2026-10-10). ca.intermediates must lead to ca.root, so during a root replacement the trust page carries only the current hierarchy's intermediate. A device that presents its certificate alone (one-slot switch) and is still under the other root is refused by clients that followed the page (t/e2e/ca-rollover.sh RECORD lines). Devices that send their chain are fine, and phase B re-issues every device at once, so the gap only hits pilots in phase A and devices unreachable during phase B. Decision 2026-10-10 (orchestrator): document, not fixed now. Fix if needed: ca.additional_intermediates (lead to ca.root or an additional root), published on page, bundle and profile.
