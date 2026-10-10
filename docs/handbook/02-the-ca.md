@@ -344,6 +344,14 @@ everybody can search.
 
 ## Test report
 
+All e2e scripts were run against the committed state `8be6ed2` on
+2026-10-10, after the changes of this chapter: `run-local.sh` 32 PASS,
+`ca-ceremony.sh` 81 PASS, `ca-recovery.sh` 51 PASS, `ca-rollover.sh` 125
+PASS and 6 RECORD, `trust-anchors.sh` done (its 8 FAIL lines are the
+expected findings of case 5c2, see `docs/findings/trust-anchors.md`); no
+resource labelled `sick=1` left afterwards. The rows below are the
+development runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/e2e/ca-ceremony.sh`, run twice | step / step-ca 0.30.2, OpenSSL 3.5, GnuTLS 3.8 (Debian 13) | ceremony record matches the certificates; CA starts in import mode without the root key in its volume; SICK issues for a device in scope, the device presents it; out-of-scope DNS name and IP refused by constraints and by policy, no certificate left; CSR with `CA:true` yields a plain leaf; lifetime above the maximum refused; out-of-scope leaves signed directly with the intermediate key refused by OpenSSL and GnuTLS, in-scope leaf accepted by both | 81 PASS, 0 FAIL, both runs; errors as quoted above | NSS and Go as path validators; RSA hierarchy; the YubiKey/HSM variant; "no certificate left" rests on the CA log and the absence of output, the database was not inspected |
