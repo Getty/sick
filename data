@@ -1,0 +1,37 @@
+---
+class: standard
+completed: 2026-10-10T15:07:42Z
+created: 2026-10-10T06:03:31Z
+id: 1
+priority: high
+started: 2026-10-10T14:57:22Z
+status: done
+tags:
+- stack
+- moo
+- pilot
+title: Convert SICK::Device to Moo and retire the core-only claim
+updated: 2026-10-10T15:07:54Z
+---
+
+Pilot of the stack conversion (CLAUDE.md, first rule; background in .claude/rules/sick-rules.md, hazards). The distribution was built on "core Perl plus YAML::PP, plain bless", a rule the maintainer never gave. The target is the house stack: Moo, Path::Tiny, JSON::MaybeXS. This card converts the smallest class and sets the pattern the following cards copy.
+
+SICK::Device (154 lines): plain bless, read-only accessors, spec, path.
+
+Done when:
+- SICK::Device is a Moo class per skill getty-perl-moo: ro attributes, no hand-written new.
+- Behaviour is unchanged: names still returns a copy, spec and path as before, the same constructor arguments, the same croak messages (t/13-config.t pins them). A message that has to change is named in the report.
+- cpanfile names Moo and whatever else is loaded now.
+- The claim "core Perl and YAML::PP" is rewritten to what is true after this card: README.md (the intro, and the paragraph on device types that need "more than core Perl"), lib/SICK.pm (POD and its dependency list), the bullet in Changes.
+- docker/Dockerfile: check how the image gets its Perl dependencies. If it lists modules by hand, add the new ones. Not runnable on this machine: report it as unverified.
+- prove -lr t green; every file that ended in skip_all is named.
+
+Not in this card: SICK::Command, SICK::OpenSSL, SICK::Names, SICK::Duration and SICK::Decision are function modules without file access. They stay as they are.
+
+Device is Moo (ro attributes, BUILDARGS keeps the croak messages, names a copy via _names); cpanfile Moo + namespace::autoclean 0.16; Dockerfile installs libmoo-perl, libnamespace-autoclean-perl; dependency claim rewritten in README, SICK.pm, Changes. prove -lr t, Cisco suite, dzil test green; t/e2e/run-local.sh ALL PASSED. Tree commit-ready, uncommitted.
+
+Committed: 9629ecc
+
+Follow-up: Types::Standard isa on all Device attributes (BUILDARGS checks stay first, messages unchanged); cpanfile Type::Tiny (unpinned, no skill names a version); Dockerfile libtype-tiny-perl; README/SICK.pm/Changes name namespace::autoclean and Type::Tiny. prove -lr t and Cisco suite green; e2e not run this time.
+
+Committed: 21ff2bb (Types::Standard on SICK::Device)
