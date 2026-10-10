@@ -50,11 +50,12 @@ ca:
   dir: /var/lib/sick/test-ca
 ```
 
-## The three commands
+## The commands
 
 ```bash
 sick check                      # what does every device present? changes nothing
 sick run                        # renew what is due
+sick inventory                  # what was issued, deployed and last seen, from the records
 sick trust /srv/www/trust       # root certificate and instructions for clients
 ```
 
@@ -72,16 +73,25 @@ router   failed     unreachable  unreachable: router.example.internal:443: Conne
 grafana  renewed    missing
 ```
 
-- **`sick check [device ...]`** – one line per device: `ok`, `missing`,
+- **`sick check [--format table|json|prometheus] [--output <file>] [device ...]`**
+  – one line per device: `ok`, `missing`,
   `foreign-ca` (not from your CA), `names` (not exactly the names of the list),
   `expiring` (less than `renew_before` left), or `unreachable` – which is not
-  the same as having no certificate.
+  the same as having no certificate. `--format json` and `--format prometheus`
+  say the same for machines, together with the records of the runs and the
+  state of the CA ([Monitoring](#monitoring)); `--output` writes to a file,
+  replaced at once.
 - **`sick run [--force] [--dry-run] [--verbose] [device ...]`** – check, issue,
   deploy, check again. A device that fails does not stop the others.
   `--dry-run` only says what would be renewed, `--force` renews also what is
   fine and ignores the back-off, `--verbose` reports each step on standard
   error. A device whose last attempts failed is `deferred` until its back-off
   is over ([below](#how-it-works)).
+- **`sick inventory [--format table|json] [--live] [device ...]`** – per
+  device the certificate issued last (names, issuer, serial, fingerprint,
+  until when), when it was deployed and when a run last saw the device
+  present it. From the records alone, without asking anybody; `--live` looks
+  at the devices as well and shows whether each presents that certificate.
 - **`sick trust <directory>`** – writes `root_ca.pem`, `root_ca.crt` (DER),
   `root_ca.mobileconfig` (a profile for iPhone, iPad and Mac), install and
   remove scripts (`trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`,
@@ -99,7 +109,7 @@ The list is `--config <file>`, else `$SICK_CONFIG`, else `/etc/sick/sick.yml`.
 | Exit code | |
 |---|---|
 | `0` | nothing failed |
-| `1` | at least one device failed, was deferred, or could not be checked |
+| `1` | at least one device failed, was deferred, or could not be checked (`check`, `inventory --live`); `--output` could not be written |
 | `2` | the command line or the device list is wrong |
 | `3` | `sick run` only: another `sick run` holds the lock of the state directory; nothing was done |
 
@@ -107,8 +117,8 @@ One `sick run` at a time: a run takes an exclusive lock on
 `<state>/sick.lock` and a second one ends at once with
 `another sick run holds the lock '/var/lib/sick/sick.lock' (pid 4242)` and
 exit code 3. The lock goes with the process, also when it dies or is killed;
-there is nothing to clean up. `sick check`, `sick run --dry-run` and
-`sick trust` take no lock.
+there is nothing to clean up. `sick check`, `sick inventory`,
+`sick run --dry-run` and `sick trust` take no lock and write no record.
 
 SICK is no daemon. Renewal is `sick run` in a timer or a cron job; a run
 changes nothing when everything is current.
@@ -116,6 +126,122 @@ changes nothing when everything is current.
 ```cron
 17 4 * * *  root  sick run; sick trust /srv/www/trust
 ```
+
+## Monitoring
+
+`sick check --format prometheus` writes the state of every device, of its
+chain and of the CA in the text format of Prometheus; with `--output` into a
+file that is replaced at once (written beside it, mode `0644`, renamed), for
+the textfile collector of node_exporter:
+
+```cron
+17 4 * * *  root  sick run; sick check --format prometheus --output /var/lib/node_exporter/textfile/sick.prom
+```
+
+```text
+$ sick check --format prometheus switch
+# HELP sick_check_timestamp_seconds When sick check looked, as epoch seconds.
+# TYPE sick_check_timestamp_seconds gauge
+sick_check_timestamp_seconds 1791668818
+# HELP sick_ca_up Whether the CA answered its health check (step ca health); absent for a CA that cannot be asked.
+# TYPE sick_ca_up gauge
+sick_ca_up 1
+# HELP sick_ca_certificate_not_after_seconds End of validity of a certificate of the CA, as epoch seconds.
+# TYPE sick_ca_certificate_not_after_seconds gauge
+sick_ca_certificate_not_after_seconds{role="intermediate",subject="CN=Example Intermediate CA"} 1808948817
+sick_ca_certificate_not_after_seconds{role="root",subject="CN=Example Root CA"} 2107028817
+# HELP sick_device_info A device of the list, its type and the status of its certificate.
+# TYPE sick_device_info gauge
+sick_device_info{device="switch",type="files",status="ok"} 1
+...
+sick_certificate_remaining_seconds{device="switch"} 7775999
+sick_device_renew_before_seconds{device="switch"} 2592000
+sick_chain_not_after_seconds{device="switch"} 1808948817
+sick_device_matches_last_issue{device="switch"} 1
+sick_device_consecutive_failures{device="switch"} 0
+sick_device_last_success_timestamp_seconds{device="switch"} 1791665217
+```
+
+| Metric | |
+|---|---|
+| `sick_check_timestamp_seconds` | when the check ran |
+| `sick_ca_up` | `step ca health` answered `ok` (1) or not (0); absent for `selfsigned` |
+| `sick_ca_certificate_not_after_seconds{role,subject}` | end of the root and of each intermediate |
+| `sick_device_info{device,type,status}` | `1`; `status` is that of `sick check` |
+| `sick_device_reachable{device}` | `0` for `unreachable`; absent for `error` |
+| `sick_device_renew_due{device}` | `sick run` would renew now |
+| `sick_certificate_not_after_seconds`, `_remaining_seconds`, `_lifetime_seconds` | of the certificate the device presents; absent without one |
+| `sick_device_renew_before_seconds{device}` | `renew_before` of the device |
+| `sick_chain_not_after_seconds{device}` | the earliest end along the path to the root: intermediate or root |
+| `sick_device_matches_last_issue{device}` | the device presents the certificate issued last; only with a record of an issue |
+| `sick_device_consecutive_failures{device}` | failed attempts to renew in a row |
+| `sick_device_last_success_timestamp_seconds{device}` | the last run that ended `unchanged` or `renewed`; only when known |
+
+`sick check --format json` holds the same and a bit more – the serial and
+issuer of the live certificate, the last issue as on record, the back-off –
+with times in ISO 8601 UTC and as epoch seconds:
+
+```json
+{
+   "ca" : {
+      "detail" : null,
+      "intermediates" : [ { "not_after" : "2027-04-28T21:46:57Z", "not_after_epoch" : 1808948817, "subject" : "CN=Example Intermediate CA" } ],
+      "reachable" : true,
+      "root" : { "fingerprint_sha256" : "adfea3f6...", "not_after" : "2036-10-07T21:46:57Z", "not_after_epoch" : 2107028817, "subject" : "CN=Example Root CA" },
+      "type" : "step-ca"
+   },
+   "devices" : [
+      {
+         "chain_not_after" : "2027-04-28T21:46:57Z", "chain_not_after_epoch" : 1808948817,
+         "consecutive_failures" : 0,
+         "detail" : "valid until 2027-01-08 21:46:57 UTC, 90 days left",
+         "device" : "switch", "host" : null, "port" : 443, "type" : "files",
+         "last_issue" : { "fingerprint_sha256" : "c914b5c9...", "issuer" : "CN=Example Intermediate CA",
+                          "names" : [ "switch.example.internal" ], "not_after" : "2027-01-08T21:46:57Z",
+                          "serial" : "03EA", "time" : "2026-10-09T21:46:57Z" },
+         "last_success" : "2026-10-10T20:46:57Z", "last_success_epoch" : 1791665217,
+         "live" : { "fingerprint_sha256" : "c914b5c9...", "issuer" : "CN=Example Intermediate CA",
+                    "lifetime_seconds" : 7776000, "not_after" : "2027-01-08T21:46:57Z", "not_after_epoch" : 1799444817,
+                    "not_before" : "2026-10-10T21:46:57Z", "not_before_epoch" : 1791668817,
+                    "remaining_seconds" : 7776000, "serial" : "03EA" },
+         "matches_last_issue" : true,
+         "names" : [ "switch.example.internal" ],
+         "next_attempt" : null, "next_attempt_epoch" : null,
+         "renew" : false, "renew_before_seconds" : 2592000,
+         "state_error" : null, "status" : "ok"
+      }
+   ],
+   "generated_at" : "2026-10-10T21:46:57Z",
+   "generated_at_epoch" : 1791668817
+}
+```
+
+(shortened: the real output has one key per line.) The table stays what it
+was, and only the two other formats ask the CA. `sick check` reads the
+records and writes none.
+
+`contrib/prometheus/sick-alerts.yml` has alert rules whose thresholds follow
+each device's own `renew_before` instead of a fixed number of days – the
+certificate is late when half of `renew_before` is gone, critical at a
+quarter – plus a device that does not present its last issue, does not
+answer, keeps failing, a CA that does not answer, an intermediate or root
+that ends within one or two years, and metrics that are older than two
+days. `contrib/prometheus/sick-alerts.test.yml` tests them
+(`promtool test rules`).
+
+`sick inventory` is the list of what is out there, from the records alone:
+
+```text
+$ sick inventory --live
+DEVICE   STATUS  LIVE  SERIAL  FINGERPRINT       UNTIL             DEPLOYED          VERIFIED          ISSUER                      NAMES
+switch   ok      yes   03EA    c914b5c9d64480bd  2027-01-08 21:46  2026-10-09 21:47  2026-10-10 20:46  CN=Example Intermediate CA  switch.example.internal
+printer  ok      -     -       -                 -                 -                 -                 -                           -
+```
+
+Times are UTC. `DEPLOYED` is the last deployment (`failed …` when it
+failed), `VERIFIED` the last time a run saw the device present the
+certificate issued last. Without `--live` there is no `LIVE` column, and
+`STATUS` is that of the last run. `--format json` gives the same per device.
 
 ## What clients have to trust
 

@@ -191,6 +191,15 @@ The root certificate as PEM. Creates the CA when there is none yet.
 
 =cut
 
+sub health { return undef }
+
+=method health
+
+C<undef>: the CA is a directory on this machine, there is nobody to ask
+(L<SICK::Issuer/health>).
+
+=cut
+
 #### internals
 
 # Paths in the CA directory, as plain strings for the command lines.

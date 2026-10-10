@@ -3,11 +3,12 @@ use strict;
 use warnings;
 use JSON::PP;
 
-# A stand-in for the step command line, for t/21-issuer-stepca.t.
+# A stand-in for the step command line, for t/21-issuer-stepca.t and
+# t/43-report.t.
 #
-# It knows "ca certificate" and "ca sign" with the flags the real step
-# defines for them, records every call as one line of JSON, and hands out
-# the files of a test CA instead of talking to one.
+# It knows "ca certificate", "ca sign" and "ca health" with the flags the
+# real step defines for them, records every call as one line of JSON, and
+# hands out the files of a test CA instead of talking to one.
 #
 # Modelled on step 0.30.2 against a step-ca 0.30.2, as observed:
 #
@@ -21,6 +22,26 @@ use JSON::PP;
 #   key has at least 2048 bits;
 # - "ca sign" has neither --san nor the key flags;
 # - every failure is exit code 1.
+#
+# "ca health", observed with step 0.30.2 on 2026-10-10:
+#
+# - it knows --ca-url, --root and --context and nothing else ("flag
+#   provided but not defined: -provisioner", then its help);
+# - without --ca-url: "'step ca health' requires the '--ca-url' flag",
+#   without --root: "'step ca health' requires the '--root' flag" (with
+#   neither in $STEPPATH/config/defaults.json);
+# - a --root file that is not there: "error reading <file>: open <file>: no
+#   such file or directory"; a file with two PEM blocks is NOT refused here;
+# - a healthy step-ca 0.30.2: "ok" and a newline on standard output, nothing
+#   on standard error, exit code 0;
+# - nothing listening: "client GET https://127.0.0.1:1/health failed: dial
+#   tcp 127.0.0.1:1: connect: connection refused" on standard error, nothing
+#   on standard output, exit code 1; another CA behind the URL: "client GET
+#   <url>/health failed: tls: failed to verify certificate: x509:
+#   certificate signed by unknown authority", exit code 1;
+# - an address that drops the packets: still waiting after 5 seconds.
+#
+# The fake answers "ok" unless FAKE_STEP_EXIT is set; it never connects.
 #
 #   FAKE_STEP_LOG       file the calls are appended to
 #   FAKE_STEP_FIXTURES  directory with fullchain.pem and key.pem (for
@@ -51,9 +72,10 @@ my %FLAGS = (
     '--console'                   => 0
   },
   certificate => { '--san' => 1, '--kty' => 1, '--curve' => 1, '--crv' => 1, '--size' => 1 },
-  sign        => {}
+  sign        => {},
+  health      => { '--ca-url' => 1, '--root' => 1, '--context' => 1 }
 );
-my %POSITIONALS = ( certificate => 3, sign => 2 );
+my %POSITIONALS = ( certificate => 3, sign => 2, health => 0 );
 
 sub fail {
   my ( $message, $code ) = @_;
@@ -88,11 +110,11 @@ sub copy {
 my @argv = @ARGV;
 my %call = ( argv => [@argv], umask => sprintf( '%04o', umask ) );
 
-fail('fake-step: only "ca certificate" and "ca sign" are implemented')
+fail('fake-step: only "ca certificate", "ca sign" and "ca health" are implemented')
   unless @argv >= 2 && $argv[0] eq 'ca' && exists $POSITIONALS{ $argv[1] };
 my $command = $argv[1];
 my @rest    = @argv[ 2 .. $#argv ];
-my %known   = ( %{ $FLAGS{common} }, %{ $FLAGS{$command} } );
+my %known   = $command eq 'health' ? %{ $FLAGS{health} } : ( %{ $FLAGS{common} }, %{ $FLAGS{$command} } );
 
 my ( %flag, @positional );
 while (@rest) {
@@ -127,6 +149,28 @@ if ( my $password_file = $flag{'--provisioner-password-file'} && $flag{'--provis
 
 # what the real step checks before it talks to the CA
 my $one = sub { my ( $name ) = @_; return $flag{$name} ? $flag{$name}[-1] : undef };
+
+sub record {
+  return unless defined $ENV{FAKE_STEP_LOG};
+  open my $log, '>>', $ENV{FAKE_STEP_LOG} or fail( 'fake-step: cannot write log: '.$! );
+  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
+  close $log;
+}
+
+if ( $command eq 'health' ) {
+  for my $name ( '--ca-url', '--root' ) {
+    fail( '\'step ca health\' requires the \''.$name.'\' flag' ) unless defined $one->($name);
+  }
+  my $root = $one->('--root');
+  fail( 'error reading '.$root.': open '.$root.': no such file or directory' ) unless defined slurp($root);
+  record();
+  if ( $ENV{FAKE_STEP_EXIT} ) {
+    print STDERR $ENV{FAKE_STEP_STDERR} if defined $ENV{FAKE_STEP_STDERR};
+    exit $ENV{FAKE_STEP_EXIT};
+  }
+  print "ok\n";
+  exit 0;
+}
 my $kty = defined $one->('--kty') ? $one->('--kty') : 'EC';
 my $crv = defined $one->('--curve') ? $one->('--curve') : $one->('--crv');
 if ( $command eq 'certificate' ) {
@@ -183,11 +227,7 @@ if ( !$ENV{FAKE_STEP_EXIT} ) {
   }
 }
 
-if ( defined $ENV{FAKE_STEP_LOG} ) {
-  open my $log, '>>', $ENV{FAKE_STEP_LOG} or fail( 'fake-step: cannot write log: '.$! );
-  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
-  close $log;
-}
+record();
 
 if ( $ENV{FAKE_STEP_EXIT} ) {
   print STDERR $ENV{FAKE_STEP_STDERR} if defined $ENV{FAKE_STEP_STDERR};

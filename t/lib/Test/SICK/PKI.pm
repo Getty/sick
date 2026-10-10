@@ -86,7 +86,7 @@ sub _key {
 }
 
 # new_ca( dir => $dir, name => 'root', cn => 'Some CA', issuer => $other_ca,
-#         extensions => 'ca_ext' )
+#         extensions => 'ca_ext', days => 30 )
 # -> { cert => $path, key => $path, pem => $text }
 # extensions names a section of the config above, for the certificates that
 # are no proper CA on purpose: 'leaf_ext' makes a self-signed CA:FALSE
@@ -102,17 +102,18 @@ sub new_ca {
   my $key    = _key( $dir.'/'.$name.'.key' );
   my $cert   = $dir.'/'.$name.'.crt';
   my $ext    = $arg{extensions} || 'ca_ext';
+  my $days   = defined $arg{days} ? $arg{days} : 30;
 
   if ( my $issuer = $arg{issuer} ) {
     my $csr = $dir.'/'.$name.'.csr';
     _openssl( [ 'req', '-new', '-config', $config, '-key', $key, '-subj', '/CN='.$cn, '-out', $csr ] );
     _openssl( [ 'x509', '-req', '-in', $csr, '-CA', $issuer->{cert}, '-CAkey', $issuer->{key},
-        '-set_serial', ++$serial, '-days', 30, '-extfile', $config, '-extensions', $ext,
+        '-set_serial', ++$serial, '-days', $days, '-extfile', $config, '-extensions', $ext,
         '-out', $cert ] );
   }
   else {
     _openssl( [ 'req', '-new', '-x509', '-config', $config, '-key', $key, '-subj', '/CN='.$cn,
-        '-days', 30, '-extensions', $ext, '-out', $cert ] );
+        '-days', $days, '-extensions', $ext, '-out', $cert ] );
   }
 
   return { cert => $cert, key => $key, pem => slurp($cert) };

@@ -56,6 +56,8 @@ our $VERSION = '0.001';
 
     sub intermediates_pem { ... }    # optional
 
+    sub health { ... }               # optional: 1, 0 or undef
+
 =head1 DESCRIPTION
 
 An issuer turns a request into a L<SICK::Bundle>. SICK is not a CA and does
@@ -215,6 +217,21 @@ anchors. L<SICK::Decision> uses them to build the chain from a certificate
 to L</root_pem> when a device presents its certificate without them, and
 L<SICK::Trust> publishes them next to the root, because the clients of such
 a device are in the same position.
+
+=cut
+
+sub health { return undef }
+
+=method health
+
+    my $up = $issuer->health;                 # 1, 0 or undef
+    my ( $up, $reason ) = $issuer->health;
+
+Whether the CA answers: C<1> when it does, C<0> when it does not, and
+C<undef> when there is no CA to ask - what the base class answers. In list
+context the reason comes second when the answer is C<0>, C<undef> otherwise.
+Never croaks: an issuer that cannot find out says C<0> and why.
+C<sick check --format json|prometheus> reports it; nothing else asks.
 
 =cut
 

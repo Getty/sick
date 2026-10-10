@@ -279,6 +279,58 @@ The root itself may be in the file as well.
 
 =cut
 
+sub health_timeout { 10 }
+
+sub health {
+  my ( $self ) = @_;
+  my ( $out, $err, $exit );
+  my $ran = eval {
+    ( $out, $err, $exit ) = SICK::Command::run(
+      [ $self->step, 'ca', 'health', '--ca-url', $self->url, '--root', $self->root ],
+      timeout => $self->health_timeout,
+    );
+    1;
+  };
+  my $reason;
+  if ( !$ran ) {
+    ( $reason = defined $@ ? q{}.$@ : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+    $reason = 'unknown error' unless length $reason;
+  }
+  elsif ($exit) {
+    $reason = 'step ca health failed (exit '.$exit.'): '.$self->_said($err);
+  }
+  elsif ( $out !~ /\Aok\r?\n?\z/ ) {
+    my ($first) = grep {/\S/} split /\r?\n/, $out;
+    $first = defined $first ? substr( $first, 0, 200 ) : q{};
+    $first =~ s/[\x00-\x1f\x7f]/ /g;
+    $reason = 'step ca health did not answer ok'.( length $first ? ' but \''.$first.'\'' : q{} );
+  }
+  return wantarray ? ( 1, undef ) : 1 unless defined $reason;
+  return wantarray ? ( 0, $reason ) : 0;
+}
+
+=method health
+
+    my $up = $issuer->health;                 # 1 or 0
+    my ( $up, $reason ) = $issuer->health;
+
+Asks the CA whether it is up:
+
+    step ca health --ca-url <url> --root <root>
+
+C<1> when C<step> says C<ok>, C<0> otherwise; in list context the reason
+comes second: C<< step ca health failed (exit <N>): <what step said> >>
+(nothing listening, another CA behind the URL), C<< 'step' timed out after
+10s >> (an address that drops the packets: C<step> waits on its own), or
+C<< cannot run 'step': <reason> >>. Never croaks. The password file is not
+involved. C<step> gets L</health_timeout> seconds.
+
+=method health_timeout
+
+Seconds L</health> gives C<step>. C<10>.
+
+=cut
+
 #### internals
 
 # The root as a bundle, after making sure it is one: a single certificate,

@@ -169,3 +169,19 @@ Revision history for SICK
     - trust-linux.sh: the closing note says that Java from the Debian
       packages follows the system store, while Temurin and other JDKs keep
       their own cacerts (keytool).
+    - sick check --format json|prometheus: per device the live certificate
+      (fingerprint, serial, issuer, remaining and total lifetime),
+      renew_before, the earliest end along its chain to the root, whether it
+      is the certificate issued last, and the last success, failures and
+      back-off from the records; the root and intermediates of the CA with
+      their ends, and whether the CA answers (step ca health).
+    - sick check --output FILE replaces the file at once (written beside it,
+      mode 0644), for the textfile collector of node_exporter.
+    - sick inventory [--format table|json] [--live]: per device the
+      certificate issued last, when it was deployed and when a run last saw
+      the device present it, from the records alone; --live looks at the
+      devices and shows whether each presents it.
+    - contrib/prometheus/sick-alerts.yml: alert rules with thresholds
+      relative to each device's renew_before, tested with promtool.
+    - SICK::Issuer gains health (step-ca: step ca health with a 10-second
+      timeout); the states of SICK::Runner->check gain presented.

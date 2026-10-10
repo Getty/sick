@@ -255,4 +255,9 @@ subtest 'additional roots' => sub {
   like $@, qr/^ca\.additional_roots '\Q$own\E' is the root of this CA \(CN=SICK self-signed CA\)/, '... saying so';
 };
 
+subtest 'health' => sub {
+  is scalar $issuer->health, undef, 'there is no CA to ask: undef';
+  is_deeply [ $issuer->health ], [undef], '... also in list context';
+};
+
 done_testing;

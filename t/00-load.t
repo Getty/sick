@@ -17,6 +17,7 @@ for (qw(
   SICK::Issuer::StepCA
   SICK::Names
   SICK::OpenSSL
+  SICK::Report
   SICK::Runner
   SICK::State
   SICK::Target

@@ -1,0 +1,118 @@
+# Alert rules for the metrics of `sick check --format prometheus`.
+#
+# Feed them with the textfile collector of node_exporter, for instance from
+# the same timer that runs `sick run`:
+#
+#   sick check --format prometheus --output /var/lib/node_exporter/textfile/sick.prom
+#
+# The thresholds for device certificates are relative to the device's own
+# renew_before, not fixed days: a fixed "30 days left" is meaningless for a
+# certificate that lives a week and noise for one that lives a year.
+# renew_before is meant to be the recovery budget of the device - the time
+# it takes to notice that renewal fails, find out why and fix it (CA
+# outage, DNS, a device that refuses the upload, a human who is away) -
+# with room to spare. SICK starts renewing when less than renew_before is
+# left, so every second below that is a second the budget has been used up.
+#
+# Every alert carries the labels of its series (device, and instance/job of
+# the scrape), so the notification names the device.
+
+groups:
+  - name: sick
+    rules:
+      # Half of renew_before is gone and the device still presents the old
+      # certificate: SICK has been failing (or not running) for half of the
+      # window it was given. Early enough to fix things by hand.
+      - alert: SickRenewalLate
+        expr: sick_certificate_remaining_seconds < sick_device_renew_before_seconds / 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }}: certificate not renewed, half of renew_before is used up"
+
+      # Three quarters of renew_before are gone. What is left is meant to be
+      # the last part of the recovery budget: act now, it expires next.
+      - alert: SickCertificateExpiring
+        expr: sick_certificate_remaining_seconds < sick_device_renew_before_seconds / 4
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.device }}: certificate expires soon, a quarter of renew_before is left"
+
+      # The device does not present the certificate SICK issued for it last:
+      # a deployment that failed, a device that was reset or restored, or
+      # another hand that put a certificate there. An hour, so that a run in
+      # progress (issued, not yet verified) does not alert.
+      - alert: SickDeviceStale
+        expr: sick_device_matches_last_issue == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }}: does not present the certificate issued for it last"
+
+      # The device did not answer. A day, because devices are switched off,
+      # rebooted and moved; an unreachable device is never renewed (SICK
+      # touches nothing it cannot see), and while it is unreachable it has
+      # no certificate metrics, so the two alerts above stay silent for it -
+      # this one stands in.
+      - alert: SickDeviceUnreachable
+        expr: sick_device_reachable == 0
+        for: 1d
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }}: has not answered for a day"
+
+      # Attempts to renew failed three times in a row. The back-off of sick
+      # run waits 1, 2, 4 ... at most 24 hours, so the third failure comes
+      # after about three hours of trying, or on the third day with a daily
+      # timer: always well inside renew_before, long before expiry does.
+      - alert: SickDeviceFailing
+        expr: sick_device_consecutive_failures >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }}: {{ $value }} attempts to renew failed in a row"
+
+      # The CA did not answer `step ca health`. Thirty minutes ride out a
+      # restart. Assumes sick check runs at least as often as that; with a
+      # daily check the alert fires half an hour after the check that saw it
+      # and stays until the next one. Absent for a self-signed CA.
+      - alert: SickCAUnreachable
+        expr: sick_ca_up == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "the CA does not answer its health check"
+
+      # CA certificates are fixed days on purpose: SICK does not renew them,
+      # people do, and the lead time is that of a ceremony and of handing a
+      # new intermediate to the devices that present it, not a fraction of a
+      # lifetime. A year for an intermediate.
+      - alert: SickIntermediateExpiring
+        expr: sick_ca_certificate_not_after_seconds{role="intermediate"} - time() < 365 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "intermediate {{ $labels.subject }} expires within a year"
+
+      # Two years for the root: a new root has to reach every client's trust
+      # store before the old one ends (sick trust, additional_roots).
+      - alert: SickRootExpiring
+        expr: sick_ca_certificate_not_after_seconds{role="root"} - time() < 730 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "root {{ $labels.subject }} expires within two years"
+
+      # The metrics themselves are old: the check has not run for two days.
+      # Assumes a daily timer; two days leave one missed run as a margin.
+      # Without this, every alert above would go quiet with the last file.
+      - alert: SickCheckStale
+        expr: time() - sick_check_timestamp_seconds > 2 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "sick check has not written its metrics for two days"

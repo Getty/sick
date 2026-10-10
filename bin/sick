@@ -21,9 +21,13 @@ __END__
 =head1 SYNOPSIS
 
     sick check                      # what does every device present?
+    sick check --format json        # the same, with records and CA, for machines
+    sick check --format prometheus --output /var/lib/node_exporter/textfile/sick.prom
     sick run                        # renew what is due
     sick run --dry-run              # only say what would be renewed
     sick run --force switch         # renew one device now, due or not
+    sick inventory                  # what was issued, deployed and last seen
+    sick inventory --live           # ... and whether the devices present it
     sick trust /srv/www/trust       # root certificate and instructions for clients
 
     sick --config ./sick.yml check
@@ -44,7 +48,7 @@ missing, from another CA, for other names or about to expire.
 
 =head1 COMMANDS
 
-=head2 check [device ...]
+=head2 check [--format table|json|prometheus] [--output file] [device ...]
 
 Prints one line per device: which state its certificate is in and whether
 a run would renew it. Changes nothing.
@@ -61,6 +65,36 @@ answer - which is not the same as having no certificate - and C<error>
 that something else kept SICK from looking, a device type without a module
 for instance. Both leave the question of renewal open and make the exit
 code C<1>.
+
+=over 4
+
+=item C<--format table|json|prometheus>
+
+C<table> is the table above, and the default. C<json> and C<prometheus>
+say the same for machines and add what the records of the runs know (the
+certificate issued last, the last success, the failures in a row) and what
+the CA is: its root and intermediates with their ends, and whether it
+answers C<step ca health> (asked with a timeout of 10 seconds; a
+self-signed CA has nobody to ask). Per device they carry the live
+certificate - fingerprint, serial, issuer, validity, remaining and total
+lifetime -, C<renew_before>, the earliest end along its chain to the root,
+and whether it is the certificate issued last. The fields and metrics are
+described in L<SICK::Report>; F<contrib/prometheus/sick-alerts.yml> holds
+alert rules for the metrics. A record that cannot be read is said on
+standard error and does not change the exit code.
+
+=item C<--output E<lt>fileE<gt>>, C<-o>
+
+Write into the file instead of standard output. It is written beside the
+file in the same directory and renamed over it, with mode C<0644>, so that
+a reader - the textfile collector of node_exporter - sees the old content
+or the new one, never half of it. The directory has to exist. A file that
+cannot be written makes the exit code C<1>:
+C<< cannot write '<file>': <reason> >>.
+
+=back
+
+C<check> takes no lock and writes no record.
 
 =head2 run [--force] [--dry-run] [--verbose] [device ...]
 
@@ -118,6 +152,40 @@ Report on standard error what is being done, including what the targets
 and the programs they call have to say.
 
 =back
+
+=head2 inventory [--format table|json] [--live] [device ...]
+
+What is deployed, per device, from the records the runs keep in the state
+directory - nothing is asked over the network:
+
+    DEVICE   STATUS  SERIAL  FINGERPRINT       UNTIL             DEPLOYED          VERIFIED          ISSUER                      NAMES
+    switch   ok      03EA    c914b5c9d64480bd  2027-01-08 21:46  2026-10-09 21:47  2026-10-10 20:46  CN=Example Intermediate CA  switch.example.internal
+    printer  -       -       -                 -                 -                 -                 -                           -
+
+C<SERIAL>, C<FINGERPRINT> (the first 16 hex digits of SHA-256), C<UNTIL>,
+C<ISSUER> and C<NAMES> are those of the certificate issued last;
+C<DEPLOYED> is the last deployment (C<failed ...> when it failed),
+C<VERIFIED> the last time a run saw the device present that certificate,
+C<STATUS> what the last run found. Times are UTC; C<-> means unknown, a
+device without a record has nothing but C<->.
+
+=over 4
+
+=item C<--live>
+
+Look at the devices as well, as C<check> does. C<STATUS> is then what the
+device presents now, and a column C<LIVE> says whether that is the
+certificate issued last: C<yes>, C<no>, C<?> (the device could not be
+judged) or C<-> (nothing issued to compare with).
+
+=item C<--format table|json>
+
+C<json> gives the same per device, see L<SICK::Report/inventory>.
+
+=back
+
+The exit code is C<0> unless the device list is wrong (C<2>); with
+C<--live> it is that of C<check>.
 
 =head2 trust <directory>
 
@@ -181,13 +249,13 @@ Nothing failed.
 =item C<1>
 
 At least one device failed or was deferred (C<run>) or could not be checked
-(C<check>), or C<trust> could not write its files, or C<run> could not use
-its state directory.
+(C<check>, C<inventory --live>), or C<trust> could not write its files, or
+C<check --output> its file, or C<run> could not use its state directory.
 
 =item C<2>
 
-The command line or the device list is wrong: unknown command, option or
-device, a list that cannot be read or is not valid.
+The command line or the device list is wrong: unknown command, option,
+format or device, a list that cannot be read or is not valid.
 
 =item C<3>
 

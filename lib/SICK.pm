@@ -41,6 +41,7 @@ On the command line (L<sick>):
 
     sick check                   # what does every device present?
     sick run                     # renew what is due
+    sick inventory               # what was issued, deployed and last seen
     sick trust /srv/www/trust    # root certificate and instructions for clients
 
 From Perl:
@@ -135,7 +136,7 @@ them, and they do not show up in messages.
 
 =item L<sick>, L<SICK::CLI>
 
-The command line: C<check>, C<run>, C<trust>.
+The command line: C<check>, C<run>, C<inventory>, C<trust>.
 
 =item L<SICK::Runner>
 
@@ -147,6 +148,11 @@ others.
 What a run remembers: one record per device - last look, last issue, last
 deployment, failures and back-off, never a key - and the lock that keeps
 two runs apart.
+
+=item L<SICK::Report>
+
+C<check> and C<inventory> for machines: JSON, and the text format of
+Prometheus.
 
 =item L<SICK::Config>, L<SICK::Device>
 

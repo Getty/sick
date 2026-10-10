@@ -191,7 +191,8 @@ sub check {
         reason    => $unreachable ? 'unreachable' : 'error',
         renew     => undef,
         detail    => $error,
-        not_after => undef
+        not_after => undef,
+        presented => undef
       };
       next;
     }
@@ -200,7 +201,8 @@ sub check {
       reason    => $decision->{reason},
       renew     => $decision->{renew},
       detail    => $decision->{detail},
-      not_after => defined $presented ? $presented->not_after : undef
+      not_after => defined $presented ? $presented->not_after : undef,
+      presented => $presented
     };
   }
   return @states;
@@ -220,7 +222,12 @@ device, in the order of the device list (or of the names given):
       renew     => 1,
       detail    => 'valid until 2026-10-20 08:00:00 UTC, 14 days left',
       not_after => 1792483200,                    # epoch, undef without a certificate
+      presented => $bundle,                       # SICK::Bundle, undef without one
     }
+
+C<presented> is the certificate the device presents, as its target
+returned it (L<SICK::Target/presented_cert>), with what the device sent
+along as its chain; C<undef> when it presents none or could not be judged.
 
 C<reason> is one of the answers of L<SICK::Decision/evaluate> - C<ok>,
 C<missing>, C<foreign-ca>, C<names>, C<expiring> - or one of two that mean

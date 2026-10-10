@@ -1,10 +1,12 @@
 package SICK::CLI;
-# ABSTRACT: The sick command line - check, run, trust
+# ABSTRACT: The sick command line - check, run, inventory, trust
 
 use Moo;
 use Getopt::Long ();
+use Path::Tiny ();
 use SICK::Config;
 use SICK::Issuer;
+use SICK::Report;
 use SICK::Runner;
 use SICK::State;
 use SICK::Trust;
@@ -26,8 +28,9 @@ our $VERSION = '0.001';
 
 Everything the C<sick> program does, as a class, so that it can be tested
 and embedded: it parses the arguments, loads the device list, builds the
-issuer and the L<SICK::Runner>, prints the result as a table and turns it
-into an exit code. The commands and options are described in L<sick>.
+issuer and the L<SICK::Runner>, prints the result as a table - or as JSON
+or for Prometheus (L<SICK::Report>) - and turns it into an exit code. The
+commands and options are described in L<sick>.
 
 Nothing in here calls C<exit> or dies: L</run> returns the exit code.
 
@@ -35,18 +38,21 @@ Nothing in here calls C<exit> or dies: L</run> returns the exit code.
 
 my $USAGE = <<'USAGE';
 Usage:
-  sick [--config <file>] check [<device> ...]
+  sick [--config <file>] check [--format table|json|prometheus] [--output <file>] [<device> ...]
   sick [--config <file>] run [--force] [--dry-run] [--verbose] [<device> ...]
+  sick [--config <file>] inventory [--format table|json] [--live] [<device> ...]
   sick [--config <file>] trust <directory>
   sick --help | --version
 
 Commands:
-  check    Show which certificate every device presents. Changes nothing.
-  run      Renew what is due: check, issue, deploy, check again.
-  trust    Write the certificates clients have to know - the root, and the
-           intermediate and further roots when the CA has them -, install
-           and remove scripts, an Apple configuration profile and a page
-           with instructions into a directory.
+  check      Show which certificate every device presents. Changes nothing.
+  run        Renew what is due: check, issue, deploy, check again.
+  inventory  What was issued, deployed and last seen per device, from the
+             records of the runs. Asks nobody, unless --live.
+  trust      Write the certificates clients have to know - the root, and the
+             intermediate and further roots when the CA has them -, install
+             and remove scripts, an Apple configuration profile and a page
+             with instructions into a directory.
 
 Options:
   -c, --config <file>  The device list. Default: $SICK_CONFIG, otherwise
@@ -54,10 +60,15 @@ Options:
   -f, --force          run: renew also what is not due or deferred.
   -n, --dry-run        run: only say what would be renewed.
   -v, --verbose        run: report what is being done, on standard error.
+      --format <f>     check: table (default), json or prometheus;
+                       inventory: table or json.
+  -o, --output <file>  check: write to this file instead, replacing it at once
+                       (for the textfile collector of node_exporter).
+      --live           inventory: look at the devices as well.
   -h, --help           This text.
   -V, --version        The version.
 
-Without device names, check and run work on every device of the list.
+Without device names, check, run and inventory work on every device of the list.
 
 Exit codes:
   0  nothing failed
@@ -126,6 +137,7 @@ sub run {
     $parser->getoptionsfromarray(
       \@argv, \%opt,
       'config|c=s', 'force|f', 'dry-run|n', 'verbose|v', 'help|h', 'version|V',
+      'format=s', 'output|o=s', 'live',
     );
   };
   unless ($parsed) {
@@ -145,14 +157,26 @@ sub run {
 
   my $command = shift @argv;
   return $self->_misuse('no command given') unless defined $command;
-  my %command = map { $_ => '_'.$_ } qw( check run trust );
+  my %command = map { $_ => '_'.$_ } qw( check run inventory trust );
   return $self->_misuse( 'unknown command \''.$command.'\'' ) unless $command{$command};
 
-  my %allowed = ( check => [], run => [qw( force dry-run verbose )], trust => [] );
-  for my $option (qw( force dry-run verbose )) {
+  my %allowed = (
+    check     => [qw( format output )],
+    run       => [qw( force dry-run verbose )],
+    inventory => [qw( format live )],
+    trust     => []
+  );
+  for my $option (qw( force dry-run verbose format output live )) {
     return $self->_misuse( '--'.$option.' does not go with \''.$command.'\'' )
-      if $opt{$option} && !grep { $_ eq $option } @{ $allowed{$command} };
+      if defined $opt{$option} && !grep { $_ eq $option } @{ $allowed{$command} };
   }
+  if ( defined $opt{format} ) {
+    my @formats = $command eq 'check' ? qw( table json prometheus ) : qw( table json );
+    return $self->_misuse( '--format: unknown format \''.$opt{format}.'\' ('
+        .join( ', ', @formats[ 0 .. $#formats - 1 ] ).' or '.$formats[-1].')' )
+      unless grep { $_ eq $opt{format} } @formats;
+  }
+  return $self->_misuse('--output needs a file') if defined $opt{output} && !length $opt{output};
 
   my $method = $command{$command};
   my $code   = eval { $self->$method( \%opt, @argv ) };
@@ -178,23 +202,25 @@ C<failed>.
 =item C<1>
 
 At least one device failed or was deferred (C<run>) or could not be
-checked (C<check>: C<unreachable> or C<error>), or C<trust> could not
-write its files. Also a C<run> that cannot take its lock for another
-reason than another run (C<< cannot take the lock '<path>': <reason> >>),
-or that could not write the record of a device.
+checked (C<check>, C<inventory --live>: C<unreachable> or C<error>), or
+C<trust> could not write its files, or C<check --output> its file. Also a
+C<run> that cannot take its lock for another reason than another run
+(C<< cannot take the lock '<path>': <reason> >>), or that could not write
+the record of a device.
 
 =item C<2>
 
 The command cannot be carried out as given: unknown command or option, a
-device name that is not in the list, a device list that cannot be read or
-is not valid, a C<ca> section that does not make an issuer.
+format the command does not have, a device name that is not in the list,
+a device list that cannot be read or is not valid, a C<ca> section that
+does not make an issuer.
 
 =item C<3>
 
 C<run> did nothing because another C<sick run> holds the lock of the state
 directory: C<< another sick run holds the lock '<path>' (pid <pid>) >>
 (L<SICK::State/lock>). C<run --dry-run>, C<check> and C<trust> take no
-lock and never end with C<3>.
+lock and never end with C<3>, nor does C<inventory>.
 
 =back
 
@@ -206,14 +232,26 @@ Works as a class method too.
 
 sub _check {
   my ( $self, $opt, @names ) = @_;
-  my $runner = $self->_runner($opt) or return 2;
+  my ( $config, $issuer ) = $self->_setup($opt) or return 2;
+  my $runner = $self->_runner( $opt, $config, $issuer );
   my @states = eval { $runner->check(@names) };
   return $self->_died( $self->_message($@) ) if $@;
 
-  $self->_table(
-    [qw( DEVICE STATUS RENEW DETAIL )],
-    map { [ $_->{device}, $_->{reason}, !defined $_->{renew} ? '?' : $_->{renew} ? 'yes' : 'no', $_->{detail} ] } @states
-  );
+  my $format = defined $opt->{format} ? $opt->{format} : 'table';
+  my $text;
+  if ( $format eq 'table' ) {
+    $text = $self->_table_text(
+      [qw( DEVICE STATUS RENEW DETAIL )],
+      map { [ $_->{device}, $_->{reason}, !defined $_->{renew} ? '?' : $_->{renew} ? 'yes' : 'no', $_->{detail} ] } @states
+    );
+  }
+  else {
+    my $report = $self->_report( $config, $issuer );
+    my $data   = $report->check( \@states );
+    $self->_state_errors($data);
+    $text = $format eq 'json' ? $report->json($data) : $report->prometheus($data);
+  }
+  return 1 unless $self->_emit( $opt, $text );
   return ( grep { !defined $_->{renew} } @states ) ? 1 : 0;
 }
 
@@ -248,6 +286,57 @@ sub _run {
     push @unwritten, $result if $result->{state_error} =~ /cannot write state record /;
   }
   return ( @unwritten || grep { $_->{action} eq 'failed' || $_->{action} eq 'deferred' } @results ) ? 1 : 0;
+}
+
+sub _inventory {
+  my ( $self, $opt, @names ) = @_;
+  my ( $config, $issuer ) = $self->_setup($opt) or return 2;
+  my $report = $self->_report( $config, $issuer );
+
+  my ( @states, $data );
+  if ( $opt->{live} ) {
+    @states = eval { $self->_runner( $opt, $config, $issuer )->check(@names) };
+    return $self->_died( $self->_message($@) ) if $@;
+    $data = $report->inventory( \@names, states => \@states );
+  }
+  else {
+    $data = eval { $report->inventory( \@names ) };
+    return $self->_died( $self->_message($@) ) unless $data;
+  }
+  $self->_state_errors($data);
+
+  if ( defined $opt->{format} && $opt->{format} eq 'json' ) {
+    print { $self->out } $report->json($data);
+  }
+  else {
+    my $time  = sub { defined $_[0] ? $_[0] =~ s/\A(\S+)T([0-9]{2}:[0-9]{2}).*\z/$1 $2/r : '-' };
+    my $plain = sub { defined $_[0] && length $_[0] ? $_[0] : '-' };
+    my @rows;
+    for my $entry ( @{ $data->{devices} } ) {
+      my $deploy = $entry->{last_deploy};
+      push @rows, [
+        $entry->{device},
+        $plain->( $entry->{ $opt->{live} ? 'status' : 'last_status' } ),
+        ( $opt->{live}
+          ? ( !defined $entry->{fingerprint_sha256} ? '-' : !defined $entry->{matches_last_issue} ? '?'
+              : $entry->{matches_last_issue} ? 'yes' : 'no' )
+          : () ),
+        $plain->( $entry->{serial} ),
+        $plain->( defined $entry->{fingerprint_sha256} ? substr( $entry->{fingerprint_sha256}, 0, 16 ) : undef ),
+        $time->( $entry->{not_after} ),
+        !$deploy ? '-' : ( defined $deploy->{result} && $deploy->{result} eq 'ok' ? q{} : 'failed ' ).$time->( $deploy->{time} ),
+        $time->( $entry->{last_verified} ),
+        $plain->( $entry->{issuer} ),
+        $plain->( $entry->{names} ? join( ',', @{ $entry->{names} } ) : undef )
+      ];
+    }
+    $self->_table(
+      [ qw( DEVICE STATUS ), ( $opt->{live} ? 'LIVE' : () ), qw( SERIAL FINGERPRINT UNTIL DEPLOYED VERIFIED ISSUER NAMES ) ],
+      @rows
+    );
+  }
+  return 0 unless $opt->{live};
+  return ( grep { !defined $_->{renew} } @states ) ? 1 : 0;
 }
 
 sub _trust {
@@ -346,9 +435,71 @@ sub _runner {
   );
 }
 
+sub _report {
+  my ( $self, $config, $issuer ) = @_;
+  return SICK::Report->new( config => $config, issuer => $issuer, state => SICK::State->new( dir => $config->state_dir ) );
+}
+
+# A record that could not be read is said, and does not change the answer.
+sub _state_errors {
+  my ( $self, $data ) = @_;
+  $self->_say_error( $_->{device}.': '.$_->{state_error} ) for grep { defined $_->{state_error} } @{ $data->{devices} };
+  return;
+}
+
+# Standard output, or --output: written beside the file and renamed over
+# it, so that a reader - node_exporter - sees the old file or the new one.
+sub _emit {
+  my ( $self, $opt, $text ) = @_;
+  unless ( defined $opt->{output} ) {
+    print { $self->out } $text;
+    return 1;
+  }
+  my $path = $opt->{output};
+  my $reason = eval { $self->_publish( $path, $text ); 1 } ? undef : $self->_reason($@);
+  return 1 unless defined $reason;
+  $self->_say_error( 'cannot write \''.$path.'\': '.$reason );
+  return 0;
+}
+
+# Path::Tiny's move copies when renaming fails; CORE rename does not.
+sub _publish {
+  my ( $self, $path, $text ) = @_;
+  my $aside = Path::Tiny->tempfile(
+    DIR      => Path::Tiny::path($path)->parent->stringify,
+    TEMPLATE => '.sick-XXXXXXXX',
+    UNLINK   => 0
+  );
+  my $ok = eval {
+    $aside->chmod(0644);
+    $aside->append_raw($text);
+    rename( $aside->stringify, $path ) or die $!."\n";
+    1;
+  };
+  unless ($ok) {
+    my $error = $@;
+    eval { $aside->remove };
+    die $error;
+  }
+  return;
+}
+
+# The reason of the system out of a Path::Tiny exception or a message.
+sub _reason {
+  my ( $self, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  return $self->_message($error);
+}
+
 # Columns as wide as their widest cell, two spaces apart; the last one is
 # as long as it is, and whatever it holds stays on its line.
 sub _table {
+  my ( $self, @table ) = @_;
+  print { $self->out } $self->_table_text(@table);
+  return;
+}
+
+sub _table_text {
   my ( $self, $head, @rows ) = @_;
   for my $row (@rows) {
     for my $cell (@$row) {
@@ -358,12 +509,13 @@ sub _table {
     }
   }
   my @width = map { my $i = $_; ( sort { $b <=> $a } map { length $_->[$i] } $head, @rows )[0] } 0 .. $#$head - 1;
+  my $text = q{};
   for my $row ( $head, @rows ) {
     my $line = join( q{}, map { sprintf '%-*s  ', $width[$_], $row->[$_] } 0 .. $#width ).$row->[-1];
     $line =~ s/\s+\z//;
-    print { $self->out } $line."\n";
+    $text .= $line."\n";
   }
-  return;
+  return $text;
 }
 
 1;

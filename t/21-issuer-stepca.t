@@ -468,4 +468,38 @@ subtest 'additional roots: published, not handed to step, checked like the root'
   }
 };
 
+subtest 'health' => sub {
+  calls();
+  is scalar $issuer->health, 1, 'a CA that answers ok: true';
+  my ( $raw, @calls ) = calls();
+  is scalar @calls, 1, 'step was called once';
+  is_deeply $calls[0]{argv}, [ 'ca', 'health', '--ca-url', $ca{url}, '--root', $root->{cert} ],
+    'step ca health --ca-url <url> --root <root>, nothing else';
+  unlike $raw, qr/\Q$password_file\E|\Q$secret\E/, '... no password file, no password';
+  is_deeply [ $issuer->health ], [ 1, undef ], 'in list context: true and no reason';
+  calls();
+
+  {
+    local $ENV{FAKE_STEP_EXIT}   = 1;
+    local $ENV{FAKE_STEP_STDERR} = "client GET https://ca.example.internal:9000/health failed: dial tcp 192.0.2.9:9000: connect: connection refused\n";
+    is scalar $issuer->health, 0, 'a CA that does not answer: false';
+    is_deeply [ $issuer->health ],
+      [ 0, 'step ca health failed (exit 1): client GET https://ca.example.internal:9000/health failed: dial tcp 192.0.2.9:9000: connect: connection refused' ],
+      '... and the reason in the words of step';
+    calls();
+  }
+
+  my $no_step = $tmp.'/not-installed/step';
+  my ( $up, $why ) = SICK::Issuer::StepCA->new( %ca, step => $no_step )->health;
+  is $up, 0, 'step not installed: false, not an exception';
+  like $why, qr/^cannot run '\Q$no_step\E': \S/, '... saying so';
+
+  ( $up, $why ) = SICK::Issuer::StepCA->new( %ca, root => $tmp.'/no-such-root.crt' )->health;
+  is $up, 0, 'a root that is not there: false';
+  like $why, qr/^step ca health failed \(exit 1\): error reading /, '... in the words of step';
+  calls();
+
+  is( SICK::Issuer::StepCA->health_timeout, 10, 'step gets 10 seconds' );
+};
+
 done_testing;
