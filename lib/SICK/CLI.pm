@@ -1,13 +1,14 @@
 package SICK::CLI;
 # ABSTRACT: The sick command line - check, run, trust
 
-use strict;
-use warnings;
+use Moo;
 use Getopt::Long ();
 use SICK::Config;
 use SICK::Issuer;
 use SICK::Runner;
 use SICK::Trust;
+use Types::Standard qw( FileHandle HashRef );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -64,14 +65,13 @@ USAGE
 
 my $DEFAULT_CONFIG = '/etc/sick/sick.yml';
 
-sub new {
-  my ( $class, %arg ) = @_;
-  return bless {
-    out => $arg{out} || \*STDOUT,
-    err => $arg{err} || \*STDERR,
-    env => $arg{env} || \%ENV
-  }, $class;
-}
+# An argument that is not given or false gets its default, as it always did.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
+  delete @arg{ grep { !$arg{$_} } qw( out err env ) };
+  return \%arg;
+};
 
 =method new
 
@@ -79,6 +79,28 @@ sub new {
 
 All arguments are optional: where tables and messages are printed
 (C<STDOUT> and C<STDERR>) and where C<SICK_CONFIG> is looked up (C<%ENV>).
+
+=cut
+
+has out => ( is => 'ro', isa => FileHandle, builder => 1 );
+has err => ( is => 'ro', isa => FileHandle, builder => 1 );
+has env => ( is => 'ro', isa => HashRef,    builder => 1 );
+
+sub _build_out { \*STDOUT }
+sub _build_err { \*STDERR }
+sub _build_env { \%ENV }
+
+=attr out
+
+Where tables and other output go. C<STDOUT>.
+
+=attr err
+
+Where messages go. C<STDERR>.
+
+=attr env
+
+The environment C<SICK_CONFIG> is looked up in: C<%ENV> itself.
 
 =cut
 
@@ -110,17 +132,17 @@ sub run {
   }
 
   if ( $opt{help} ) {
-    print { $self->{out} } $USAGE;
+    print { $self->out } $USAGE;
     return 0;
   }
   if ( $opt{version} ) {
-    print { $self->{out} } 'sick '.$VERSION."\n";
+    print { $self->out } 'sick '.$VERSION."\n";
     return 0;
   }
 
   my $command = shift @argv;
   return $self->_misuse('no command given') unless defined $command;
-  my %command = ( check => \&_check, run => \&_run, trust => \&_trust );
+  my %command = map { $_ => '_'.$_ } qw( check run trust );
   return $self->_misuse( 'unknown command \''.$command.'\'' ) unless $command{$command};
 
   my %allowed = ( check => [], run => [qw( force dry-run verbose )], trust => [] );
@@ -129,10 +151,11 @@ sub run {
       if $opt{$option} && !grep { $_ eq $option } @{ $allowed{$command} };
   }
 
-  my $code = eval { $command{$command}->( $self, \%opt, @argv ) };
+  my $method = $command{$command};
+  my $code   = eval { $self->$method( \%opt, @argv ) };
   return $code if defined $code;
   # nothing below is meant to die; if it does, say so and fail
-  return $self->_fail( _message($@) );
+  return $self->_fail( $self->_message($@) );
 }
 
 =method run
@@ -172,7 +195,7 @@ sub _check {
   my ( $self, $opt, @names ) = @_;
   my $runner = $self->_runner($opt) or return 2;
   my @states = eval { $runner->check(@names) };
-  return $self->_died( _message($@) ) if $@;
+  return $self->_died( $self->_message($@) ) if $@;
 
   $self->_table(
     [qw( DEVICE STATUS RENEW DETAIL )],
@@ -185,7 +208,7 @@ sub _run {
   my ( $self, $opt, @names ) = @_;
   my $runner = $self->_runner($opt) or return 2;
   my @results = eval { $runner->run( \@names, force => $opt->{force} ? 1 : 0, dry_run => $opt->{'dry-run'} ? 1 : 0 ) };
-  return $self->_died( _message($@) ) if $@;
+  return $self->_died( $self->_message($@) ) if $@;
 
   $self->_table(
     [qw( DEVICE ACTION REASON ERROR )],
@@ -208,15 +231,15 @@ sub _trust {
       name              => $config->ca_name,
     );
   };
-  return $self->_fail( _message($@) ) unless @files;
-  print { $self->{out} } 'wrote '.join( ', ', map { s{.*/}{}r } @files ).' to '.$args[0]."\n";
+  return $self->_fail( $self->_message($@) ) unless @files;
+  print { $self->out } 'wrote '.join( ', ', map { s{.*/}{}r } @files ).' to '.$args[0]."\n";
   return 0;
 }
 
 #### internals
 
 sub _message {
-  my ( $error ) = @_;
+  my ( $self, $error ) = @_;
   $error = defined $error ? q{}.$error : q{};
   $error =~ s/ at \S+ line [0-9]+\.?\n?\z//;
   $error =~ s/\s+\z//;
@@ -225,7 +248,7 @@ sub _message {
 
 sub _say_error {
   my ( $self, $message ) = @_;
-  print { $self->{err} } 'sick: '.$message."\n";
+  print { $self->err } 'sick: '.$message."\n";
   return;
 }
 
@@ -234,7 +257,7 @@ sub _say_error {
 sub _misuse {
   my ( $self, $message, $plain ) = @_;
   $self->_say_error($message);
-  print { $self->{err} } 'Try \'sick --help\'.'."\n" unless $plain;
+  print { $self->err } 'Try \'sick --help\'.'."\n" unless $plain;
   return 2;
 }
 
@@ -254,7 +277,7 @@ sub _died {
 sub config_path {
   my ( $self, $opt ) = @_;
   return $opt->{config} if defined $opt->{config} && length $opt->{config};
-  my $from_env = $self->{env}{SICK_CONFIG};
+  my $from_env = $self->env->{SICK_CONFIG};
   return defined $from_env && length $from_env ? $from_env : $DEFAULT_CONFIG;
 }
 
@@ -264,12 +287,12 @@ sub _setup {
   my $path   = $self->config_path( $opt || {} );
   my $config = eval { SICK::Config->load($path) };
   unless ($config) {
-    $self->_say_error( _message($@) );
+    $self->_say_error( $self->_message($@) );
     return;
   }
   my $issuer = eval { SICK::Issuer->from_ca( %{ $config->ca } ) };
   unless ($issuer) {
-    $self->_say_error( $path.': '._message($@) );
+    $self->_say_error( $path.': '.$self->_message($@) );
     return;
   }
   return ( $config, $issuer );
@@ -278,7 +301,7 @@ sub _setup {
 sub _runner {
   my ( $self, $opt ) = @_;
   my ( $config, $issuer ) = $self->_setup($opt) or return;
-  my $err = $self->{err};
+  my $err = $self->err;
   return SICK::Runner->new(
     config => $config,
     issuer => $issuer,
@@ -301,7 +324,7 @@ sub _table {
   for my $row ( $head, @rows ) {
     my $line = join( q{}, map { sprintf '%-*s  ', $width[$_], $row->[$_] } 0 .. $#width ).$row->[-1];
     $line =~ s/\s+\z//;
-    print { $self->{out} } $line."\n";
+    print { $self->out } $line."\n";
   }
   return;
 }

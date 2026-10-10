@@ -85,3 +85,4 @@ Revision history for SICK
       that stands where ca.key belongs; it fails instead.
     - SICK::Runner is a Moo class; now, verify_timeout and verify_interval
       can be read back as attributes.
+    - SICK::CLI is a Moo class; the sick command line is unchanged.
