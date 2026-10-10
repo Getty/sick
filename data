@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-10T22:01:55Z
+created: 2026-10-10T20:59:23Z
+id: 40
+priority: high
+started: 2026-10-10T21:32:36Z
+status: done
+tags:
+- ops
+- p5
+title: 'P5b Machine-readable output: sick check --format json|prometheus, chain expiry,
+  CA health'
+updated: 2026-10-10T22:02:07Z
+---
+
+JSON and Prometheus text exposition (textfile collector, atomic --output): remaining lifetime of the live leaf and of intermediate and root in its path, renew_before per device, live vs last-issued fingerprint, last successful issue and run, CA reachable; example alert rules with thresholds relative to lifetime. Part of P5 (k15); binding 'done when': docs/roadmap.md, section P5.
+
+sick-worker: started: SICK::Report (json/prometheus), issuer health via step ca health, check --format/--output, contrib/prometheus alert rules
+
+sick-worker: done, tree commit-ready (staged, not committed). SICK::Report (new), check --format table|json|prometheus --output, Issuer->health (StepCA: step ca health, 10s; base/SelfSigned undef), Runner check states gain 'presented'. contrib/prometheus/sick-alerts.yml + .test.yml: promtool 3.15.0 check rules SUCCESS 9 rules, test rules SUCCESS. prove -lr t green (only skips: 2 pwsh asserts in t/50), ciscosb green (90-live skipped), dzil test green, run-local.sh exit 0 (33 PASS). Open for P5 beyond this card: notification hook, systemd/cron/CronJob, container test of the alerts, an 'owner' field for the inventory.
+
+Committed as 4629ccf
