@@ -794,15 +794,27 @@ my $fake_hash = 'openssl x509 -in "$1" -outform DER | openssl dgst -$2 -r | cut 
 
 fake( 'update-ca-certificates', "exit 0\n" );
 fake( 'update-ca-trust',        "exit 0\n" );
-# p11-kit: trust anchor --store FILE / --remove FILE, kept below $SICK_TRUST_ROOT/p11kit
+# p11-kit: trust anchor --store FILE / --remove FILE and trust list
+# --filter=ca-anchors, kept below $SICK_TRUST_ROOT/p11kit. Like p11-kit 0.26.5
+# (docs/findings/trust-os.md), --remove exits 0 also when nothing matched, and
+# list prints one pkcs11: URI per anchor stored.
 fake( 'trust', <<"SH" );
 h() { $fake_hash; }
-[ "\$1" = anchor ] || exit 3
 dir="\$SICK_TRUST_ROOT/p11kit"; mkdir -p "\$dir"
+if [ "\$1" = list ]; then
+  [ "\$2" = --filter=ca-anchors ] || exit 3
+  for f in "\$dir"/*.pem; do
+    [ -f "\$f" ] || continue
+    n=\${f##*/}
+    printf 'pkcs11:id=%s;type=cert\n    type: certificate\n    trust: anchor\n\n' "\${n%.pem}"
+  done
+  exit 0
+fi
+[ "\$1" = anchor ] || exit 3
 entry="\$dir/\$(h "\$3" sha256).pem"
 case \$2 in
   --store)  [ ! -f "\$entry" ] || exit 1; cp "\$3" "\$entry";;
-  --remove) [ -f "\$entry" ] || exit 1; rm -f "\$entry";;
+  --remove) rm -f "\$entry";;
   *) exit 3;;
 esac
 SH
@@ -1069,9 +1081,14 @@ subtest 'trust-linux.sh with p11-kit (Arch and others)' => sub {
   ( $exit, $out, $err ) = script( $file, $box, 'remove' );
   is $exit, 0, 'remove: exit code 0' or diag $err;
   is_deeply tree( $box.'/p11kit' ), [], '... both anchors gone';
+  like $out, qr/^removed: root certificate 1, a p11-kit anchor$/m, '... saying what it removed';
   ( $exit, $out, $err ) = script( $file, $box, 'remove' );
   is $exit, 0, 'remove again: exit code 0';
   like $out, qr/not installed/, '... saying so';
+  # trust anchor --remove exits 0 when nothing matched: its exit code alone
+  # does not tell whether an anchor was there.
+  unlike $out, qr/^removed:/m, '... and claiming no removal';
+  unlike $out, qr/no longer trusts/, '... nor a changed store';
 };
 
 subtest 'trust-linux.sh on a system it does not know, and as somebody who is not root' => sub {

@@ -145,3 +145,7 @@ Revision history for SICK
       container matrix: requests ignores the system store, Temurin Java and
       Node need their own setup, and loaded roots stay until a restart; each
       line is marked tested in containers or not tried.
+    - trust-linux.sh remove on p11-kit systems (Arch) now reports "removed"
+      only when an anchor was really there, and "not installed" otherwise,
+      like Debian and RHEL; trust anchor --remove exits 0 also when nothing
+      matched.

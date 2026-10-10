@@ -508,7 +508,12 @@ removed=0
 i=1
 while [ "$i" -le "$ROOTS" ]; do
   if [ "$FAMILY" = p11kit ]; then
-    if trust anchor --remove "$TMP/root_$i.pem" >/dev/null 2>&1; then
+    # trust anchor --remove exits 0 also when nothing matched: whether the
+    # anchor was there shows in the list of anchors before and after.
+    before=$(trust list --filter=ca-anchors) || fail 'trust list --filter=ca-anchors failed'
+    trust anchor --remove "$TMP/root_$i.pem" >/dev/null 2>&1
+    after=$(trust list --filter=ca-anchors) || fail 'trust list --filter=ca-anchors failed'
+    if [ "$before" != "$after" ]; then
       say "removed: root certificate $i, a p11-kit anchor"
       removed=1
     else
