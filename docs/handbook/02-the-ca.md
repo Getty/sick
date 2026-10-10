@@ -247,11 +247,93 @@ leaves, and whenever the password may have been seen.
 rekey, fails in step 0.30.2 against a local `ca.json` with `provisioner …
 not found`; `init-ca.sh` removes and re-adds the provisioner instead.)
 
-## Renewing the intermediate, replacing the root
+## Renewing the intermediate
 
-*To come (P3c, card k31).* Both procedures, with their overlap periods and a
-container test, will be here. Until then: the intermediate made by the
-ceremony is valid for five years; set a reminder for four.
+Do it at least one device lifetime before the intermediate ends – with the
+defaults, in year four of five – or at once after its key may have been
+exposed. The root key comes out of its safe place for this, on the offline
+machine:
+
+```bash
+docker run --rm --network none --label sick=1 --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/docker/ceremony.sh:/ceremony.sh:ro" -v /media/offline:/work \
+  --entrypoint bash sick:local /ceremony.sh --renew-intermediate \
+  --operator 'A. Operator' --out /work/new-intermediate \
+  --root-cert /work/for-the-ca/root_ca.crt \
+  --root-key /work/root/root_ca_key --root-password-file /work/root/root.pw \
+  --intermediate /work/for-the-ca/intermediate_ca.crt
+```
+
+Before it makes anything it checks that the root is self-signed, that the
+current intermediate verifies against it, and that the root key belongs to
+the root. It makes a **new key**, copies the name constraints and the key
+type from the current intermediate (read back with openssl; `--dns`, `--ip`,
+`--kty` override them), refuses an intermediate that would outlive the root,
+and writes a record that says which intermediate it follows. The root key
+is only read.
+
+On the CA host:
+
+```bash
+docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
+```
+
+`--switch-intermediate` checks that the new intermediate leads to the CA's
+own root and that the key is its own and new, re-encrypts the key with the
+CA's password, keeps the old intermediate as the previous one, and has
+step-ca reload – no restart. It removes `/home/step/switch` afterwards, also
+when it refuses, because that directory held a key.
+
+**The overlap.** From now on the handover file `intermediate_ca.crt` holds
+both intermediates, new first, and so does the trust page after the next
+`sick trust`. Devices with a certificate under the old intermediate stay
+`ok` and are renewed on their normal schedule, under the new one. Clients
+that use the page's `ca_bundle.pem` accept both. Re-issue everything at once
+instead with `sick run --force` if you prefer a short overlap.
+
+**The end of the overlap:**
+
+```bash
+docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --retire-intermediate
+```
+
+Devices that present their certificate alone are `foreign-ca` from then on
+and are renewed by the next run. A device that sends the old intermediate
+along stays `ok` while that intermediate is valid, because SICK judges by
+the root – after a **compromise**, run `sick run --force` for every device
+instead of waiting. Replace `ca_bundle.pem` wherever a program uses it
+(chapter 3).
+
+## Replacing the root
+
+A root replacement changes what every client trusts, so it is slow by
+nature: the new root has to reach every client *before* anything depends on
+it, and the old one may go only when nothing does. Three phases:
+
+| Phase | On the CA side | On the clients |
+|---|---|---|
+| **A, announce** | a new ceremony (chapter 2, as for the first one) makes the new hierarchy. The device list gets `ca.additional_roots: [/etc/sick/secrets/root_ca_2.crt]`; `sick trust` publishes both roots, `root_ca_2.pem`/`.crt`, both in `ca_bundle.pem` and the Apple profile | install the new root the same way as the first, the fingerprint checked over the second channel. Wait until the clients that matter have it |
+| **B, switch** | `docker compose stop ca`; start the CA of the new root on a second volume: `SICK_CA_IMPORT=<new hierarchy> docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d ca`. The old volume stays, unused. `ca.root` follows the handover to the new root; set `additional_roots` to the old root; `sick run --force` re-issues every device | nothing; both roots are trusted |
+| **C, retire** | empty `additional_roots`, `sick trust` | remove the old root (chapter 3) |
+
+From phase B on, every `docker compose` command names
+`compose.ca-next.yml`; without it Compose goes back to the old volume.
+
+**Rollback.** In a *planned* replacement, going back is starting without
+`compose.ca-next.yml` (the old CA is back), pointing `additional_roots` at
+the new root again, and `sick run --force`. After a **compromise** of the
+old root there is no rollback and no overlap: destroy its volume, skip
+phase A's waiting, and have clients remove the old root at once (chapter 7).
+
+**What the overlap does not carry.** The trust page holds the intermediates
+of the current hierarchy only. A device that presents its certificate alone
+(a one-slot switch) and is still under the *other* root is refused by a
+client that has only the page's `ca_bundle.pem`: in phase A a pilot device
+of the new hierarchy, in phase B a device not yet re-issued (unreachable
+during the forced run). Devices that send their chain are not affected.
+Keep phase B short and check that the forced run reached every device
+(card k34 tracks publishing the other intermediate if this matters to you).
 
 ## The CA's logs are sensitive
 
@@ -266,5 +348,6 @@ everybody can search.
 |---|---|---|---|---|
 | `t/e2e/ca-ceremony.sh`, run twice | step / step-ca 0.30.2, OpenSSL 3.5, GnuTLS 3.8 (Debian 13) | ceremony record matches the certificates; CA starts in import mode without the root key in its volume; SICK issues for a device in scope, the device presents it; out-of-scope DNS name and IP refused by constraints and by policy, no certificate left; CSR with `CA:true` yields a plain leaf; lifetime above the maximum refused; out-of-scope leaves signed directly with the intermediate key refused by OpenSSL and GnuTLS, in-scope leaf accepted by both | 81 PASS, 0 FAIL, both runs; errors as quoted above | NSS and Go as path validators; RSA hierarchy; the YubiKey/HSM variant; "no certificate left" rests on the CA log and the absence of output, the database was not inspected |
 | `t/e2e/ca-recovery.sh`, run twice | same | backup with manifest; restore into a fresh isolated volume, original CA still the only one serving; restored CA issues under the same root; database holds the pre-backup certificate, not the post-backup one; tampered archive and occupied volume refused; provisioner rotation: SICK issues with the new password, old password and old key refused | 51 PASS, 0 FAIL, both runs; RTO 3–4 s | restore onto another host; a large database; ACME account deactivation |
-| `t/e2e/run-local.sh` | same | lab mode unchanged after both changes | ALL PASSED | – |
+| `t/e2e/ca-rollover.sh`, run twice | same; clients curl 8.14.1 / OpenSSL 3.5.7 and gnutls-cli 3.8.9 | intermediate renewal: old-intermediate device stays `ok`, new issuance from the new one, both accepted with the page's bundle and refused with the root alone; a switch to a foreign intermediate and a second switch during the overlap refused; after retire the old device is renewed and verifies. Root replacement: clients that followed the page accept old and new hierarchy in phases A and B; a client with only the old page refuses new leaves; after C old leaves refused, new accepted; a further run changes nothing | 125 PASS, 0 FAIL, 6 RECORD (the overlap gap above), both runs | the planned rollback itself; a switch while the CA is stopped; RSA hierarchies; NSS and Go as clients |
+| `t/e2e/run-local.sh` | same | lab mode unchanged after all changes | ALL PASSED | – |
 | the ceremony above, by hand | step 0.30.2, OpenSSL 3.5.7 | output and record as shown | as shown | – |

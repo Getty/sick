@@ -12,7 +12,7 @@ them together. This handbook is the path through all of it.
 | Chapter | What you have afterwards |
 |---|---|
 | [1. Planning](01-planning.md) | names, networks, lifetimes, key types and who may get which certificate – written down before anything is made |
-| [2. The CA](02-the-ca.md) | an offline root, a name-constrained intermediate in step-ca, a ceremony record, backups you have restored once |
+| [2. The CA](02-the-ca.md) | an offline root, a name-constrained intermediate in step-ca, a ceremony record, a restored backup, and the procedures to renew the intermediate and replace the root |
 | 3. Clients trust the CA | every browser, phone and program you care about trusts the root – and only the root (P4, to come) |
 | 4. The first device | one device served with a certificate of your CA, renewed on a schedule (to come) |
 | 5. All devices and services | devices through SICK, services through ACME (P6, P7, to come) |

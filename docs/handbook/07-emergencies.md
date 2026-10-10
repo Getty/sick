@@ -86,8 +86,9 @@ the intermediate is valid. If the intermediate itself has expired, see
 At stake: every certificate under it fails at once in every client, and the
 CA cannot issue.
 
-Renew the intermediate with the offline root (P3c, card k31: procedure and
-test to come), then `sick run --force` for every device and let ACME
+Renew the intermediate with the offline root ([chapter 2, "Renewing the
+intermediate"](02-the-ca.md#renewing-the-intermediate)), switch at once and
+retire the old one, then `sick run --force` for every device and let ACME
 clients renew. Prevention is cheaper: the intermediate's end date is in the
 backup manifest and the ceremony record; P5 monitors it.
 
@@ -98,8 +99,10 @@ name constraints** – and clients accept them. Outside the constraints they
 refuse them (tested, chapter 2). No rollback: the old intermediate must go.
 
 1. Stop the CA (`docker compose stop ca`).
-2. With the offline root, make a new intermediate with a **new key** (P3c,
-   to come), and import it.
+2. With the offline root, make a new intermediate with a **new key**
+   (`ceremony.sh --renew-intermediate`), switch to it
+   (`init-ca.sh --switch-intermediate`) and retire the old one right away
+   (`--retire-intermediate`) – no overlap ([chapter 2](02-the-ca.md#renewing-the-intermediate)).
 3. `sick run --force` for every device; make every ACME client renew.
 4. Take the old intermediate off the trust page and out of
    `ca.intermediates`, and out of every program's `ca_bundle.pem` and every
@@ -114,7 +117,7 @@ refuse them (tested, chapter 2). No rollback: the old intermediate must go.
 
 At stake: nothing today – but no new intermediate can ever be signed. When
 the intermediate nears its end (or is compromised), you need a new root,
-and every client has to learn it (root replacement, P3c). Start the
+and every client has to learn it ([root replacement](02-the-ca.md#replacing-the-root)). Start the
 replacement early, while the current intermediate still works: that turns
 an emergency into a planned change.
 
@@ -132,5 +135,5 @@ constraints and issue for any name to every client that trusts your root.
 4. No overlap period with the old root as for a planned replacement: it is
    the attacker's root now.
 
-*Not tried* as a drill; the planned root replacement (P3c) exercises the
-mechanics.
+*Not tried* as a drill; the planned root replacement (`t/e2e/ca-rollover.sh`)
+exercises the mechanics.
