@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-10T16:51:23Z
+created: 2026-10-10T16:01:04Z
+id: 28
+priority: high
+started: 2026-10-10T16:12:26Z
+status: done
+tags:
+- trust
+- pki
+- finding
+title: 'Trust page: intermediates must not become trust anchors'
+updated: 2026-10-10T16:51:34Z
+---
+
+Finding from k8 (sick-worker, 2026-10-10). The page says an intermediate is no second root, but on Debian (/usr/local/share/ca-certificates), Fedora (ca-trust/source/anchors), p11-kit (trust anchor --store) and Android (user CA store) it tells people to install the intermediates where they become anchors. Such an intermediate stays trusted after the root is removed or rotated, and a compromised intermediate cannot be cut off by removing the root. Done when: anchors get the root only everywhere; intermediates are handed to programs through ca_bundle.pem or are sent by the device (the switch case stays solved and is re-tested); the page and README say so; t/50 asserts it. Belongs to P4 (k14) but is wrong today, so first.
+
+Evidence: t/e2e/trust-anchors.sh + docs/findings/trust-anchors.md (Debian 13, Fedora 44; curl/OpenSSL, s_client, GnuTLS, NSS). Bug confirmed: intermediate in Debian/Fedora/p11-kit anchors stays accepted after root removal by curl, GnuTLS, NSS. Decision (orchestrator, from ssl-tls-pki): system stores and Android get the root only; intermediate via the chain the device sends, or ca_bundle.pem as a per-program CAfile (risk bounded to that file), or NSS with no trust flags; Windows/macOS/iOS keep their non-trust intermediate stores (not tried).
+
+sick-worker: page (lib/SICK/Trust.pm), README.md and docker/README.md now give system stores, p11-kit and Android the root only; intermediate via chain sent by device, ca_bundle.pem as per-program CAfile (anchor inside that file, replace on rotation), or no-trust placements (Firefox/Chrome NSS, Windows CA store, macOS keychain, iOS pkcs1; latter marked not tried). Intro and FACTS 'no second root' sentence fixed. t/50-trust.t asserts root-only stores + bundle + NSS no-trust import; the new asserts fail on HEAD's Trust.pm. prove -lr t: 18 files, 172 tests, no skips. t/e2e/run-local.sh: ALL PASSED. Page without intermediates byte-identical. Not committed.
+
+Committed as 87803b5 (evidence) and a6d5ccf (fix)
