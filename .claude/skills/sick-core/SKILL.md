@@ -111,6 +111,28 @@ programs; the header of each lists what was observed and with which version, and
 `Issuer::StepCA` or `Target::Acmesh`, read that header. A fake changes when the real
 program was seen to behave differently, and the header gets that observation.
 
+## Where the house stack stops
+
+Moo, `Types::Standard` and `Path::Tiny` are the rule (CLAUDE.md). Three places
+deviate on purpose and stay that way; a conversion that "tidies" them back is a
+regression:
+
+- **A key file is created with `sysopen` and `O_CREAT|O_EXCL` and its mode**
+  (`SICK::Temp::write`). `Path::Tiny`'s `spew` writes a temporary file and
+  renames it with a mode from the umask, so for a moment the key exists with
+  wider permissions.
+- **What goes to an external program is a plain string.** `SICK::Temp` hands
+  out `path` and `file` as strings, and `SICK::Command::run` refuses anything
+  in `@argv` that is a reference. Do not teach it to accept objects that
+  stringify: what reaches `exec` is exactly what was checked.
+- **No Type::Tiny type where its message would repeat the value.** A
+  Type::Tiny failure appends the value it rejected, even with a custom
+  `message`. Attributes that may hold a secret or raw user input (the `key` of
+  `SICK::Bundle`, the `data` of `SICK::Config`) get a coderef `isa` with a
+  fixed text, or none, and the domain check in `BUILDARGS`/`BUILD` comes first
+  with the message the tests pin. Elsewhere the type is the second line behind
+  that check.
+
 ## Copies that must stay identical
 
 `k8s/test/init-ca.sh` and `k8s/test/trust-httpd.conf` are copies of the files in
