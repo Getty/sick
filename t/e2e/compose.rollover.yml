@@ -1,0 +1,71 @@
+# Added by t/e2e/ca-rollover.sh on top of docker/compose.yml,
+# docker/compose.import.yml and t/e2e/compose.local.yml.
+#
+# Under the name constraints of the ceremony (example.internal) the CA is
+# reached as ca.example.internal (see compose.ceremony.yml). Three devices:
+#
+#   web    presents its certificate alone (compose.local.yml), like a switch
+#   web2   the same, with a volume of its own
+#   web3   sends its chain - the pilot under the new root in phase A
+#
+# A client (the Debian container of the script) reaches them as web, web2
+# and web3 and checks the names web*.example.internal.
+
+services:
+  ca:
+    networks:
+      default:
+        aliases: [ca.example.internal]
+
+  sick:
+    volumes:
+      - devfiles2:/srv/device2
+      - devfiles3:/srv/device3
+
+  web2:
+    image: ${SICK_IMAGE:-sick:local}
+    pull_policy: never
+    init: true
+    stop_grace_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/usr/local/bin/web-serve.sh"]
+    tmpfs:
+      - /tmp:mode=0700,size=4m
+    volumes:
+      - devfiles2:/srv/device:ro
+      - ${SICK_E2E_HERE:?set by the script}/web-serve.sh:/usr/local/bin/web-serve.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:443 </dev/null >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  web3:
+    image: ${SICK_IMAGE:-sick:local}
+    pull_policy: never
+    init: true
+    stop_grace_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/usr/local/bin/web-serve.sh"]
+    environment:
+      SICK_E2E_WEB_CHAIN: "yes"
+    tmpfs:
+      - /tmp:mode=0700,size=4m
+    volumes:
+      - devfiles3:/srv/device:ro
+      - ${SICK_E2E_HERE:?set by the script}/web-serve.sh:/usr/local/bin/web-serve.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:443 </dev/null >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+volumes:
+  devfiles2:
+  devfiles3:

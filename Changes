@@ -127,3 +127,10 @@ Revision history for SICK
     - sick trust refuses an intermediate that is not a CA certificate
       (CA:TRUE), naming its subject, instead of publishing a device
       certificate of the root as intermediate.
+    - Docker: ceremony.sh --renew-intermediate makes a new intermediate under
+      the existing root, copying the name constraints from the current one;
+      init-ca.sh --switch-intermediate and --retire-intermediate switch a
+      running CA with an overlap in which the handover and the trust page
+      carry both; docker/compose.ca-next.yml runs the CA of a new root on a
+      second volume; t/e2e/ca-rollover.sh proves both with OpenSSL and
+      GnuTLS clients.

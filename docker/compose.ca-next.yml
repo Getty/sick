@@ -1,0 +1,19 @@
+# Root replacement, phase B: the ca service on a second volume, "ca-next",
+# that holds the CA of the new hierarchy (import mode, compose.import.yml).
+# The volume "ca" with the old CA is kept as it is, unused, for a planned
+# rollback: start without this file and the old CA is back. See README.md.
+#
+#   SICK_CA_IMPORT=/path/to/new-hierarchy SICK_CA_DNS=ca.example.internal \
+#     docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d ca
+#
+# Compose merges the volumes of a service by their target: this mount
+# replaces "ca:/home/step" of compose.yml. Every later command for this
+# project names this file as well, or Compose goes back to the old volume.
+
+services:
+  ca:
+    volumes:
+      - ca-next:/home/step
+
+volumes:
+  ca-next:   # the CA of the new hierarchy. Back this up.

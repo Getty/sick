@@ -27,6 +27,34 @@
 # password over and has step-ca reload (SIGHUP). Tokens signed with the old
 # key are refused from then on.
 #
+# Renewing the intermediate, on the running CA, with the output of
+# "ceremony.sh --renew-intermediate" copied into the volume:
+#
+#   docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+#   docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
+#
+# checks that the new intermediate leads to the root of this CA, that the
+# key is its own and opens with the password beside it, and that the key is
+# not the current one; re-encrypts the key with the password of the CA
+# (step-ca keeps the password it started with across a reload), keeps the
+# current intermediate as the previous one, installs the new one and has
+# step-ca reload (SIGHUP): it signs with the new one from then on. The
+# directory is removed from the volume afterwards, also when the switch is
+# refused; another one is given as --switch-intermediate DIR (a path in the
+# container) and is left alone. The handover then holds both
+# intermediates, the new one first, so that devices with a certificate under
+# the previous one stay "ok" and the trust page shows both.
+# After the overlap:
+#
+#   docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --retire-intermediate
+#
+# drops the previous intermediate from the handover and deletes its key.
+# Devices still under it are "foreign-ca" from then on and renewed by the
+# next run (a device that sends the previous one along stays "ok" while it
+# is valid). On a stopped CA both should work through "docker compose run
+# --rm ca --switch-intermediate"; step-ca reads the result at its next
+# start (not tried).
+#
 #   SICK_CA_IMPORT_DIR    the directory to import at the first start
 #                         (default $STEPPATH/import); it holds
 #                           root_ca.crt          the root certificate
@@ -80,6 +108,11 @@ ca_password=$STEPPATH/secrets/password
 provisioner_password=$STEPPATH/secrets/provisioner_password
 root_cert=$STEPPATH/certs/root_ca.crt
 intermediate_cert=$STEPPATH/certs/intermediate_ca.crt
+intermediate_key=$STEPPATH/secrets/intermediate_ca_key
+# the intermediate a switch replaced, until it is retired
+previous_cert=$STEPPATH/certs/intermediate_ca.previous.crt
+previous_key=$STEPPATH/secrets/intermediate_ca_key.previous
+switch_dir=$STEPPATH/switch
 
 name=${SICK_CA_NAME:-SICK Internal CA}
 provisioner=${SICK_CA_PROVISIONER:-sick}
@@ -206,6 +239,81 @@ rotate_provisioner() {
   mv "$config.rotate" "$config"
   mv "$provisioner_password.new" "$provisioner_password"
   log "rotated provisioner '$provisioner': key $new_kid with a new password replaces key $old_kid"
+}
+
+#### switching to a new intermediate, retiring the previous one
+
+describe_cert() { printf "'%s' (%s)" "$(step certificate inspect --format json "$1" | jq -r .subject_dn)" "$(step certificate fingerprint "$1")"; }
+
+# <dir>: the output of ceremony.sh --renew-intermediate, readable by this user
+switch_intermediate() {
+  local from=$1 file have want
+  [ -f "$config" ] || die "no CA in $STEPPATH: nothing to switch"
+  [ ! -e "$previous_cert" ] \
+    || die "the previous intermediate $(describe_cert "$previous_cert") is still in its overlap: retire it first (--retire-intermediate)"
+  for file in intermediate_ca.crt intermediate_ca_key password; do
+    [ -s "$from/$file" ] || die "$from has no $file: give it the output of ceremony.sh --renew-intermediate"
+  done
+  for file in "$from"/*; do
+    [ "${file##*/}" = intermediate_ca_key ] && continue
+    if [ -f "$file" ] && grep -q 'PRIVATE KEY' "$file"; then
+      die "$file holds a private key: nothing but the intermediate key goes to the CA - the root key stays out"
+    fi
+  done
+  if [ -s "$from/root_ca.crt" ] \
+    && [ "$(step certificate fingerprint "$from/root_ca.crt")" != "$(step certificate fingerprint "$root_cert")" ]; then
+    die "$from/root_ca.crt is not the root of this CA ($(step certificate fingerprint "$root_cert")): a new root is a new CA, not a switch"
+  fi
+  step certificate verify "$from/intermediate_ca.crt" --roots "$root_cert" >/dev/null 2>"$STEPPATH/switch.log" \
+    || { cat "$STEPPATH/switch.log" >&2; rm -f "$STEPPATH/switch.log"; die "$from/intermediate_ca.crt does not lead to the root of this CA: refused, nothing changed"; }
+  rm -f "$STEPPATH/switch.log"
+  want=$(step certificate key "$from/intermediate_ca.crt" 2>/dev/null) || die "cannot read the key of $from/intermediate_ca.crt"
+  have=$(step crypto key public "$from/intermediate_ca_key" --password-file "$from/password" 2>/dev/null) \
+    || die "cannot open $from/intermediate_ca_key with the password in $from/password"
+  [ "$have" = "$want" ] || die "$from/intermediate_ca_key is not the key of $from/intermediate_ca.crt: refused, nothing changed"
+  [ "$want" != "$(step certificate key "$intermediate_cert")" ] \
+    || die "$from/intermediate_ca.crt has the key of the current intermediate: a renewal makes a new key"
+
+  # the CA's own password: step-ca keeps the one it started with on SIGHUP
+  rm -f "$intermediate_key.new"
+  step crypto change-pass "$from/intermediate_ca_key" --password-file "$from/password" \
+    --new-password-file "$ca_password" --out "$intermediate_key.new" --force >/dev/null 2>"$STEPPATH/switch.log" \
+    || { cat "$STEPPATH/switch.log" >&2; rm -f "$STEPPATH/switch.log" "$intermediate_key.new"; die 'cannot re-encrypt the new key with the password of the CA; nothing changed'; }
+  rm -f "$STEPPATH/switch.log"
+  [ "$(step crypto key public "$intermediate_key.new" --password-file "$ca_password" 2>/dev/null)" = "$want" ] \
+    || { rm -f "$intermediate_key.new"; die 'the re-encrypted key does not open with the password of the CA; nothing changed'; }
+  install -m 0644 "$from/intermediate_ca.crt" "$intermediate_cert.new"
+
+  # the current one becomes the previous one, then the new one takes its place
+  cp -p "$intermediate_cert" "$previous_cert"
+  cp -p "$intermediate_key" "$previous_key"
+  mv "$intermediate_key.new" "$intermediate_key"
+  mv "$intermediate_cert.new" "$intermediate_cert"
+  log "switched the intermediate: $(describe_cert "$intermediate_cert") signs from now on"
+  log "the previous intermediate $(describe_cert "$previous_cert") stays in the handover until --retire-intermediate"
+}
+
+retire_intermediate() {
+  [ -f "$config" ] || die "no CA in $STEPPATH: nothing to retire"
+  [ -e "$previous_cert" ] || die 'there is no previous intermediate: nothing to retire'
+  local what
+  what=$(describe_cert "$previous_cert")
+  rm -f "$previous_key" "$previous_cert"
+  log "retired the previous intermediate $what: out of the handover, its key deleted from $STEPPATH"
+}
+
+# As root: what is to be switched to, copied for the user of the image into
+# a private directory of the volume.
+stage_switch() {
+  local from=$1 to=$STEPPATH/switch.staged file
+  [ -d "$from" ] || die "$from does not exist: copy the output of ceremony.sh --renew-intermediate there (docker compose cp DIR ca:$switch_dir)"
+  rm -rf "$to"
+  mkdir -m 0700 "$to"
+  # every file: switch_intermediate judges what is there
+  for file in "$from"/*; do
+    [ ! -f "$file" ] || install -o "$run_as" -m 0600 "$file" "$to/${file##*/}"
+  done
+  chown "$run_as" "$to"
 }
 
 # SICK_CA_DNS through a jq filter, as arguments of step ca init
@@ -339,22 +447,32 @@ describe_policy() {
 
 #### what the sick service needs: two certificates and one password
 
+# During the overlap after a switch, intermediate_ca.crt holds the new
+# intermediate and the previous one, in that order.
 hand_over() {
   [ -d "$handover" ] || { log "no $handover: nothing is handed over"; return 0; }
   put "$root_cert"            "$handover/root_ca.crt"         0644
-  put "$intermediate_cert"    "$handover/intermediate_ca.crt" 0644
+  if [ -f "$previous_cert" ]; then
+    local both
+    both=$(mktemp)
+    cat "$intermediate_cert" "$previous_cert" >"$both"
+    put "$both" "$handover/intermediate_ca.crt" 0644 'the new and the previous intermediate'
+    rm -f "$both"
+  else
+    put "$intermediate_cert"  "$handover/intermediate_ca.crt" 0644
+  fi
   put "$provisioner_password" "$handover/provisioner.pw"      0600
 }
 
 # Copy a file unless the copy is already the same, never leaving half a file.
 put() {
-  local from=$1 to=$2 mode=$3
+  local from=$1 to=$2 mode=$3 what=${4:-}
   if [ -f "$to" ] && cmp -s "$from" "$to"; then
     return 0
   fi
   install -m "$mode" "$from" "$to.new"
   mv "$to.new" "$to"
-  log "handed over ${to##*/}"
+  log "handed over ${to##*/}${what:+: $what}"
 }
 
 #### main
@@ -386,6 +504,45 @@ case ${1:-} in
     fi
     hand_over
     reload
+    exit 0
+    ;;
+  --switch-intermediate-only)
+    switch_intermediate "$2"
+    exit 0
+    ;;
+  --switch-intermediate)
+    # docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate [DIR]
+    from=${2:-$switch_dir}
+    status=0
+    if [ "$(id -u)" = 0 ]; then
+      ( stage_switch "$from" ) || status=$?
+      [ "$status" -ne 0 ] \
+        || su "$run_as" -s /bin/bash -c 'exec /bin/bash "$0" --switch-intermediate-only "$1"' -- "$0" "$STEPPATH/switch.staged" \
+        || status=$?
+      rm -rf "$STEPPATH/switch.staged"
+    else
+      ( switch_intermediate "$from" ) || status=$?
+    fi
+    # the key and its password do not stay in the volume, taken or refused:
+    # the operator has the original
+    if [ "$from" = "$switch_dir" ] && [ -e "$switch_dir" ]; then rm -rf "$switch_dir" && log "removed $switch_dir"; fi
+    [ "$status" -eq 0 ] || exit "$status"
+    hand_over
+    reload
+    exit 0
+    ;;
+  --retire-intermediate-only)
+    retire_intermediate
+    exit 0
+    ;;
+  --retire-intermediate)
+    # docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --retire-intermediate
+    if [ "$(id -u)" = 0 ]; then
+      su "$run_as" -s /bin/bash -c 'exec /bin/bash "$0" --retire-intermediate-only' -- "$0"
+    else
+      retire_intermediate
+    fi
+    hand_over
     exit 0
     ;;
   '') ;;

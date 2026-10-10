@@ -328,6 +328,66 @@ or requiring external account binding (`--require-eab`). Until then the
 policy (`SICK_CA_ALLOW_*`) and the name constraints bound what any account
 can obtain.
 
+### Renewing the intermediate, replacing the root
+
+**A new intermediate under the same root** (import mode; the root key comes
+out of its safe place for this):
+
+```bash
+docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/ceremony.sh:/ceremony.sh:ro" -v /media/offline:/work \
+  --entrypoint bash sick:local /ceremony.sh --renew-intermediate --operator 'A. Admin' \
+  --out /work/new-intermediate --root-cert /work/for-the-ca/root_ca.crt \
+  --root-key /work/root/root_ca_key --root-password-file /work/root/root.pw \
+  --intermediate /work/for-the-ca/intermediate_ca.crt
+docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
+```
+
+The ceremony makes a new key and copies the name constraints and the key
+type from the current intermediate (`--dns`, `--ip`, `--kty` override them),
+and its record says what it followed. `--switch-intermediate` checks that the
+new intermediate leads to the CA's root and that the key is its own and new,
+re-encrypts the key with the CA's password, keeps the old intermediate as the
+previous one, has step-ca reload and removes `/home/step/switch`, also when it
+refuses. From then on the handover's `intermediate_ca.crt` holds both, new
+first: devices under the old one stay `ok`, the trust page shows both, new
+certificates come from the new one. After the overlap:
+
+```bash
+docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --retire-intermediate
+```
+
+Devices that present their certificate alone are `foreign-ca` from then on
+and renewed by the next run; a device that sends the old intermediate along
+stays `ok` as long as that intermediate is valid – after a compromise,
+`sick run --force`.
+
+**A new root**, in three phases:
+
+| Phase | What happens |
+|---|---|
+| A, announce | a new ceremony makes the new hierarchy; the device list gets `ca.additional_roots: [/etc/sick/secrets/root_ca_2.crt]` (any file the `sick` service can read; the secrets directory is mounted already); `sick trust` publishes both roots. Clients take the new page |
+| B, switch | `docker compose stop ca`, then the CA on a second volume in import mode: `SICK_CA_IMPORT=<new hierarchy> docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d ca`. The volume `ca` stays as it is, unused. `ca.root` follows the handover to the new root; `additional_roots` names the old one; `sick run --force` re-issues every device |
+| C, retire | `additional_roots` emptied, `sick trust`; clients remove the old root |
+
+From phase B on, every `docker compose` command names
+`compose.ca-next.yml`, or Compose goes back to the old volume – which is the
+planned rollback: without that file the old CA is back, `additional_roots`
+returns to the new root, `sick run --force`. After a compromise of the old
+root there is no rollback and no overlap: its volume is destroyed and
+clients remove the old root at once.
+
+What the overlap does not carry: the trust page holds the intermediates of
+the current hierarchy only (`ca.intermediates` must lead to `ca.root`). A
+device that presents its certificate alone and is still under the other root
+is refused by a client that has only the page's `ca_bundle.pem` – in phase A
+a leaf of the new hierarchy, in phase B one of the old. Devices that send
+their chain are not affected.
+
+`t/e2e/ca-rollover.sh` runs both procedures in containers, with curl
+(OpenSSL) and gnutls-cli (GnuTLS) as clients.
+
 ## The sick service
 
 The entrypoint runs `sick run` at once and then every `SICK_INTERVAL`, and
