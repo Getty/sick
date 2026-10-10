@@ -107,6 +107,26 @@ subtest 'validity, fingerprint, subject and issuer' => sub {
   ok( SICK::Bundle->new( cert => $root->{pem} )->is_self_signed, 'a root certificate is' );
 };
 
+subtest 'is_ca and signs_itself' => sub {
+  my $lone = new_ca( dir => $tmp, name => 'lone', cn => 'lone.example.internal', extensions => 'leaf_ext' );
+  ok( SICK::Bundle->new( cert => $root->{pem} )->is_ca,  'a root is a CA' );
+  ok( SICK::Bundle->new( cert => $inter->{pem} )->is_ca, '... and so is an intermediate' );
+  ok !SICK::Bundle->new( cert => $leaf->{cert_pem} )->is_ca, 'a leaf is not';
+  ok !SICK::Bundle->new( cert => $lone->{pem} )->is_ca, '... self-signed or not';
+
+  ok( SICK::Bundle->new( cert => $root->{pem} )->signs_itself, 'a root signs itself' );
+  ok !SICK::Bundle->new( cert => $inter->{pem} )->signs_itself, 'an intermediate does not';
+  ok !SICK::Bundle->new( cert => $leaf->{cert_pem} )->signs_itself, '... nor does a leaf';
+  SKIP: {
+    skip 'a certificate without key identifiers needs OpenSSL 3', 2 unless SICK::OpenSSL::major() >= 3;
+    my $signer = new_ca( dir => $tmp, name => 'twin-signer', cn => 'Twin' );
+    my $forged = SICK::Bundle->new(
+      cert => new_ca( dir => $tmp, name => 'twin', cn => 'Twin', issuer => $signer, extensions => 'forged_ca_ext' )->{pem} );
+    ok $forged->is_self_signed, 'a certificate signed by another key under the same name looks self-signed';
+    ok !$forged->signs_itself, '... but does not sign itself';
+  }
+};
+
 subtest 'is_issued_by' => sub {
   my $bundle = SICK::Bundle->new( cert => $leaf->{cert_pem} );
   ok $bundle->is_issued_by( $root->{pem} ), 'true for the CA that signed it';

@@ -25,6 +25,12 @@ basicConstraints     = critical,CA:TRUE
 keyUsage             = critical,keyCertSign,cRLSign
 subjectKeyIdentifier = hash
 
+[forged_ca_ext]
+basicConstraints       = critical,CA:TRUE
+keyUsage               = critical,keyCertSign,cRLSign
+subjectKeyIdentifier   = none
+authorityKeyIdentifier = none
+
 [leaf_ext]
 basicConstraints     = CA:FALSE
 subjectKeyIdentifier = hash
@@ -79,8 +85,14 @@ sub _key {
   return $path;
 }
 
-# new_ca( dir => $dir, name => 'root', cn => 'Some CA', issuer => $other_ca )
+# new_ca( dir => $dir, name => 'root', cn => 'Some CA', issuer => $other_ca,
+#         extensions => 'ca_ext' )
 # -> { cert => $path, key => $path, pem => $text }
+# extensions names a section of the config above, for the certificates that
+# are no proper CA on purpose: 'leaf_ext' makes a self-signed CA:FALSE
+# certificate, 'forged_ca_ext' with an issuer of the same cn one that looks
+# self-signed (no key identifiers to tell) and is signed by another key
+# (OpenSSL 3 and later: 'none' is not known before).
 sub new_ca {
   my ( %arg ) = @_;
   my $dir    = $arg{dir}  or croak 'new_ca needs dir';
@@ -89,17 +101,18 @@ sub new_ca {
   my $config = _config($dir);
   my $key    = _key( $dir.'/'.$name.'.key' );
   my $cert   = $dir.'/'.$name.'.crt';
+  my $ext    = $arg{extensions} || 'ca_ext';
 
   if ( my $issuer = $arg{issuer} ) {
     my $csr = $dir.'/'.$name.'.csr';
     _openssl( [ 'req', '-new', '-config', $config, '-key', $key, '-subj', '/CN='.$cn, '-out', $csr ] );
     _openssl( [ 'x509', '-req', '-in', $csr, '-CA', $issuer->{cert}, '-CAkey', $issuer->{key},
-        '-set_serial', ++$serial, '-days', 30, '-extfile', $config, '-extensions', 'ca_ext',
+        '-set_serial', ++$serial, '-days', 30, '-extfile', $config, '-extensions', $ext,
         '-out', $cert ] );
   }
   else {
     _openssl( [ 'req', '-new', '-x509', '-config', $config, '-key', $key, '-subj', '/CN='.$cn,
-        '-days', 30, '-extensions', 'ca_ext', '-out', $cert ] );
+        '-days', 30, '-extensions', $ext, '-out', $cert ] );
   }
 
   return { cert => $cert, key => $key, pem => slurp($cert) };

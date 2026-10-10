@@ -104,11 +104,11 @@ subtest 'intermediates' => sub {
   my $missing = $tmp.'/missing-intermediate.crt';
   my $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $missing )->intermediates_pem; 1 };
   ok !$ok, 'intermediates_pem dies when the file is missing';
-  like $@, qr/^cannot read CA intermediates '\Q$missing\E': \S/, '... with path and reason';
+  like $@, qr/^cannot read ca\.intermediates '\Q$missing\E': \S/, '... with path and reason';
 
   $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $password_file )->intermediates_pem; 1 };
   ok !$ok, 'intermediates_pem dies when the file holds no certificate';
-  like $@, qr/^CA intermediates '\Q$password_file\E' is not a PEM certificate/, '... saying so';
+  like $@, qr/^ca\.intermediates '\Q$password_file\E' is not a PEM certificate/, '... saying so';
   unlike $@, qr/\Q$secret\E/, '... without showing the file';
 
   # the leaf alone, as a switch presents it
@@ -124,11 +124,84 @@ subtest 'a root file with the intermediate in it' => sub {
   my $crowded = SICK::Issuer::StepCA->new( %ca, root => $bundle );
   my $ok = eval { $crowded->root_pem; 1 };
   ok !$ok, 'root_pem dies';
-  like $@, qr/^CA root '\Q$bundle\E' holds more than one certificate; step needs the root alone/, '... saying why';
+  like $@, qr/^ca\.root '\Q$bundle\E' holds more than one certificate; step needs the root alone/, '... saying why';
   like $@, qr/ca\.intermediates/, '... and where the intermediate belongs';
   $ok = eval { $crowded->issue( {%spec} ); 1 };
   ok !$ok, 'issue dies the same way';
   is scalar( () = calls() ), 0, '... before step is called';
+};
+
+subtest 'a root file with something else than the root in it' => sub {
+  # step trusts whatever is in --root as an anchor; SICK would judge the
+  # devices against it and sick trust would hand it to the clients
+  my $other     = new_ca( dir => $tmp, name => 'other-root', cn => 'Other Root' );
+  my $root_leaf = new_cert( ca => $root, dir => $tmp, name => 'root-leaf', cn => 'device.example.internal' );
+  my $lone_leaf = new_ca( dir => $tmp, name => 'lone-leaf', cn => 'lone.example.internal', extensions => 'leaf_ext' );
+
+  my @cases = (
+    [ 'the intermediate', $inter->{cert}, qr/issued by CN=Fake Step Root(?: at |\z)/ ],
+    [ 'a leaf of the CA', $root_leaf->{cert}, qr/issued by CN=Fake Step Root(?: at |\z)/ ],
+    [ 'a self-signed leaf', $lone_leaf->{cert}, qr/basicConstraints does not say CA:TRUE(?: at |\z)/ ],
+  );
+  if ( SICK::OpenSSL::major() >= 3 ) {
+    my $twin   = new_ca( dir => $tmp, name => 'twin-signer', cn => 'Twin Root' );
+    my $forged = new_ca( dir => $tmp, name => 'twin', cn => 'Twin Root', issuer => $twin, extensions => 'forged_ca_ext' );
+    push @cases, [ 'a certificate that names itself as issuer and is signed by another key',
+      $forged->{cert}, qr/its signature does not verify with its own key(?: at |\z)/ ];
+  }
+
+  for my $case (@cases) {
+    my ( $what, $path, $reason ) = @$case;
+    my $wrong = SICK::Issuer::StepCA->new( %ca, root => $path );
+    my $ok = eval { $wrong->root_pem; 1 };
+    ok !$ok, 'root_pem dies for '.$what;
+    like $@, qr/^ca\.root '\Q$path\E' is not a self-signed CA certificate: /, '... naming ca.root and the path';
+    like $@, $reason, '... and the reason';
+    $ok = eval { $wrong->issue( {%spec} ); 1 };
+    ok !$ok, '... issue dies the same way';
+    is scalar( () = calls() ), 0, '... before step is called';
+  }
+
+  is( SICK::Issuer::StepCA->new( %ca, root => $other->{cert} )->root_pem, $other->{pem},
+    'the root of another CA is a root: which CA it is, step finds out' );
+};
+
+subtest 'an intermediates file with something else than intermediates in it' => sub {
+  my $foreign_root  = new_ca( dir => $tmp, name => 'foreign-root',  cn => 'Foreign Root' );
+  my $foreign_inter = new_ca( dir => $tmp, name => 'foreign-inter', cn => 'Foreign Intermediate', issuer => $foreign_root );
+  my $leaf_of_root  = new_cert( ca => $root, dir => $tmp, name => 'inter-leaf', cn => 'device.example.internal' );
+
+  my @cases = (
+    [ 'a leaf of the CA', $leaf_of_root->{cert_pem}, 'CN=device.example.internal',
+      qr/is not a CA certificate \(basicConstraints does not say CA:TRUE\)(?: at |\z)/ ],
+    [ 'the leaf the CA hands out', $leaf->{cert_pem}, 'CN=switch.example.internal',
+      qr/is not a CA certificate \(basicConstraints does not say CA:TRUE\)(?: at |\z)/ ],
+    [ 'an intermediate of another CA', $foreign_inter->{pem}, 'CN=Foreign Intermediate',
+      qr/does not lead to ca\.root '\Q$root->{cert}\E' \(CN=Fake Step Root\)(?: at |\z)/ ],
+    [ 'the root of another CA', $foreign_root->{pem}, 'CN=Foreign Root',
+      qr/does not lead to ca\.root '\Q$root->{cert}\E' \(CN=Fake Step Root\)(?: at |\z)/ ],
+    [ 'a good intermediate followed by an intermediate of another CA', $inter->{pem}.$foreign_inter->{pem},
+      'CN=Foreign Intermediate', qr/does not lead to ca\.root/ ],
+  );
+  my $n = 0;
+  for my $case (@cases) {
+    my ( $what, $pem, $subject, $reason ) = @$case;
+    my $path = spew( $tmp.'/wrong-intermediates-'.++$n.'.pem', $pem );
+    my $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $path )->intermediates_pem; 1 };
+    ok !$ok, 'intermediates_pem dies for '.$what;
+    like $@, qr/^ca\.intermediates '\Q$path\E': the certificate '\Q$subject\E' /,
+      '... naming ca.intermediates, the path and the subject';
+    like $@, $reason, '... and the reason';
+  }
+
+  my $with_root = spew( $tmp.'/intermediates-and-root.pem', $inter->{pem}.$root->{pem} );
+  is( SICK::Issuer::StepCA->new( %ca, intermediates => $with_root )->intermediates_pem,
+    $inter->{pem}.$root->{pem}, 'a bundle of intermediate and root is taken as it is' );
+
+  my $deep  = new_ca( dir => $tmp, name => 'inter-deep', cn => 'Fake Step Intermediate Deep', issuer => $inter );
+  my $chain = spew( $tmp.'/intermediates-deep.pem', $deep->{pem}.$inter->{pem} );
+  is( SICK::Issuer::StepCA->new( %ca, intermediates => $chain )->intermediates_pem,
+    $deep->{pem}.$inter->{pem}, 'an intermediate below an intermediate leads to the root through the other' );
 };
 
 subtest 'issue: the command line' => sub {
@@ -258,12 +331,12 @@ SKIP: {
   my $no_root = $tmp.'/missing-root.crt';
   $ok = eval { SICK::Issuer::StepCA->new( %ca, root => $no_root )->issue( {%spec} ); 1 };
   ok !$ok, 'issue dies when the root file is missing';
-  like $@, qr/^cannot read CA root '\Q$no_root\E': \S/, '... with path and reason';
+  like $@, qr/^cannot read ca\.root '\Q$no_root\E': \S/, '... with path and reason';
   is scalar( () = calls() ), 0, '... and step is not called';
 
   $ok = eval { SICK::Issuer::StepCA->new( %ca, root => $password_file )->root_pem; 1 };
   ok !$ok, 'root_pem dies when the root file is no certificate';
-  like $@, qr/^CA root '\Q$password_file\E' is not a PEM certificate/, '... saying so';
+  like $@, qr/^ca\.root '\Q$password_file\E' is not a PEM certificate/, '... saying so';
   unlike $@, qr/\Q$secret\E/, '... without showing the file';
 
   my $no_step = $tmp.'/not-installed/step';

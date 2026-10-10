@@ -94,3 +94,9 @@ Revision history for SICK
       as a program's own CA file, or through an intermediate kept without
       trust (Firefox, Chrome on Linux, Windows, macOS, the Apple profile).
       On Android only devices that send their chain are accepted.
+    - step-ca: ca.root has to be a single self-signed CA certificate and
+      every certificate in ca.intermediates a CA certificate leading to it;
+      otherwise each device fails with a message naming the key, the file
+      and the reason. Messages say ca.root / ca.intermediates instead of
+      "CA root" / "CA intermediates". New SICK::Bundle methods is_ca and
+      signs_itself.

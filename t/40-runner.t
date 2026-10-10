@@ -435,7 +435,7 @@ subtest 'a CA that signs through an intermediate, a device that presents its cer
   my $missing = runner( $list, issuer => SICK::Issuer->from_ca( %ca, intermediates => $tmp.'/no-such-intermediate.crt' ) );
   my @results = $missing->run;
   is_deeply brief(@results), [ [ 'chained', 'failed', 'error' ] ], 'an intermediates file that cannot be read fails the device';
-  like $results[0]{error}, qr/^cannot read CA intermediates '\Q$tmp\E\/no-such-intermediate\.crt': \S/, '... with path and reason';
+  like $results[0]{error}, qr/^cannot read ca\.intermediates '\Q$tmp\E\/no-such-intermediate\.crt': \S/, '... with path and reason';
   is_deeply leftovers(), [], 'no temporary directory is left';
 };
 
@@ -539,7 +539,34 @@ subtest 'a CA whose root cannot be read' => sub {
   my $runner = runner( "devices:\n".device_yaml('web').device_yaml('db'), issuer => $broken );
   my @results = $runner->run;
   is_deeply brief(@results), [ [ 'web', 'failed', 'error' ], [ 'db', 'failed', 'error' ] ], 'every device fails';
-  like $_->{error}, qr/^cannot read CA root '\Q$tmp\E\/no-such-root\.crt': \S/, '... with the path and the reason' for @results;
+  like $_->{error}, qr/^cannot read ca\.root '\Q$tmp\E\/no-such-root\.crt': \S/, '... with the path and the reason' for @results;
+};
+
+subtest 'a CA whose root or intermediates are not what they say' => sub {
+  my $root    = new_ca( dir => $tmp, name => 'check-root',    cn => 'Check Root' );
+  my $inter   = new_ca( dir => $tmp, name => 'check-inter',   cn => 'Check Intermediate', issuer => $root );
+  my $foreign = new_ca( dir => $tmp, name => 'check-foreign', cn => 'Check Foreign Root' );
+  my $stray   = new_ca( dir => $tmp, name => 'check-stray',   cn => 'Check Stray Intermediate', issuer => $foreign );
+  my %ca = (
+    url           => 'https://ca.example.internal:9000',
+    root          => $root->{cert},
+    provisioner   => 'sick',
+    password_file => $tmp.'/no-such.pw',
+  );
+  my $list = "devices:\n".device_yaml('web').device_yaml('db');
+
+  my @results = runner( $list, issuer => SICK::Issuer->from_ca( %ca, root => $inter->{cert} ) )->run;
+  is_deeply brief(@results), [ [ 'web', 'failed', 'error' ], [ 'db', 'failed', 'error' ] ],
+    'the intermediate as root: every device fails, none is renewed';
+  like $_->{error}, qr/^ca\.root '\Q$inter->{cert}\E' is not a self-signed CA certificate: issued by CN=Check Root\z/,
+    '... naming ca.root, the path and the issuer' for @results;
+
+  @results = runner( $list, issuer => SICK::Issuer->from_ca( %ca, intermediates => $stray->{cert} ) )->run;
+  is_deeply brief(@results), [ [ 'web', 'failed', 'error' ], [ 'db', 'failed', 'error' ] ],
+    'an intermediate of another CA: every device fails, none is renewed';
+  like $_->{error}, qr/^ca\.intermediates '\Q$stray->{cert}\E': the certificate 'CN=Check Stray Intermediate' does not lead to ca\.root/,
+    '... naming ca.intermediates, the path and the subject' for @results;
+  is_deeply leftovers(), [], 'no temporary directory is left';
 };
 
 done_testing;

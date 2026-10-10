@@ -307,7 +307,7 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   my $missing = $tmp.'/no-such-intermediate.crt';
   ( $code, $out, $err ) = cli( 'trust', $tmp.'/trust/nothing', '--config', $section->( intermediates => $missing ) );
   is $code, 1, 'an intermediates file that is not there: exit code 1';
-  like $err, qr/^sick: cannot read CA intermediates '\Q$missing\E': \S.*\n\z/, '... with path and reason';
+  like $err, qr/^sick: cannot read ca\.intermediates '\Q$missing\E': \S.*\n\z/, '... with path and reason';
   is $out, q{}, '... no claim of success';
   ok !-e $tmp.'/trust/nothing', '... and nothing written';
 };

@@ -192,6 +192,13 @@ sub is_self_signed {
   return $self->subject_dn eq $self->issuer_dn ? 1 : 0;
 }
 
+sub is_ca { $_[0]->_text =~ /^\s*X509v3 Basic Constraints:.*\n\s*CA:TRUE\b/m ? 1 : 0 }
+
+sub signs_itself {
+  my ( $self ) = @_;
+  return $self->_verifies( $self->cert, q{}, '-check_ss_sig' );
+}
+
 =method not_before
 
 Start of the validity as epoch seconds.
@@ -223,6 +230,20 @@ C<undef> when the subject has none.
 True when subject and issuer are the same name, as they are for a root
 certificate. The signature is not checked.
 
+=method is_ca
+
+True when the certificate is one of a CA: its basic constraints say
+C<CA:TRUE>. A certificate without that extension is none.
+
+=method signs_itself
+
+True when the certificate is self-signed and its signature verifies with
+its own public key, as C<openssl verify -check_ss_sig> sees it with the
+certificate as its only anchor. False for a certificate issued by another
+one, and for one that names itself as its issuer and was signed by another
+key. Like L</is_issued_by>, the validity period and the trust store of the
+system play no part.
+
 =cut
 
 sub is_issued_by {
@@ -233,27 +254,10 @@ sub is_issued_by {
   croak 'is_issued_by: the intermediates are not PEM certificates'
     if defined $intermediates_pem && $intermediates_pem =~ /\S/ && !@between;
 
-  my $tmp     = SICK::Temp->dir;
-  my $ca_file = $tmp->write( 'ca.pem',   join( q{}, @anchors ), 0644 );
-  my $cert    = $tmp->write( 'cert.pem', $self->cert,           0644 );
-
-  # Only the given CA may be the anchor: without these the default trust
-  # store of the system takes part, and any certificate of a public CA
-  # would pass.
-  my @args = ( 'verify', '-no_check_time', '-CAfile', $ca_file );
-  push @args, '-no-CApath'  if SICK::OpenSSL::major() >= 1;
-  push @args, '-no-CAstore' if SICK::OpenSSL::major() >= 3;
   # What helps to build the chain and is trusted for nothing: what the
   # device sent along, and what the caller knows the CA signs through.
   my $untrusted = join q{}, ( defined $self->chain ? $self->chain : () ), @between;
-  push @args, '-untrusted', $tmp->write( 'chain.pem', $untrusted, 0644 ) if length $untrusted;
-  push @args, $cert;
-
-  my ( $out, $err, $exit ) = SICK::OpenSSL::run(
-    \@args,
-    env => { SSL_CERT_DIR => $tmp->path, SSL_CERT_FILE => $ca_file },
-  );
-  return $exit == 0 ? 1 : 0;
+  return $self->_verifies( join( q{}, @anchors ), $untrusted );
 }
 
 =method is_issued_by
@@ -280,6 +284,29 @@ plays no part.
 =cut
 
 #### internals
+
+# openssl verify of the certificate with the given anchors as the only
+# trusted certificates, and the untrusted ones to build the chain with.
+sub _verifies {
+  my ( $self, $anchors, $untrusted, @flags ) = @_;
+  my $tmp     = SICK::Temp->dir;
+  my $ca_file = $tmp->write( 'ca.pem',   $anchors,     0644 );
+  my $cert    = $tmp->write( 'cert.pem', $self->cert, 0644 );
+
+  # Only the given anchors count: without these the default trust store of
+  # the system takes part, and any certificate of a public CA would pass.
+  my @args = ( 'verify', '-no_check_time', @flags, '-CAfile', $ca_file );
+  push @args, '-no-CApath'  if SICK::OpenSSL::major() >= 1;
+  push @args, '-no-CAstore' if SICK::OpenSSL::major() >= 3;
+  push @args, '-untrusted', $tmp->write( 'chain.pem', $untrusted, 0644 ) if length $untrusted;
+  push @args, $cert;
+
+  my ( $out, $err, $exit ) = SICK::OpenSSL::run(
+    \@args,
+    env => { SSL_CERT_DIR => $tmp->path, SSL_CERT_FILE => $ca_file },
+  );
+  return $exit == 0 ? 1 : 0;
+}
 
 sub _cert_blocks {
   my ( $self, $pem ) = @_;
@@ -337,9 +364,10 @@ sub _epoch {
   return timegm( $5, $4, $3, $2, $MONTH{$1}, $6 );
 }
 
-has _sans => ( is => 'lazy', isa => HashRef, init_arg => undef );
+# The extensions of the certificate as openssl prints them.
+has _text => ( is => 'lazy', isa => Str, init_arg => undef );
 
-sub _build__sans {
+sub _build__text {
   my ( $self ) = @_;
   my $text = eval {
     SICK::OpenSSL::run_checked(
@@ -349,7 +377,14 @@ sub _build__sans {
     );
   };
   croak 'cannot read the certificate: '.$self->_first_line($@) unless defined $text;
-  my ( $dns, $ip ) = SICK::Names::san_from_text($text);
+  return $text;
+}
+
+has _sans => ( is => 'lazy', isa => HashRef, init_arg => undef );
+
+sub _build__sans {
+  my ( $self ) = @_;
+  my ( $dns, $ip ) = SICK::Names::san_from_text( $self->_text );
 
   unless ( @$dns || @$ip ) {
     my $cn = $self->common_name;

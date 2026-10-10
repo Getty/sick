@@ -220,20 +220,25 @@ Fails like L</issue>.
 
 sub root_pem {
   my ( $self ) = @_;
-  my $root = $self->_certificates( $self->root, 'CA root' );
-  croak 'CA root \''.$self->root.'\' holds more than one certificate; step needs the root alone'
-    .' - name the intermediate certificate as ca.intermediates'
-    if defined $root->chain;
-  return $root->cert;
+  return $self->_root->cert;
 }
 
 =method root_pem
 
 The certificate in the L</root> file as PEM. Croaks with
-C<< cannot read CA root '<path>': <reason> >> when it cannot be read, and
+C<< cannot read ca.root '<path>': <reason> >> when it cannot be read, and
 when the file holds more than one certificate: C<step> would refuse it
 (C<contains more than one PEM encoded block>), and the intermediate has a
 place of its own.
+
+Croaks with C<< ca.root '<path>' is not a self-signed CA certificate:
+<reason> >> when the certificate is no root, the reason being one of
+C<< issued by <issuer> >> (the intermediate or a device certificate given
+as the root), C<basicConstraints does not say CA:TRUE> and C<its signature
+does not verify with its own key>. C<step> would work with the
+intermediate as C<--root>, but SICK would judge devices by it and
+C<sick trust> would hand it to the clients as their root, and both break
+when the CA changes its intermediate.
 
 =cut
 
@@ -241,15 +246,36 @@ sub intermediates_pem {
   my ( $self ) = @_;
   my $path = $self->intermediates;
   return undef unless defined $path && length $path;
-  return $self->_certificates( $path, 'CA intermediates' )->fullchain;
+  my $pem  = $self->_certificates( $path, 'ca.intermediates' )->fullchain;
+  my $root = $self->_root;
+
+  my @certs = map { SICK::Bundle->new( cert => $_ ) } $pem =~ /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/sg;
+  for my $cert ( grep { $_->fingerprint_sha256 ne $root->fingerprint_sha256 } @certs ) {
+    my $what = 'ca.intermediates \''.$path.'\': the certificate \''.$cert->subject_dn.'\'';
+    croak $what.' is not a CA certificate (basicConstraints does not say CA:TRUE)' unless $cert->is_ca;
+    croak $what.' does not lead to ca.root \''.$self->root.'\' ('.$root->subject_dn.')'
+      unless $cert->is_issued_by( $root->cert, $pem );
+  }
+  return $pem;
 }
 
 =method intermediates_pem
 
 The certificates in the L</intermediates> file as PEM, C<undef> when none
 is configured. Croaks with
-C<< cannot read CA intermediates '<path>': <reason> >> when the file
-cannot be read.
+C<< cannot read ca.intermediates '<path>': <reason> >> when the file
+cannot be read, like L</root_pem> when the root is not in order, and with
+
+    ca.intermediates '<path>': the certificate '<subject>' is not a CA certificate
+      (basicConstraints does not say CA:TRUE)
+    ca.intermediates '<path>': the certificate '<subject>' does not lead to
+      ca.root '<path>' (<subject of the root>)
+
+for a certificate that is no intermediate of this CA: with the root as the
+only anchor and the other certificates of the file to build the chain with,
+C<openssl verify> finds no way to the root. A wrong file would otherwise
+only show as devices that are C<foreign-ca>, and renewed, on every run.
+The root itself may be in the file as well.
 
 =cut
 
@@ -266,6 +292,24 @@ sub _certificates {
   $error =~ s/\Acannot read certificate file/cannot read $what/;
   $error =~ s/\Acert is not a PEM certificate/$what '$path' is not a PEM certificate/;
   croak $error;
+}
+
+# The root as a bundle, after making sure it is one: a single certificate,
+# self-signed by name and by signature, of a CA.
+sub _root {
+  my ( $self ) = @_;
+  my $path = $self->root;
+  my $root = $self->_certificates( $path, 'ca.root' );
+  croak 'ca.root \''.$path.'\' holds more than one certificate; step needs the root alone'
+    .' - name the intermediate certificate as ca.intermediates'
+    if defined $root->chain;
+  my $reason
+    = !$root->is_self_signed ? 'issued by '.$root->issuer_dn
+    : !$root->is_ca          ? 'basicConstraints does not say CA:TRUE'
+    : !$root->signs_itself   ? 'its signature does not verify with its own key'
+    :                          undef;
+  croak 'ca.root \''.$path.'\' is not a self-signed CA certificate: '.$reason if defined $reason;
+  return $root;
 }
 
 sub _common_args {
