@@ -114,6 +114,8 @@ for program in docker openssl curl; do
   command -v "$program" >/dev/null || fail "$program is not installed"
 done
 docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is not installed'
+# the project is what this script destroys; on a shared Docker host it is sick-*
+[[ $project =~ ^sick(-[a-z0-9_-]+)?$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick or sick-*"
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
 [ -f "$credentials" ] && [ -r "$credentials" ] || fail "cannot read the credentials file $credentials"
 credentials=$(cd "$(dirname "$credentials")" && pwd)/$(basename "$credentials")

@@ -33,7 +33,8 @@
 #      have - is refused by the CA, while one signed the same way with the
 #      new key is accepted (the control for the hand-made token)
 #   7. teardown, also after a failure or Ctrl-C: the project down with its
-#      volumes, the isolated CA, its volumes and network removed, nothing
+#      volumes, the isolated CA, its volumes and network removed by their
+#      labels (sick=1, sick-e2e=ca-recovery), nothing
 #      named sick-e2e-recovery* left, the private working directory (backup
 #      archive and old provisioner key included) removed
 #
@@ -176,7 +177,7 @@ signed() { grep -E 'method=POST' | grep -E 'path=/sign ' | grep -c 'status=201' 
 # a step client in the project's network, as the user running this script,
 # with the working directory at /work (read-only)
 step_client() {
-  docker run --rm --name "$client" --label "$label" --network "${project}_default" \
+  docker run --rm --name "$client" --label sick=1 --label "$label" --network "${project}_default" \
     --user "$(id -u):$(id -g)" -e HOME=/tmp -e STEPPATH=/tmp/step -v "$work:/work:ro" \
     --entrypoint sh "$step_image" -c "$1"
 }
@@ -189,9 +190,13 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   printf '\n=== 7. teardown\n'
-  docker rm -f -v "$restored" "$client" >/dev/null 2>&1
-  docker volume rm "$restored_volume" "$tampered_volume" >/dev/null 2>&1
-  docker network rm "$isolated" >/dev/null 2>&1
+  # by label only: containers and the network carry sick=1 and this
+  # script's label; the volumes ca-backup.sh creates carry sick=1, and of
+  # those only the two this script names go
+  docker ps -aq --filter label=sick=1 --filter "label=$label" | xargs -r docker rm -f -v >/dev/null 2>&1
+  docker volume ls -q --filter label=sick=1 | grep -xF -e "$restored_volume" -e "$tampered_volume" \
+    | xargs -r docker volume rm >/dev/null 2>&1
+  docker network ls -q --filter label=sick=1 --filter "label=$label" | xargs -r docker network rm >/dev/null 2>&1
   if [ -n "$armed" ]; then
     note "docker compose -p $project down -v --remove-orphans"
     compose down --volumes --remove-orphans 2>&1 | show
@@ -203,7 +208,9 @@ cleanup() {
     docker network ls --format '{{.Name}}' | grep -E "^${project}[-_]" | sed 's/^/network /'
     docker ps -aq --filter "label=com.docker.compose.project=$project" | sed 's/^/container id /'
     docker ps -aq --filter "label=$label" | sed 's/^/container id /'
+    docker network ls -q --filter "label=$label" | sed 's/^/network id /'
     docker volume ls -q --filter "label=com.docker.compose.project=$project" | sed 's/^/volume /'
+    docker volume ls -q --filter label=sick=1 | grep -xF -e "$restored_volume" -e "$tampered_volume" | sed 's/^/volume /'
   )
   if [ -n "$left" ]; then
     printf '%s\n' "$left" | sed 's/^/      | /' >&2
@@ -302,8 +309,8 @@ expect 'the archive matched its manifest' 'the archive matches its manifest' "$o
 expect '... every file restored as in the manifest' 'files, each as in the manifest' "$out"
 expect '... the intermediate is still valid' 'the intermediate is valid until ' "$out"
 t_restored=$SECONDS
-docker network create --internal --label "$label" "$isolated" >/dev/null
-docker run -d --name "$restored" --label "$label" --network "$isolated" --user 0:0 \
+docker network create --internal --label sick=1 --label "$label" "$isolated" >/dev/null
+docker run -d --name "$restored" --label sick=1 --label "$label" --network "$isolated" --user 0:0 \
   -v "$restored_volume:/home/step" -v "$repo/docker/init-ca.sh:/usr/local/bin/init-ca.sh:ro" \
   --entrypoint /bin/bash "$step_image" /usr/local/bin/init-ca.sh >/dev/null
 restored_up() { docker exec "$restored" curl -fsS -o /dev/null --cacert /home/step/certs/root_ca.crt https://localhost:9000/health; }

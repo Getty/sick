@@ -39,7 +39,8 @@
 #      against the root; an in-scope leaf signed the same way is accepted
 #      by both. The errors are printed.
 #   7. teardown, also after a failure or Ctrl-C: the project down with its
-#      volumes, the helper containers removed, nothing named sick-e2e-
+#      volumes, the helper containers (labelled sick=1 and
+#      sick-e2e=ca-ceremony) removed by their labels, nothing named sick-e2e-
 #      ceremony* left, the private working directory (stand-in root key
 #      included) removed
 #
@@ -192,7 +193,8 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   printf '\n=== 7. teardown\n'
-  docker rm -f "${helpers[@]}" >/dev/null 2>&1
+  # the helpers by their labels (sick=1 and this script's), never by name
+  docker ps -aq --filter label=sick=1 --filter "label=$label" | xargs -r docker rm -f -v >/dev/null 2>&1
   if [ -n "$armed" ]; then
     note "docker compose -p $project down -v --remove-orphans"
     compose down --volumes --remove-orphans 2>&1 | show
@@ -239,7 +241,7 @@ compose build sick >"$work/build.log" 2>&1 || { tail -30 "$work/build.log" >&2; 
 # ceremony <args...>: docker/ceremony.sh in the sick image, no network, as
 # the user running this script (so that it can remove what it wrote)
 ceremony() {
-  docker run --rm --name sick-e2e-ceremony-make --label "$label" --network none \
+  docker run --rm --name sick-e2e-ceremony-make --label sick=1 --label "$label" --network none \
     --user "$(id -u):$(id -g)" -e HOME=/tmp --entrypoint bash \
     -v "$repo/docker/ceremony.sh:/ceremony.sh:ro" -v "$work:/work" \
     sick:local /ceremony.sh --operator 'E2E Operator' --root-password-file /work/rootkey/root.pw "$@"
@@ -512,7 +514,7 @@ if [ $? -eq 0 ]; then r=accepted; else r=refused; fi
 echo "RESULT device gnutls-cli $r $(echo "$o" | grep -m1 -E "Status: |certificate is" | tr -s " ")"
 '
 set +e
-judged=$(docker run --rm --name sick-e2e-ceremony-gnutls --label "$label" --network "${project}_default" \
+judged=$(docker run --rm --name sick-e2e-ceremony-gnutls --label sick=1 --label "$label" --network "${project}_default" \
   -v "$work/ceremony:/ceremony:ro" "$debian" bash -c "$inside" 2>&1 | plain)
 code=$?
 set -e

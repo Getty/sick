@@ -102,7 +102,9 @@ for program in docker openssl curl; do
   command -v "$program" >/dev/null || fail "$program is not installed"
 done
 docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is not installed'
-[[ $project =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "SICK_E2E_PROJECT '$project' is not a Compose project name"
+# what this script creates and destroys is found by its project; on a shared
+# Docker host that project is sick-*
+[[ $project =~ ^sick(-[a-z0-9_-]+)?$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick or sick-*"
 [[ $ca_port =~ ^[0-9]+$ && $trust_port =~ ^[0-9]+$ ]] || fail 'SICK_E2E_CA_PORT and SICK_E2E_TRUST_PORT are port numbers'
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
 

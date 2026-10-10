@@ -53,9 +53,10 @@
 # not (a control failed, a program is missing, a container is left behind).
 #
 # Needs Docker and internet for images and packages. Containers are named
-# sick-e2e-trust-<distro> and labelled sick-e2e=trust-anchors, removed at the
-# end, also after a failure or Ctrl-C. Nothing else is touched, nothing is
-# pruned; the pulled images stay as a cache. No key or certificate leaves a
+# sick-e2e-trust-<distro> and labelled sick=1 and sick-e2e=trust-anchors,
+# removed by those labels at the end, also after a failure or Ctrl-C.
+# Nothing else is touched, nothing is pruned; the pulled images stay as a
+# cache. No key or certificate leaves a
 # container; the log files in the private temporary directory hold output only.
 #
 # Parameters, all from the environment:
@@ -462,7 +463,8 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   printf '\n=== teardown\n'
-  docker rm -f sick-e2e-trust-debian sick-e2e-trust-fedora >/dev/null 2>&1
+  # by label only (sick=1 and this script's), never by name
+  docker ps -aq --filter label=sick=1 --filter "label=$LABEL" | xargs -r docker rm -f -v >/dev/null 2>&1
   local left
   left=$(left_behind)
   if [ -n "$left" ]; then
@@ -488,11 +490,12 @@ for distro in debian fedora; do
   [ -z "$only" ] || [ "$only" = "$distro" ] || continue
   image=img_$distro
   printf '\n######## %s (%s)\n' "$distro" "${!image}"
-  docker run --name "sick-e2e-trust-$distro" --label "$LABEL" \
+  docker run --name "sick-e2e-trust-$distro" --label sick=1 --label "$LABEL" \
     -v "$self:/trust-anchors.sh:ro" "${!image}" bash /trust-anchors.sh --inside "$distro" \
     2>&1 | tee "$work/$distro.log"
   code=${PIPESTATUS[0]}
-  docker rm -f "sick-e2e-trust-$distro" >/dev/null 2>&1
+  docker ps -aq --filter label=sick=1 --filter "label=$LABEL" --filter "name=^sick-e2e-trust-$distro\$" \
+    | xargs -r docker rm -f -v >/dev/null 2>&1
   if [ "$code" -ne 0 ]; then printf 'FAIL  the %s run ended with %s\n' "$distro" "$code" >&2; status=1; fi
 done
 

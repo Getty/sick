@@ -20,7 +20,8 @@
 #          that a running container uses; unpacks into the volume (created
 #          when missing), checks every file and both fingerprints against
 #          the manifest, and says how long the intermediate stays valid.
-#          A restore that does not match is emptied again.
+#          A restore that does not match is emptied again. A volume it
+#          creates carries the label sick=1, as do its helper containers.
 #
 # The manifest guards against a damaged or altered archive as long as it is
 # kept apart from the archive (or its archive-sha256 line is written down
@@ -77,12 +78,14 @@ command -v docker >/dev/null || die 'docker is not installed'
 [[ $stop_timeout =~ ^[0-9]+$ ]] || die '--stop-timeout is a number of seconds'
 
 # helper <volume mount options> -- <command ...>: a throwaway container
-# without network, as root (the files of the volume belong to "step")
+# without network, as root (the files of the volume belong to "step").
+# Labelled sick=1 like everything SICK creates; --rm also removes the
+# anonymous volume the step-ca image declares for /home/step.
 helper() {
   local -a mounts=()
   while [ "$1" != -- ]; do mounts+=(-v "$1"); shift; done
   shift
-  docker run --rm -i --network none --user 0:0 --entrypoint "$1" "${mounts[@]}" "$image" "${@:2}"
+  docker run --rm -i --label sick=1 --network none --user 0:0 --entrypoint "$1" "${mounts[@]}" "$image" "${@:2}"
 }
 
 # the file list with checksums and the facts of the certificates, read in
@@ -172,8 +175,8 @@ restore() {
     fi
     [ -z "$(helper "$volume:/ca:ro" -- ls -A /ca)" ] || die "the volume $volume is not empty: refused"
   else
-    docker volume create "$volume" >/dev/null
-    log "created the volume $volume"
+    docker volume create --label sick=1 "$volume" >/dev/null
+    log "created the volume $volume (label sick=1)"
   fi
 
   # 3. unpack, then check what is in the volume against the manifest
