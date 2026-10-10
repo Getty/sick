@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-10-10T18:42:51Z
+created: 2026-10-10T16:51:39Z
+id: 31
+priority: high
+started: 2026-10-10T17:45:37Z
+status: done
+tags:
+- ca
+- p3
+title: P3c Intermediate rollover and root rollover drills
+updated: 2026-10-10T18:43:02Z
+---
+
+Intermediate renewed with the offline root while devices keep their certificates (old+new on the trust page during overlap); root replaced with an overlap bundle, re-issue, retire; a client with only the old root refuses new leaves; planned vs compromise rollback written down; e2e stays green. Part of P3 (k13); the binding 'done when' is docs/roadmap.md, section P3.
+
+2026-10-10 18:00 sick-worker (library part) done, uncommitted: ca.additional_roots in SICK::Config (list of paths) and SICK::Issuer (attribute declared in a BEGIN block of the base, additional_roots_pem checks each file: one self-signed CA, not the root, not twice). SICK::Trust publishes root_ca_N.pem/.crt in list order, ca_bundle.pem = root + additional + intermediates, each additional as com.apple.security.root in the profile, page names the current root and lists the others with fingerprints; root_ca_N swept. sick trust passes them through. step and Decision do not see them. Without the key the output is byte-identical to HEAD (checked against HEAD's Trust.pm). Tests: t/13, t/20, t/21, t/41, t/50. prove -lr t green, nothing skipped. The docker/e2e side is still with the other worker, so the card stays in-progress.
+
+docker/e2e part (sick-worker): ceremony.sh --renew-intermediate, init-ca.sh --switch-intermediate/--retire-intermediate (k8s copy), docker/compose.ca-next.yml, t/e2e/ca-rollover.sh + compose.rollover.yml, README section; hygiene: sick=1 labels and label-based cleanup in ca-backup.sh and t/e2e scripts, run-local/run-lab refuse non-sick-* projects. ca-rollover.sh green against the uncommitted lib working tree (125 PASS); final runs wait for the lib commit. Finding: during the root overlap the trust page carries only the current hierarchy's intermediates (leaf-only devices under the other root are refused) - RECORD lines, reported to main.
+
+docker/e2e part done: ca-rollover.sh 2x clean (125 PASS, 0 FAIL, 6 RECORD each) against the lib working tree (lib not committed yet); run-local.sh ALL PASSED; ca-ceremony.sh (81), ca-recovery.sh (51), trust-anchors.sh re-run green after the hygiene changes; nothing labelled sick=1 or of a sick-e2e* project left.
+
+Library part committed as 4fd3d10; Docker hygiene 908961d
+
+Docker part committed as 72e2d3f (library part 4fd3d10)
