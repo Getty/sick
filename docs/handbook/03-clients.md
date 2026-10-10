@@ -205,6 +205,14 @@ through this list on real devices:
 
 ## Test report
 
+All e2e scripts were run against the committed state `a4ef5e6` on
+2026-10-10, at the end of this package: `run-local.sh` 32 PASS,
+`ca-ceremony.sh` 81, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings (case 5c2),
+`trust-os.sh` 465 PASS, `trust-runtimes.sh` 147 PASS, each with 0
+unexpected FAIL; afterwards nothing labelled `sick=1` and no `sick-*` k3d
+cluster was left. The rows below are the development runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/50-trust.t` (in `prove -lr t`) | OpenSSL 3.5 | scripts carry exactly the roots (Linux) or roots and intermediates (NSS, macOS, Windows); wrong, missing, partial, extra fingerprint refused with nothing written; right one accepted; remove exact and idempotent; never an intermediate in an anchor directory; page puts the out-of-band check first | green; pwsh syntax tests skipped (no pwsh on the host) | real systems – see the next rows |
