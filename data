@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-10T19:53:58Z
+created: 2026-10-10T19:11:30Z
+id: 35
+priority: high
+started: 2026-10-10T19:13:12Z
+status: done
+tags:
+- trust
+- p4
+title: 'P4a sick trust: install and remove scripts per platform, fingerprint from
+  a second channel'
+updated: 2026-10-10T20:00:14Z
+---
+
+sick trust writes trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh (install|remove), each refusing unless the operator passes the expected SHA-256 fingerprint(s) obtained out of band; system stores get roots only; the page puts out-of-band verification first, has removal per platform, Android NSC limits, the unsigned-profile note. Part of P4 (k14); binding 'done when': docs/roadmap.md, section P4, and the findings note on k14.
+
+2026-10-10 sick-worker: implemented in a commit-ready tree (not committed). New SICK::Trust::Scripts (Moo) writes trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh (install --fingerprint ... / remove); page puts the out-of-band fingerprint first, scripts + manual + Remove per platform, Android NSC, unsigned profile Not Verified, short runtimes section (unmarked, awaiting k36). prove -lr t green; only skip: t/50 pwsh syntax (2 tests). Scripts proven against recording fakes only; real platforms belong to the k14 container matrix.
+
+Committed as 7629487
+
+Follow-up committed as a966808: runtimes on the trust page marked tested in containers or not tried
