@@ -1,13 +1,15 @@
 package SICK::Issuer::StepCA;
 # ABSTRACT: Have certificates issued by a step-ca through the step command line
 
-use strict;
-use warnings;
-use parent 'SICK::Issuer';
+use Moo;
+extends 'SICK::Issuer';
 use Carp qw( croak );
+use Path::Tiny ();
 use SICK::Bundle;
 use SICK::Command;
 use SICK::Temp;
+use Types::Standard qw( Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -69,12 +71,12 @@ The command lines are verified against C<step> 0.30.2 and a step-ca 0.30.2.
 sub attributes          { qw( url root intermediates provisioner password_file step ) }
 sub required_attributes { qw( url root provisioner password_file ) }
 
-sub url           { $_[0]->{url} }
-sub root          { $_[0]->{root} }
-sub intermediates { $_[0]->{intermediates} }
-sub provisioner   { $_[0]->{provisioner} }
-sub password_file { $_[0]->{password_file} }
-sub step          { defined $_[0]->{step} && length $_[0]->{step} ? $_[0]->{step} : 'step' }
+has url           => ( is => 'ro', isa => Str, required => 1 );
+has root          => ( is => 'ro', isa => Str, required => 1 );
+has intermediates => ( is => 'ro', isa => Str );
+has provisioner   => ( is => 'ro', isa => Str, required => 1 );
+has password_file => ( is => 'ro', isa => Str, required => 1 );
+has step          => ( is => 'ro', isa => Str, default => 'step' );
 
 =attr url
 
@@ -106,7 +108,8 @@ Required. Path of the file with the password of the provisioner.
 
 =attr step
 
-The C<step> program. Defaults to C<step> from the C<PATH>.
+The C<step> program. Defaults to C<step> from the C<PATH>, also when it is
+given empty.
 
 =cut
 
@@ -282,9 +285,11 @@ sub _check_files {
   my ( $self ) = @_;
   $self->root_pem;
   my $path = $self->password_file;
-  open my $fh, '<', $path
-    or croak 'cannot read secret file \''.$path.'\': '.$!;
-  croak 'cannot read secret file \''.$path.'\': Is a directory' if -d $fh;
+  my $file = Path::Tiny::path($path);
+  croak 'cannot read secret file \''.$path.'\': Is a directory' if $file->is_dir;
+  my $fh = eval { $file->openr_raw };
+  croak 'cannot read secret file \''.$path.'\': '.( ref $@ ? $@->{err} : 'unknown error' )
+    unless $fh;
   close $fh;
   return;
 }

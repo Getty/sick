@@ -1,18 +1,31 @@
 package SICK::Issuer;
 # ABSTRACT: Base class for whatever issues the certificates
 
-use strict;
-use warnings;
+use Moo;
 use Carp qw( croak );
 use SICK::Names;
 use SICK::OpenSSL;
+use namespace::autoclean;
+
+# The two issuers of from_ca. Each extends this class, which is a Moo class
+# from the line above on, while the rest of this file is not compiled yet.
+# So: no has here, and no method modifier in a subclass that would wrap a
+# method of this class - either would be lost when this file loads first.
+use SICK::Issuer::SelfSigned;
+use SICK::Issuer::StepCA;
 
 our $VERSION = '0.001';
 
 =head1 SYNOPSIS
 
     package My::Issuer;
-    use parent 'SICK::Issuer';
+    use Moo;
+    extends 'SICK::Issuer';
+    use Types::Standard qw( Str );
+    use namespace::autoclean;
+
+    has url        => ( is => 'ro', isa => Str, required => 1 );
+    has token_file => ( is => 'ro', isa => Str );
 
     sub attributes          { qw( url token_file ) }
     sub required_attributes { qw( url ) }
@@ -66,11 +79,15 @@ sub required_attributes { () }
 
 =method attributes
 
-The constructor arguments a subclass knows. The base class has none.
+The constructor arguments a subclass knows, the names of its C<has>
+declarations for the C<ca> section. The base class has none. Any other key
+is an error (see L</new>).
 
 =method required_attributes
 
-Those of them it cannot do without.
+Those of them it cannot do without. Their C<has> says C<< required => 1 >>
+as well, but the check here comes first and speaks the words of the device
+list.
 
 =cut
 
@@ -85,8 +102,6 @@ sub from_ca {
   ( my $normal = lc $type ) =~ s/[^a-z0-9]//g;
   my $issuer = $TYPE{$normal}
     or croak 'ca.type: unknown type \''.$type.'\' (step-ca or selfsigned)';
-  ( my $file = $issuer.'.pm' ) =~ s{::}{/}g;
-  require $file;
   return $issuer->new(%ca);
 }
 
@@ -103,8 +118,11 @@ else, and like L</new> when the section does not fit the issuer.
 
 =cut
 
-sub new {
-  my ( $class, %arg ) = @_;
+# The checks of the ca section come before Moo's own: unknown keys are an
+# error, and a required key that is empty counts as missing.
+around BUILDARGS => sub {
+  my ( $orig, $class, @args ) = @_;
+  my %arg = %{ $class->$orig(@args) };
   delete @arg{qw( type name )};
   my %known = map { $_ => 1 } $class->attributes;
   my @unknown = sort grep { !$known{$_} } keys %arg;
@@ -113,8 +131,9 @@ sub new {
     croak 'ca: missing \''.$required.'\''
       unless defined $arg{$required} && length $arg{$required};
   }
-  return bless { %arg }, $class;
-}
+  delete @arg{ grep { !defined $arg{$_} || !length $arg{$_} } keys %arg };
+  return \%arg;
+};
 
 =method new
 
@@ -124,7 +143,8 @@ Takes the C<ca> section of the device list. C<type> is what selected the
 class and C<name> is for humans (L<SICK::Config/ca_name>); both are ignored
 here. Croaks with C<< ca: missing '<key>' >> when a
 required attribute is not given and with C<< ca: unknown key '<key>' ... >>
-for one the class does not know.
+for one the class does not know. An optional key that is empty or C<undef>
+counts as not given, so its default applies.
 
 =cut
 

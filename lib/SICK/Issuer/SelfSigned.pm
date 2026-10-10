@@ -1,16 +1,17 @@
 package SICK::Issuer::SelfSigned;
 # ABSTRACT: A throwaway CA made of plain openssl, for tests and for trying things out
 
-use strict;
-use warnings;
-use parent 'SICK::Issuer';
+use Moo;
+extends 'SICK::Issuer';
 use Carp qw( croak );
-use File::Path qw( make_path );
 use POSIX qw( strftime );
+use Path::Tiny ();
 use SICK::Bundle;
 use SICK::Names;
 use SICK::OpenSSL;
 use SICK::Temp;
+use Types::Standard qw( Str );
+use namespace::autoclean;
 
 our $VERSION = '0.001';
 
@@ -98,7 +99,7 @@ CONFIG
 sub attributes          { qw( dir ) }
 sub required_attributes { qw( dir ) }
 
-sub dir { $_[0]->{dir} }
+has dir => ( is => 'ro', isa => Str, required => 1 );
 
 =attr dir
 
@@ -192,13 +193,23 @@ The root certificate as PEM. Creates the CA when there is none yet.
 
 #### internals
 
-sub _ca_cert { $_[0]->dir.'/ca.crt' }
-sub _ca_key  { $_[0]->dir.'/ca.key' }
+# Paths in the CA directory, as plain strings for the command lines.
+sub _ca_file { Path::Tiny::path( $_[0]->dir )->child( $_[1] )->stringify }
+sub _ca_cert { $_[0]->_ca_file('ca.crt') }
+sub _ca_key  { $_[0]->_ca_file('ca.key') }
+
+# The reason of the system out of a Path::Tiny exception.
+sub _reason {
+  my ( $self, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  ( $error = defined $error ? $error : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  return length $error ? $error : 'unknown error';
+}
 
 sub _config {
   my ( $self, $tmp ) = @_;
   my $path = $tmp->file('openssl.cnf');
-  $tmp->write( 'openssl.cnf', $CONFIG, 0600 ) unless -e $path;
+  $tmp->write( 'openssl.cnf', $CONFIG, 0600 ) unless Path::Tiny::path($path)->exists;
   return $path;
 }
 
@@ -218,15 +229,14 @@ sub _ensure_ca {
   my $dir = $self->dir;
   return if -s $self->_ca_cert && -s $self->_ca_key;
 
-  unless ( -d $dir ) {
-    make_path( $dir, { mode => 0700, error => \my $errors } );
-    croak 'cannot create CA directory \''.$dir.'\': '.( values %{ $errors->[0] } )[0]
-      if $errors && @$errors;
+  unless ( Path::Tiny::path($dir)->is_dir ) {
+    eval { Path::Tiny::path($dir)->mkdir( { mode => 0700 } ); 1 }
+      or croak 'cannot create CA directory \''.$dir.'\': '.$self->_reason($@);
   }
 
   my $tmp      = SICK::Temp->dir;
-  my $new_key  = $dir.'/.ca.key.'.$$;
-  my $new_cert = $dir.'/.ca.crt.'.$$;
+  my $new_key  = $self->_ca_file( '.ca.key.'.$$ );
+  my $new_cert = $self->_ca_file( '.ca.crt.'.$$ );
   my $done = eval {
     $self->_openssl(
       $tmp,
@@ -235,15 +245,15 @@ sub _ensure_ca {
         '-days', $self->root_lifetime_days, '-subj', $self->root_subject,
         '-extensions', 'sick_root' ],
     );
-    chmod 0600, $new_key  or die 'cannot protect the CA key: '.$!."\n";
-    chmod 0644, $new_cert or die 'cannot set the mode of the CA certificate: '.$!."\n";
-    rename $new_key,  $self->_ca_key  or die 'cannot write \''.$self->_ca_key.'\': '.$!."\n";
-    rename $new_cert, $self->_ca_cert or die 'cannot write \''.$self->_ca_cert.'\': '.$!."\n";
+    $self->_file_op( 'cannot protect the CA key', $new_key, chmod => 0600 );
+    $self->_file_op( 'cannot set the mode of the CA certificate', $new_cert, chmod => 0644 );
+    $self->_file_op( 'cannot write \''.$self->_ca_key.'\'',  $new_key,  move => $self->_ca_key );
+    $self->_file_op( 'cannot write \''.$self->_ca_cert.'\'', $new_cert, move => $self->_ca_cert );
     1;
   };
   unless ($done) {
     my $error = $@;
-    unlink $new_key, $new_cert;
+    eval { Path::Tiny::path($_)->remove } for $new_key, $new_cert;
     $error =~ s/ at \S+ line [0-9]+\.?\s*\z//;
     $error =~ s/\s+\z//;
     croak 'cannot create the CA in \''.$dir.'\': '.$error;
@@ -251,11 +261,21 @@ sub _ensure_ca {
   return;
 }
 
+# One Path::Tiny operation on a file of the new CA; dies with our words and
+# the reason of the system.
+sub _file_op {
+  my ( $self, $what, $path, $method, @arg ) = @_;
+  eval { Path::Tiny::path($path)->$method(@arg); 1 }
+    or die $what.': '.$self->_reason($@)."\n";
+  return;
+}
+
 sub _sign_request {
   my ( $self, $tmp, $csr, $spec ) = @_;
 
-  mkdir $tmp->file('certs'), 0700
-    or croak 'cannot create \''.$tmp->file('certs').'\': '.$!;
+  my $certs = $tmp->file('certs');
+  eval { Path::Tiny::path($certs)->mkdir( { mode => 0700 } ); 1 }
+    or croak 'cannot create \''.$certs.'\': '.$self->_reason($@);
   $tmp->write( 'index.txt', q{} );
   my $serial = $self->_openssl( $tmp, [ 'rand', '-hex', '16' ] );
   $serial =~ s/\s+//g;

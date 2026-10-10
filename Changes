@@ -75,3 +75,6 @@ Revision history for SICK
       the number of intermediates
     - t/e2e/run-lab.sh fetches the new files from the trust page and
       connects to the switch with nothing but ca_bundle.pem from there
+    - SICK::Issuer, SICK::Issuer::StepCA and SICK::Issuer::SelfSigned are Moo
+      classes; an issuer subclass declares its ca keys with has. An empty
+      optional key in the ca section counts as not given.
