@@ -21,8 +21,8 @@ via `briefing.skills` — this file is for the orchestrating agent.
    change code to turn it green.
 6. **Checkpoint and fail loud** — Summarize done / verified / left after each significant
    step. "Tests pass" is wrong if any were skipped — say which.
-7. **Surface conflicts, don't average them** — Where code and house rules disagree here,
-   the house rules are right (see hazards); say so, don't blend.
+7. **Surface conflicts, don't average them** — Where code and house rules disagree, say
+   so, don't blend. The disagreements that are meant are listed (see hazards).
 
 ## Delegation
 
@@ -71,20 +71,24 @@ never read, comment on or close one unasked.
 
 ## Hazards specific to this repository
 
-- **The code contradicts the house rules, and the house rules are right.** `lib/` is
-  plain `bless` on core Perl plus `YAML::PP`; the target is Moo, `Path::Tiny`,
-  `JSON::MaybeXS` (skills `getty-perl-core`, `getty-perl-moo`). The conversion goes
-  module by module on cards. Never "fix" `CLAUDE.md` or an agent back to match the code,
-  and never convert a module in passing.
+- **Where `lib/` leaves the house stack, it is on purpose.** Key files are written with
+  `sysopen` and `O_EXCL`, external programs get strings, an attribute has no type where
+  the type's message would repeat a secret, finished files go out with core `rename`.
+  `sick-core` gives the reason for each ("Where the house stack stops"). Never "tidy"
+  one of them back to `Path::Tiny` or a `Types::Standard` type.
 - **Three things here change real equipment.** `t/e2e/run-lab.sh` installs a certificate
   on a real switch; `../sick-target-ciscosb/t/90-live.t` does so once its two
   `SICK_LIVE_CISCOSB_*` variables are set; `k8s/` and `docker/` describe a running lab.
   Edit them, never run or apply them without being told to.
 - **Docker only where the host has it.** `prove` never starts a container. A change under
   `docker/` is verified by `t/e2e/run-local.sh` (project `sick-e2e`, ports on 127.0.0.1,
-  torn down at exit), one under `k8s/` only in a k3d cluster `sick-*` with its own
-  kubeconfig, never an existing context. Without such a run report the change as
-  unverified. On a shared Docker host touch nothing that is not `sick-*` and prune nothing.
+  torn down at exit), one under `k8s/` only in a k3d cluster `sick-*`. Without such a
+  run report the change as unverified. Every container, volume and network of ours
+  carries the label `sick=1` and is removed by that label alone; what has no label stays.
+- **The default kubeconfig of a host is not ours.** Every `kubectl`, `k3d` and `helm`
+  call, also one typed by hand while debugging, runs with `KUBECONFIG` set to a private
+  file. Without it the call acts on whatever context the host has — on a shared host
+  somebody else's cluster, with admin rights — and `k3d` rewrites that file.
 - **`unreachable` is not `missing`.** A device that does not answer must not be renewed.
   The runner tells the two apart by the prefix `unreachable: ` of the exception alone.
 - **A green run may have run nothing.** Most tests `skip_all` without `openssl`, half of

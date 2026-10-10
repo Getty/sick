@@ -27,14 +27,11 @@ run `dzil release` — the maintainer's call every time. `main` being ahead of
 
 ## The exceptions you will meet every run
 
-**1. The distribution is half way between two stacks.** It was first built on core Perl
-plus `YAML::PP` with plain `bless`, on a rule nobody asked for, and is being converted to
-the house stack (Moo, `Path::Tiny`, `JSON::MaybeXS`) module by module. A diff that adds
-one of those is the plan, not a finding. What you check is that `cpanfile` follows: every
-module used under `lib/` or `bin/` and not shipped with perl is named there, and a module
-no longer used is gone. `README.md`, `lib/SICK.pm` and `Changes` still say "core Perl and
-YAML::PP"; once the first non-core module lands that sentence is wrong and blocks a
-release until it is rewritten.
+**1. A dependency lives in two places.** Every module used under `lib/` or `bin/` and not
+shipped with perl is named in `cpanfile`, and a module no longer used is gone.
+`docker/Dockerfile` installs the same modules as Debian packages (`lib*-perl`): a diff
+that adds one to `cpanfile` and not there breaks the image, and only
+`t/e2e/run-local.sh` shows it. Such a diff goes back to the worker.
 
 **2. `SICK-0.001/` and `SICK-0.001.tar.gz` lie in the working tree.** They are build
 output, ignored through `SICK-*` in `.gitignore`. Never stage them, never delete them

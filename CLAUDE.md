@@ -27,9 +27,8 @@ was unpacked by hand from Debian's `libxml2-utils` (`apt-get download`, `dpkg -x
 
 - **Perl follows the house rules** (skills `getty-perl-core`, `getty-perl-moo`): Moo for
   classes, `Path::Tiny` for files, `JSON::MaybeXS` for JSON, and what CPAN already has is
-  taken from there. The code does not look like that yet: the first build ran on "core
-  Perl plus `YAML::PP`, plain `bless`", a rule the maintainer never gave. New code
-  follows the house rules; existing modules are converted one by one, on cards.
+  taken from there. Where the code does otherwise it is on purpose, and `sick-core`
+  says why ("Where the house stack stops").
 - **A device type is its own distribution** (`SICK-Target-*`), with its own dependencies.
 - **X.509 goes through the `openssl` CLI** (`SICK::OpenSSL`), never a Perl X.509 module.
 - **No shell.** Every external program is started through `SICK::Command::run`

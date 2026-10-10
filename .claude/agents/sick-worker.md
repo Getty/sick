@@ -25,19 +25,16 @@ note on your card says what and for which board; the dispatching agent files it.
 Never `git commit`: leave the tree commit-ready and report what changed and why, plus a
 proposed commit subject and `Changes` entry — commits belong to `sick-release-manager`.
 
-## The code you find is not the pattern to follow
+## Where the code leaves the house stack
 
-The house rules above are the target: Moo for classes, `Path::Tiny` for files,
-`JSON::MaybeXS` for JSON, and what CPAN already has is taken from there. The first build
-of this distribution did the opposite — core Perl plus `YAML::PP`, plain `bless`, bare
-`open` — on a rule nobody asked for. So the surrounding code will look like an argument
-against the skills. It is not:
+`lib/` follows the house rules above: Moo, `Types::Standard`, `Path::Tiny`. Where it does
+not, that is deliberate and `sick-core` says why ("Where the house stack stops"): key
+files through `sysopen` with `O_EXCL`, strings for external programs, no type where its
+message would repeat a secret, finished files out with core `rename`. Do not tidy one of
+those back to the pattern, and do not copy them where their reason does not apply.
 
-- **New code follows the house rules**, also when the module beside it does not.
-- **An existing module is converted when a card says so**, whole and with its tests, not
-  in passing while you are there for something else. Until then a module is one or the
-  other, never half Moo.
-- A dependency you add goes into `cpanfile` in the same change.
+A dependency you add goes into `cpanfile` and, as its Debian package, into
+`docker/Dockerfile` in the same change.
 
 The device list stays the configuration (`$SICK_CONFIG` names the file), whatever the
 house rules say about environment variables.
@@ -58,8 +55,12 @@ house rules say about environment variables.
 - **A change under `docker/` is proven by `t/e2e/run-local.sh`** where the host has
   Docker (project `sick-e2e`, ports on 127.0.0.1, torn down at exit). Without Docker it is
   checked by reading; one under `k8s/` by reading and by `t/60-k8s.t`. Say in your report
-  which of these happened. On a shared Docker host touch nothing that is not `sick-*`
-  and prune nothing.
+  which of these happened. Every container, volume and network you start carries the
+  label `sick=1` and is removed by that label alone; what has no label stays, whatever
+  its age or name.
+- **`kubectl`, `k3d` and `helm` only with `KUBECONFIG` set to a private file**, also for
+  a single call typed by hand. Without it the call acts on the host's own context, which
+  may be somebody else's cluster, and `k3d` rewrites that file.
 - User-visible change → propose the `Changes` bullet in your report.
 
 ## Verification
