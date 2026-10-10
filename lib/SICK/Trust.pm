@@ -5,10 +5,9 @@ use strict;
 use warnings;
 use Carp qw( croak );
 use Digest::SHA qw( sha1_hex sha256_hex );
-use File::Path qw( make_path );
-use File::Temp ();
 use MIME::Base64 qw( encode_base64 );
 use POSIX qw( strftime );
+use Path::Tiny ();
 use SICK::Bundle;
 use SICK::OpenSSL;
 
@@ -184,10 +183,9 @@ sub write {
   }
   my @files = $class->files( scalar @intermediates );
 
-  unless ( -d $dir ) {
-    make_path( $dir, { mode => 0755, error => \my $errors } );
-    croak 'cannot create directory \''.$dir.'\': '.( values %{ $errors->[0] } )[0]
-      if $errors && @$errors;
+  unless ( Path::Tiny::path($dir)->is_dir ) {
+    eval { Path::Tiny::path($dir)->mkdir( { mode => 0755 } ); 1 }
+      or croak 'cannot create directory \''.$dir.'\': '.$class->_reason($@);
   }
   $class->_put( $dir.'/'.$_, $content{$_} ) for @files;
   $class->_sweep( $dir, @files );
@@ -287,31 +285,41 @@ sub _der {
 sub _sweep {
   my ( $class, $dir, @written ) = @_;
   my %written = map { $_ => 1 } @written;
-  opendir my $dh, $dir or return;
-  my @stale = sort grep { $_ =~ $CHAIN_FILE && !$written{$_} } readdir $dh;
-  closedir $dh;
+  my @children = eval { Path::Tiny::path($dir)->children($CHAIN_FILE) } or return;
+  my @stale = sort grep { !$written{$_} } map { $_->basename } @children;
   for my $name (@stale) {
     my $path = $dir.'/'.$name;
     next unless -l $path || -f _;
-    unlink $path or croak 'cannot remove \''.$path.'\': '.$!;
+    eval { Path::Tiny::path($path)->remove; 1 }
+      or croak 'cannot remove \''.$path.'\': '.$class->_reason($@);
   }
   return;
 }
 
+# One file, written aside in the same directory and renamed into place. The
+# file aside is created by File::Temp and filled in place, raw; it is
+# published with CORE rename, because Path::Tiny's move copies when renaming
+# fails, and a web server would serve half a file.
 sub _put {
   my ( $class, $path, $content ) = @_;
-  ( my $dir = $path ) =~ s{/[^/]+\z}{};
-  my $tmp = eval { File::Temp->new( DIR => $dir, TEMPLATE => '.sick-XXXXXXXX', UNLINK => 0 ) }
+  my $dir = Path::Tiny::path($path)->parent->stringify;
+  my $aside = eval { Path::Tiny->tempfile( DIR => $dir, TEMPLATE => '.sick-XXXXXXXX', UNLINK => 0 ) }
     or croak 'cannot write \''.$path.'\': '.( $! ? $! : 'cannot create a temporary file' );
-  my $aside = $tmp->filename;
-  binmode $tmp;
-  my $ok = chmod( 0644, $aside ) && print( {$tmp} $content ) && close($tmp) && rename( $aside, $path );
-  unless ($ok) {
-    my $reason = q{}.$!;
-    unlink $aside;
+  my $reason = eval { $aside->chmod(0644); $aside->append_raw($content); 1 } ? undef : $class->_reason($@);
+  $reason = q{}.$! if !defined $reason && !rename( $aside->stringify, $path );
+  if ( defined $reason ) {
+    eval { $aside->remove };
     croak 'cannot write \''.$path.'\': '.$reason;
   }
   return $path;
+}
+
+# The reason of the system out of a Path::Tiny exception.
+sub _reason {
+  my ( $class, $error ) = @_;
+  return $error->{err} if ref $error eq 'Path::Tiny::Error';
+  ( $error = defined $error ? $error : q{} ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+  return length $error ? $error : 'unknown error';
 }
 
 # For text between tags and inside double-quoted attributes, XML and HTML.
