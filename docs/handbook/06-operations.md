@@ -168,6 +168,15 @@ keep it as you keep the CA's configuration.
 
 ## Test report
 
+All e2e scripts were run against the committed state `950bf84` on
+2026-10-10, at the end of this package: `run-local.sh` 32 PASS,
+`ca-ceremony.sh` 81, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings, `trust-os.sh`
+465, `trust-runtimes.sh` 147, `ops.sh` 72, each with 0 unexpected FAIL;
+afterwards nothing labelled `sick=1`, no `sick-*` k3d cluster, and the
+host's default kubeconfig untouched (same mtime before and after). The rows
+below are the development runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/40-runner.t`, `t/41-cli.t` (in `prove -lr t`) | – | records after run; check and dry run write none; back-off 1, 2, 4 … 24 h, grace 15 min, `--force`, reset on success; unreachable not counted; broken record reported; exit 3 with the lock held, lock free after a die; no key in a record | green | – |
