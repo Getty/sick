@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-11T02:04:42Z
+created: 2026-10-11T01:32:16Z
+id: 55
+priority: high
+started: 2026-10-11T02:04:02Z
+status: done
+tags:
+- devices
+- p7
+title: P7d Handbook chapter 5, Kubernetes Secret decision, k18 sharpened, one HQ list
+updated: 2026-10-11T02:04:53Z
+---
+
+Chapter 5 with a written decision per device row and its recipe (incl. files and cisco-sb), the Kubernetes Secret decision, k18 listing what SICK needs from WWW::iDRAC, and one 'To try at HQ' page with a section per chapter. Part of P7 (k17); binding: docs/roadmap.md, section P7, and the hub's brief of 2026-10-11 (per recipe: rights on the device and how to keep them small, where the secret lives, what the device restarts, how sick check sees success on the port, how to get back).
+
+Committed as 8c14cbb
