@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-11T02:01:51Z
+created: 2026-10-11T01:31:41Z
+id: 52
+priority: high
+started: 2026-10-11T01:32:45Z
+status: done
+tags:
+- devices
+- p7
+title: 'P7a Linux hosts over SSH: acme.sh hook ssh, proven against an sshd container'
+updated: 2026-10-11T02:02:02Z
+---
+
+Host-key check on, a key of its own for deploying, the smallest access that works; negatives: unknown host key, failing reload, key that does not fit; the port fingerprint is the proof. Part of P7 (k17); binding: docs/roadmap.md, section P7, and the hub's brief of 2026-10-11 (per recipe: rights on the device and how to keep them small, where the secret lives, what the device restarts, how sick check sees success on the port, how to get back).
+
+Done: t/e2e/device-ssh.sh (sshd+nginx Debian host, CA of docker/compose.yml, deploy key in a secrets volume, known_hosts from the host, restrict,from=), contrib/devices/linux-ssh/ (sick.yml, sudoers, authorized_keys, sick-deploy-gate, README), docs/findings/device-ssh.md. Two full runs ALL PASSED (71 PASS), a SIGKILLed run cleaned up by the next; nothing of project sick-dev-ssh left. Minimum access: own account owning only /etc/nginx/tls, sudo 'nginx -s reload' only; with DEPLOY_SSH_BACKUP=no a forced command (SFTP + reload) works, no shell. USE_SCP=yes is required to keep the TLS key off the remote command line. No lib change needed. Staged, not committed.
+
+Committed as a579e9f
