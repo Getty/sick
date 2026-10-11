@@ -1,0 +1,17 @@
+---
+class: standard
+completed: 2026-10-11T02:46:41Z
+created: 2026-10-10T06:23:35Z
+id: 17
+priority: medium
+started: 2026-10-11T01:32:27Z
+status: done
+tags:
+- targets
+title: 'P7 Devices that cannot: RouterOS, PVE, PBS, Linux over SSH, Kubernetes Secrets'
+updated: 2026-10-11T02:46:53Z
+---
+
+A decision and recipe per device class; tests against fakes or containers. Package, result and 'done when': docs/roadmap.md, section P7 Devices that cannot.
+
+P7 complete: k52 a579e9f, k53 a3443de (RouterOS CHR 7.24.5 in qemu), k54 59e5291, k55 8c14cbb + 657597f; Kubernetes Secret: no SICK target (chapter 5); k18 sharpened, deferred; e2e all green at 8c14cbb; open: k56 (Proxmox hooks without TLS verification), k57 (PVE renewal cadence, realm)
