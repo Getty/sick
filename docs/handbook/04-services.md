@@ -166,6 +166,17 @@ instead (chapter 5).
 
 ## Test report
 
+All e2e scripts were run against the committed state `03ef482` on
+2026-10-11, at the end of this package: `run-local.sh` 33 PASS,
+`ca-ceremony.sh` 101, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings, `trust-os.sh`
+465, `trust-runtimes.sh` 147, `ops.sh` 72, `acme-services.sh` 31 per
+service (Traefik, Caddy, nginx), `acme-k8s.sh` all parts PASS (up 17,
+issue 11, renew 7, refuse 13, down 3); each with 0 unexpected FAIL;
+afterwards nothing labelled `sick=1`, no `sick-*` k3d cluster, the host's
+default kubeconfig untouched. Images pulled for this package and their
+versions are in the rows below. The rows are the development runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/e2e/ca-ceremony.sh` (ACME part) | step / step-ca 0.30.2 | the provisioner `acme` has the serverAuth-only template and 5m / 720h / 2160h; a real ACME order gives serverAuth only and 720h; a short test value (10m) takes effect | 101 PASS | – |
