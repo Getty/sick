@@ -246,3 +246,11 @@ Revision history for SICK
     - ceremony.sh --email and --uri put permitted email domains and URI hosts
       into the intermediate, read back like the other constraints; a renewal
       copies them.
+    - init-ca.sh makes and keeps in line further provisioners declared in a
+      JSON file (SICK_CA_PROVISIONERS, compose.provisioners.yml): JWK or
+      ACME, server or client profile, lifetimes, ACME challenge types;
+      docker/provisioners.example.json ships clients (clientAuth only),
+      cert-manager and acme-long (60 days, for Proxmox VE).
+      SICK_CA_ACME_CHALLENGES limits the challenge types of "acme". The
+      cert-manager setup declares its provisioner instead of adding it by
+      hand.

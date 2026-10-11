@@ -93,6 +93,8 @@ All of them are optional.
 | `SICK_CA_ACME_LIFETIME` | `720h` | the lifetime the ACME provisioner `acme` gives a certificate (30 days, see below) |
 | `SICK_CA_ACME_MAX_LIFETIME` | `2160h` | the longest lifetime `acme` grants a client that asks for one (90 days) |
 | `SICK_CA_ACME_MIN_LIFETIME` | `5m` | the shortest (step-ca's own default). Go durations, like the lifetime of `sick`; minimum ≤ lifetime ≤ maximum, or the CA does not start |
+| `SICK_CA_ACME_CHALLENGES` | | the challenge types `acme` offers, comma separated, out of `http-01`, `tls-alpn-01`, `dns-01`. Empty: all three (step-ca's default) |
+| `SICK_CA_PROVISIONERS` | | further provisioners, with `compose.provisioners.yml`: a JSON file on the host (see "Further provisioners") |
 | `SICK_CA_ALLOW_DNS` | | names the CA may issue for, comma separated: `*.example.internal`, `host.example.org` |
 | `SICK_CA_ALLOW_IP` | | addresses and networks the CA may issue for: `192.0.2.0/24`. Both empty: no restriction. One of them set: nothing but what is listed |
 | `SICK_CA_PORT` | `9000` | published port of the CA |
@@ -171,7 +173,10 @@ At **every start** it
   `SICK_CA_ACME_LIFETIME` (30 days) for a certificate, between
   `SICK_CA_ACME_MIN_LIFETIME` and `SICK_CA_ACME_MAX_LIFETIME` (90 days) for a
   client that asks for a lifetime of its own (step-ca would issue for 24
-  hours, with `clientAuth`),
+  hours, with `clientAuth`), and the challenge types of
+  `SICK_CA_ACME_CHALLENGES`,
+- makes the provisioners declared in `SICK_CA_PROVISIONERS` that are missing
+  and gives each its template, lifetimes and challenge types (below),
 - sets the names the CA may issue for from `SICK_CA_ALLOW_DNS` and
   `SICK_CA_ALLOW_IP`, when at least one of them is given,
 - copies root certificate, intermediate certificate and provisioner password
@@ -182,7 +187,7 @@ everything in place changes nothing and says so:
 
 ```
 init-ca: the CA in /home/step exists: nothing to make
-init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted; 'acme' issues for 720h (5m to 2160h), serverAuth only
+init-ca: configuration unchanged: 'sick' grants up to 19800h, serverAuth only, names not restricted; 'acme' issues for 720h (5m to 2160h), serverAuth only, challenges http-01, dns-01, tls-alpn-01 (all, step-ca's default)
 init-ca: root fingerprint (SHA-256): af22556f14379ec5a8db1ec01db94434c7a25282331cf01caa7e33916ffd6afc
 ```
 
@@ -202,6 +207,97 @@ need that set to match; the recipes in [contrib/acme/](../contrib/acme/) and
 
 The container starts as root for `init-ca.sh`, which hands over the three
 files and then starts step-ca as the unprivileged user `step` of the image.
+
+### Further provisioners
+
+Besides `sick` (SICK's own) and `acme`, the CA can have provisioners for
+other jobs: client certificates, step-issuer in Kubernetes, ACME clients
+that want a longer lifetime. Declare them in a JSON file and start with
+`compose.provisioners.yml`:
+
+```bash
+cp provisioners.example.json provisioners.json     # then edit
+SICK_CA_PROVISIONERS=$PWD/provisioners.json \
+  docker compose -f compose.yml -f compose.provisioners.yml up -d
+```
+
+```json
+{ "provisioners": [
+  { "name": "clients", "type": "JWK", "profile": "client",
+    "lifetime": "720h", "max": "2160h",
+    "password_file": "secrets/provisioner_clients_password" },
+  { "name": "acme-long", "type": "ACME", "profile": "server",
+    "lifetime": "1440h", "max": "2160h", "challenges": ["http-01"] }
+] }
+```
+
+| Key | | |
+|---|---|---|
+| `name` | required | letters, digits, `.`, `_`, `-`; not `sick` or `acme`, whose settings come from the environment |
+| `type` | required | `JWK` (a password signs tokens: SICK, scripts, step-issuer, `step ca certificate`) or `ACME` |
+| `profile` | required | `server`: `serverAuth` alone, the template of `sick`; `client`: `clientAuth` alone, key usage `digitalSignature` |
+| `lifetime`, `max`, `min` | `720h`, `2160h`, `5m` | Go durations; `min` ≤ `lifetime` ≤ `max` |
+| `challenges` | all three | ACME only: a subset of `http-01`, `tls-alpn-01`, `dns-01` |
+| `password_file` | `secrets/provisioner_<name>_password` | JWK only: a path in the volume `ca`, relative to `/home/step`. Generated when missing (40 characters, no newline at the end – step-issuer takes a Secret byte for byte); read when the provisioner is made, never logged |
+| `comment` | | free text; JSON has no comments |
+
+At every start `init-ca.sh` makes what is missing, brings template,
+lifetimes and challenge types of each declared one in line, and says so:
+
+```
+init-ca: made the declared JWK provisioner 'clients' (password generated in /home/step/secrets/provisioner_clients_password)
+init-ca: made the declared ACME provisioner 'acme-long'
+init-ca: configuration updated: 'sick' grants up to 19800h, serverAuth only, ...
+init-ca: declared provisioner 'clients' (JWK) issues for 720h (5m to 2160h), clientAuth only
+init-ca: declared provisioner 'acme-long' (ACME) issues for 1440h (5m to 2160h), serverAuth only, challenges http-01
+```
+
+It never removes a provisioner. One that is in `ca.json` but neither built
+in nor declared stays, and every start names it (`provisioner 'old' (JWK)
+is neither built in nor declared in …: left as it is, not removed`);
+remove it with `step ca provisioner remove` in the `ca` container. A
+mistake in the file (an unknown key, a lifetime above `max`, a password
+file outside the volume) stops the start before anything is changed. A
+declared JWK provisioner whose password file is gone, or no longer opens
+its key, gets a `WARNING` and keeps its key; `--rotate-provisioner`
+rotates `sick` alone.
+
+The password of a JWK provisioner stays in the volume until you take it out
+for whoever is to issue with it – over a channel you trust, never through a
+log:
+
+```bash
+docker compose cp ca:/home/step/secrets/provisioner_clients_password ./clients.pw
+```
+
+The three of [`provisioners.example.json`](provisioners.example.json), and
+why:
+
+- **`clients`** – client certificates (mTLS) for people and machines,
+  `clientAuth` only, so that a client certificate is never a server
+  certificate and the reverse (`sick` and `acme` issue `serverAuth` only).
+  30 days by default: a client certificate is a credential that may sit on
+  a laptop, and the shorter it lives the shorter a lost one is useful –
+  there is no revocation in this setup that a server would check. At most
+  90 days, for a holder that cannot renew monthly; a longer lifetime should
+  be a decision, not a default. Holders renew with `step ca renew` (their
+  certificate authenticates the renewal; step-ca allows it until the
+  certificate has expired) or ask again with the password. A person's
+  certificate carries the email address (`step ca certificate
+  jane@example.internal`), a machine's a URI (`--san
+  spiffe://example.internal/machine/backup1`). Two things decide whether
+  that works, both in [docs/findings/client-san.md](../docs/findings/client-san.md):
+  the CA policy (`SICK_CA_ALLOW_DNS`/`_IP`) refuses email and URI SANs
+  altogether, and Java takes a single-label subject such as `backup1` for a
+  DNS name and checks it against the DNS constraints.
+- **`cert-manager`** – for step-issuer in Kubernetes
+  ([k8s/cert-manager](../k8s/cert-manager/)): `serverAuth`, 30 days, at most
+  90, a password of its own, so that the cluster never holds `sick`'s.
+- **`acme-long`** – ACME for clients that renew at a fixed number of days
+  instead of a share of the lifetime. Proxmox VE (`pveupdate`) renews once
+  less than 30 days are left: with the 30 days of `acme` that is every day,
+  with 60 days about every 30. http-01 only, the challenge such clients use.
+  Its directory is `https://ca.example.internal:9000/acme/acme-long/directory`.
 
 ### Lab mode and import mode
 
@@ -232,7 +328,9 @@ SICK_CA_IMPORT=/media/offline/for-the-ca SICK_CA_DNS=ca.example.internal \
 `ceremony.sh --help` lists the options (key type, lifetimes – 20 years for
 the root, 5 for the intermediate by default –, names). It refuses a root key
 inside the output for the CA, warns when DNS domains come without IP ranges
-(an unconstrained name form stays open; `--exclude-all-ip` closes it), and
+(an unconstrained name form stays open; `--exclude-all-ip` closes it;
+`--email` and `--uri` constrain the email addresses and URIs of client
+certificates, see [docs/findings/client-san.md](../docs/findings/client-san.md)), and
 writes `ceremony.txt`: operator, date, versions, fingerprints, and the
 constraints read back with `openssl x509 -text`, checked against what was
 asked for. Keep the root key and its password apart from the CA. After the
@@ -288,11 +386,6 @@ step-ca only ever uses the intermediate key. The root key is needed again
 when the intermediate is replaced, in five or ten years or after an
 incident. In lab mode it lies in the volume (`secrets/root_ca_key`); import
 mode never has it there.
-
-The ACME provisioner keeps the defaults of step-ca: certificates for 24
-hours. `init-ca.sh` leaves it alone; `step ca provisioner update acme
---x509-default-dur ... --x509-max-dur ...` inside the `ca` container changes
-that.
 
 ### Backup, restore, rotating the provisioner
 

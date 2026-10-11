@@ -90,6 +90,53 @@
 #                         gets the same template as the JWK provisioner:
 #                         serverAuth alone. Without a provisioner "acme" (it
 #                         was removed) there is nothing to set.
+#   SICK_CA_ACME_CHALLENGES  the challenge types "acme" offers, comma
+#                         separated, out of http-01, tls-alpn-01 and dns-01
+#                         (e.g. "http-01"). Empty: step-ca's default, all
+#                         three.
+#   SICK_CA_PROVISIONERS_FILE  a JSON file declaring further provisioners
+#                         (default $STEPPATH/provisioners.json; when the
+#                         variable is set the file has to exist). Each one is
+#                         made when missing and its template, lifetimes and
+#                         challenge types brought in line at every start,
+#                         like "sick" and "acme":
+#
+#                           { "provisioners": [
+#                             { "name": "clients", "type": "JWK",
+#                               "profile": "client",
+#                               "lifetime": "720h", "max": "2160h",
+#                               "min": "5m",
+#                               "password_file": "secrets/provisioner_clients_password" },
+#                             { "name": "acme-long", "type": "ACME",
+#                               "profile": "server",
+#                               "lifetime": "1440h", "max": "2160h",
+#                               "challenges": ["http-01"] } ] }
+#
+#                         name     letters, digits, ".", "_", "-"; not the
+#                                  name of "sick" or "acme"
+#                         type     JWK or ACME
+#                         profile  "server": serverAuth alone (the template
+#                                  of "sick"); "client": clientAuth alone,
+#                                  key usage digitalSignature
+#                         lifetime, max, min  Go durations, min <= lifetime
+#                                  <= max (default 720h, 2160h, 5m)
+#                         challenges  ACME only: a subset of http-01,
+#                                  tls-alpn-01, dns-01 (default all three)
+#                         password_file  JWK only: the password the key is
+#                                  encrypted with, a path in the volume,
+#                                  relative to $STEPPATH (default
+#                                  secrets/provisioner_<name>_password).
+#                                  Generated when missing, without a newline
+#                                  at the end (step-issuer takes a Secret
+#                                  byte for byte); read only when the
+#                                  provisioner is made. Never logged.
+#                         comment  free text, ignored
+#
+#                         Anything else is an error, and an error in the file
+#                         stops the start before anything is changed. A
+#                         provisioner that is in ca.json but neither built in
+#                         nor declared is left as it is and named in the log:
+#                         removing one is done by hand.
 #   SICK_CA_ALLOW_DNS     comma separated DNS names the CA may issue for,
 #                         "*.example.internal" style
 #   SICK_CA_ALLOW_IP      comma separated addresses and networks the CA may
@@ -133,6 +180,12 @@ acme=acme
 acme_lifetime=${SICK_CA_ACME_LIFETIME:-720h}
 acme_max=${SICK_CA_ACME_MAX_LIFETIME:-2160h}
 acme_min=${SICK_CA_ACME_MIN_LIFETIME:-5m}
+acme_challenges=${SICK_CA_ACME_CHALLENGES:-}
+provisioners_file=${SICK_CA_PROVISIONERS_FILE:-$STEPPATH/provisioners.json}
+provisioners_given=${SICK_CA_PROVISIONERS_FILE:+yes}
+# the declared provisioners, checked and with their defaults (load_declared)
+declared='[]'
+acme_challenge_list='null'
 handover=${SICK_HANDOVER_DIR:-/handover}
 import_dir=${SICK_CA_IMPORT_DIR:-$STEPPATH/import}
 staged=$STEPPATH/import
@@ -149,6 +202,18 @@ leaf_template='{
 	"keyUsage": ["digitalSignature"],
 {{- end }}
 	"extKeyUsage": ["serverAuth"]
+}'
+
+# The template of a declared provisioner with profile "client": subject and
+# SANs as the token (JWK) or the order (ACME) gives them - the email and URI
+# SANs of "step ca certificate --san" included -, clientAuth as the only
+# extended key usage. A TLS client signs with its key and never has a key
+# encrypted to it, so digitalSignature alone, for RSA as well.
+client_template='{
+	"subject": {{ toJson .Subject }},
+	"sans": {{ toJson .SANs }},
+	"keyUsage": ["digitalSignature"],
+	"extKeyUsage": ["clientAuth"]
 }'
 
 log() { printf 'init-ca: %s\n' "$*" >&2; }
@@ -174,17 +239,183 @@ duration_seconds() {
 # The lifetimes of "acme": Go durations, min <= default <= max - step-ca
 # itself refuses to start otherwise, with less to go on.
 check_acme_lifetimes() {
-  local min def max
-  min=$(duration_seconds "$acme_min")
-  def=$(duration_seconds "$acme_lifetime")
-  max=$(duration_seconds "$acme_max")
-  [ -n "$min" ] || die "SICK_CA_ACME_MIN_LIFETIME '$acme_min' is not a positive Go duration like 5m, 90s or 1h30m"
-  [ -n "$def" ] || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is not a positive Go duration like 720h, 90m or 1h30m"
-  [ -n "$max" ] || die "SICK_CA_ACME_MAX_LIFETIME '$acme_max' is not a positive Go duration like 2160h, 90m or 1h30m"
+  check_lifetimes SICK_CA_ACME_MIN_LIFETIME "$acme_min" SICK_CA_ACME_LIFETIME "$acme_lifetime" \
+    SICK_CA_ACME_MAX_LIFETIME "$acme_max"
+}
+
+# check_lifetimes <what> <min> <what> <default> <what> <max> [<prefix>]
+check_lifetimes() {
+  local min def max at=${7:+$7: }
+  min=$(duration_seconds "$2")
+  def=$(duration_seconds "$4")
+  max=$(duration_seconds "$6")
+  [ -n "$min" ] || die "$at$1 '$2' is not a positive Go duration like 5m, 90s or 1h30m"
+  [ -n "$def" ] || die "$at$3 '$4' is not a positive Go duration like 720h, 90m or 1h30m"
+  [ -n "$max" ] || die "$at$5 '$6' is not a positive Go duration like 2160h, 90m or 1h30m"
   jq -en --argjson a "$min" --argjson b "$def" '$a <= $b' >/dev/null \
-    || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is shorter than SICK_CA_ACME_MIN_LIFETIME '$acme_min'"
+    || die "$at$3 '$4' is shorter than $1 '$2'"
   jq -en --argjson a "$def" --argjson b "$max" '$a <= $b' >/dev/null \
-    || die "SICK_CA_ACME_LIFETIME '$acme_lifetime' is longer than SICK_CA_ACME_MAX_LIFETIME '$acme_max'"
+    || die "$at$3 '$4' is longer than $5 '$6'"
+}
+
+challenge_types='["http-01", "tls-alpn-01", "dns-01"]'
+
+# SICK_CA_ACME_CHALLENGES as a JSON list, or null for step-ca's default
+check_acme_challenges() {
+  local list unknown
+  list=$(json_list "$acme_challenges")
+  unknown=$(jq -r --argjson known "$challenge_types" '. - $known | join(", ")' <<<"$list")
+  [ -z "$unknown" ] || die "SICK_CA_ACME_CHALLENGES: unknown challenge type $unknown (http-01, tls-alpn-01, dns-01)"
+  if [ "$list" = '[]' ]; then acme_challenge_list=null; else acme_challenge_list=$list; fi
+}
+
+#### declared provisioners
+
+# Reads and checks the provisioners file into $declared: a JSON list of
+# { name, type, profile, lifetime, max, min, challenges (or null),
+# password_file (JWK: absolute path) }. Dies on the first error, before
+# anything is changed.
+load_declared() {
+  local file=$provisioners_file errors entry name
+  declared='[]'
+  if [ ! -e "$file" ]; then
+    [ "$provisioners_given" != yes ] || die "SICK_CA_PROVISIONERS_FILE: $file does not exist"
+    return 0
+  fi
+  [ -f "$file" ] && [ -r "$file" ] \
+    || die "$file is not a readable file (the user $(id -un) reads it; it holds no secret, mode 0644 will do)"
+  jq -e . "$file" >/dev/null 2>&1 || die "$file is not JSON"
+  errors=$(jq -r --argjson challenges "$challenge_types" --arg sick "$provisioner" --arg acme "$acme" '
+    def where($i; $p): "provisioners[\($i)]" + (if ($p | type) == "object" and ($p.name | type) == "string" then " (\($p.name))" else "" end);
+    def keys_of: if type == "object" then keys else [] end;
+    if type != "object" then ["the file holds no JSON object: { \"provisioners\": [ ... ] }"]
+    elif (keys - ["provisioners", "comment"]) != [] then ["unknown key \(keys - ["provisioners", "comment"] | join(", ")) at the top (provisioners, comment)"]
+    elif (.provisioners | type) != "array" then ["\"provisioners\" is not a list"]
+    else
+      ( .provisioners | to_entries | map(.key as $i | .value as $p | where($i; $p) as $w |
+        if ($p | type) != "object" then ["\($w): not an object"]
+        else
+          [ ( ($p | keys_of) - ["name", "type", "profile", "lifetime", "max", "min", "challenges", "password_file", "comment"]
+              | select(length > 0) | "\($w): unknown key \(join(", "))" ),
+            ( $p.name | select(type != "string" or test("^[A-Za-z0-9][A-Za-z0-9._-]*$") | not)
+              | "\($w): name is missing or not letters, digits, \".\", \"_\", \"-\"" ),
+            ( $p.name | select(. == $sick or . == $acme)
+              | "\($w): \"\(.)\" is built in; its settings come from the environment" ),
+            ( $p.type | select(. != "JWK" and . != "ACME") | "\($w): type is JWK or ACME" ),
+            ( $p.profile | select(. != "server" and . != "client") | "\($w): profile is \"server\" or \"client\"" ),
+            ( ["lifetime", "max", "min"][] as $k | $p[$k] | select(. != null and type != "string")
+              | "\($w): \($k) is a Go duration in a string, like \"720h\"" ),
+            ( $p.challenges | select(. != null) |
+              if $p.type != "ACME" then "\($w): challenges belong to an ACME provisioner"
+              elif type != "array" or length == 0 or (map(type == "string") | all | not) then "\($w): challenges is a non-empty list"
+              elif (. - $challenges) != [] then "\($w): unknown challenge type \(. - $challenges | join(", ")) (http-01, tls-alpn-01, dns-01)"
+              elif (unique | length) != length then "\($w): a challenge type is listed twice"
+              else empty end ),
+            ( $p.password_file | select(. != null) |
+              if $p.type != "JWK" then "\($w): password_file belongs to a JWK provisioner"
+              elif type != "string" or length == 0 then "\($w): password_file is a path"
+              else empty end )
+          ]
+        end) | add // [] )
+      + ( [ .provisioners[] | objects | .name | strings ] | group_by(.) | map(select(length > 1) | "\"\(.[0])\" is declared twice") )
+    end | .[]' "$file")
+  [ -z "$errors" ] || { while IFS= read -r entry; do log "$file: $entry"; done <<<"$errors"; die "$file: no provisioner changed"; }
+
+  declared=$(jq -c --arg steppath "$STEPPATH" '[ .provisioners[] | {
+      name, type, profile,
+      lifetime: (.lifetime // "720h"), max: (.max // "2160h"), min: (.min // "5m"),
+      challenges: (if .type == "ACME" then .challenges else null end),
+      password_file: (if .type == "JWK" then (.password_file // "secrets/provisioner_\(.name)_password")
+                        | (if startswith("/") then . else $steppath + "/" + . end) else null end)
+    } ]' "$file")
+  while IFS=$'\t' read -r name min def max entry; do
+    check_lifetimes min "$min" lifetime "$def" max "$max" "$file: '$name'"
+    [ -n "$entry" ] || continue
+    case /$entry/ in
+      */../* | */./* ) die "$file: '$name' password_file $entry: no \".\" or \"..\" in it" ;;
+    esac
+    case $entry in
+      "$STEPPATH"/*) ;;
+      *) die "$file: '$name' password_file $entry lies outside $STEPPATH: it belongs in the volume of the CA" ;;
+    esac
+    case $entry in
+      "$ca_password" | "$provisioner_password" | "$intermediate_key" | "$previous_key" | "$config" | "$STEPPATH"/secrets/root_ca_key)
+        die "$file: '$name' password_file $entry is a file of the CA itself" ;;
+    esac
+  done < <(jq -r '.[] | [.name, .min, .lifetime, .max, (.password_file // "")] | @tsv' <<<"$declared")
+  [ "$(jq -r '[.[] | .password_file | strings] | (length == (unique | length))' <<<"$declared")" = true ] \
+    || die "$file: two provisioners share a password_file"
+}
+
+# Makes the declared provisioners that <ca.json> does not have yet, on a
+# copy that replaces it when every one was made. Template and lifetimes are
+# apply_settings' business.
+add_declared() {
+  local file=$1 name type pw have made=()
+  [ "$declared" != '[]' ] || return 0
+  rm -f "$file.declare"
+  while IFS=$'\t' read -r name type pw; do
+    have=$(jq -r --arg name "$name" '[.authority.provisioners[]? | select(.name == $name) | .type] | join(", ")' "$file")
+    if [ -n "$have" ]; then
+      [ "$have" = "$type" ] \
+        || die "$provisioners_file declares '$name' as $type, but the CA has a provisioner '$name' of type $have: remove it by hand (step ca provisioner remove) or choose another name"
+      [ "$type" = JWK ] && check_password "$file" "$name" "$pw"
+      continue
+    fi
+    [ -f "$file.declare" ] || cp "$file" "$file.declare"
+    if [ "$type" = JWK ]; then
+      local said="password from $pw"
+      if [ ! -s "$pw" ]; then
+        mkdir -p "${pw%/*}"
+        # no newline at the end: step strips one, step-issuer would not
+        random_password | tr -d '\n' >"$pw"
+        said="password generated in $pw"
+      fi
+      step ca provisioner add "$name" --type JWK --create --password-file "$pw" --ca-config "$file.declare" \
+        >/dev/null 2>"$STEPPATH/declare.log" \
+        || { cat "$STEPPATH/declare.log" >&2; rm -f "$STEPPATH/declare.log" "$file.declare"; die "making the JWK provisioner '$name' failed; nothing changed"; }
+      made+=("JWK provisioner '$name' ($said)")
+    else
+      step ca provisioner add "$name" --type ACME --ca-config "$file.declare" \
+        >/dev/null 2>"$STEPPATH/declare.log" \
+        || { cat "$STEPPATH/declare.log" >&2; rm -f "$STEPPATH/declare.log" "$file.declare"; die "making the ACME provisioner '$name' failed; nothing changed"; }
+      made+=("ACME provisioner '$name'")
+    fi
+    rm -f "$STEPPATH/declare.log"
+  done < <(jq -r '.[] | [.name, .type, (.password_file // "")] | @tsv' <<<"$declared")
+  [ -f "$file.declare" ] || return 0
+  mv "$file.declare" "$file"
+  local one
+  for one in "${made[@]}"; do log "made the declared $one"; done
+}
+
+# An existing JWK provisioner: does the password file still open its key?
+# Only said, never fatal - the CA does not need the password.
+check_password() {
+  local file=$1 name=$2 pw=$3
+  if [ ! -s "$pw" ]; then
+    log "WARNING: no password for the provisioner '$name' in $pw: its key stays as it is; whoever uses '$name' needs the password it was made with"
+    return 0
+  fi
+  jq -r --arg name "$name" '.authority.provisioners[] | select(.type == "JWK" and .name == $name) | .encryptedKey' "$file" \
+    | step crypto jwe decrypt --password-file "$pw" >/dev/null 2>&1 \
+    || log "WARNING: the password in $pw does not open the key of the provisioner '$name'"
+}
+
+describe_declared() {
+  local file=$1 line
+  while IFS= read -r line; do
+    [ -z "$line" ] || log "$line"
+  done < <(jq -r --argjson declared "$declared" --arg sick "$provisioner" --arg acme "$acme" --arg from "$provisioners_file" '
+    ( $declared[] as $d | .authority.provisioners[]? | select(.type == $d.type and .name == $d.name)
+      | "declared provisioner '\''\(.name)'\'' (\(.type)) issues for \(.claims.defaultTLSCertDuration) (\(.claims.minTLSCertDuration) to \(.claims.maxTLSCertDuration)), "
+        + (if $d.profile == "client" then "clientAuth only" else "serverAuth only" end)
+        + (if .type == "ACME" then ", challenges " + ((.challenges // ["http-01", "dns-01", "tls-alpn-01"]) | join(", ")) else "" end) ),
+    ( .authority.provisioners[]? | . as $p
+      | select(($p.type == "JWK" and $p.name == $sick) or ($p.type == "ACME" and $p.name == $acme) | not)
+      | select([ $declared[] | select(.type == $p.type and .name == $p.name) ] | length == 0)
+      | "provisioner '\''\(.name)'\'' (\(.type)) is neither built in nor declared in \($from): left as it is, not removed" )
+  ' "$file")
 }
 
 random_password() {
@@ -201,6 +432,8 @@ initialise() {
   [[ $max_lifetime =~ ^([0-9]+(h|m|s))+$ ]] \
     || die "SICK_CA_MAX_LIFETIME '$max_lifetime' is not a duration like 19800h"
   check_acme_lifetimes
+  check_acme_challenges
+  load_declared
 
   if [ ! -f "$config" ]; then
     mkdir -p "$STEPPATH/secrets"
@@ -222,6 +455,7 @@ initialise() {
   jq -e --arg name "$provisioner" '.authority.provisioners[]? | select(.type == "JWK" and .name == $name)' "$config" >/dev/null \
     || die "the CA has no JWK provisioner '$provisioner' (step ca provisioner add $provisioner --type JWK --create)"
 
+  add_declared "$config"
   apply_settings "$config"
 
   log "root fingerprint (SHA-256): $(step certificate fingerprint "$root_cert")"
@@ -237,14 +471,26 @@ apply_settings() {
   allow_ip=$(json_list "${SICK_CA_ALLOW_IP:-}")
   wanted=$(jq --arg name "$provisioner" --arg max "$max_lifetime" --arg template "$leaf_template" \
       --arg acme "$acme" --arg amin "$acme_min" --arg adef "$acme_lifetime" --arg amax "$acme_max" \
+      --argjson achallenges "$acme_challenge_list" \
+      --argjson declared "$declared" --arg client "$client_template" \
       --argjson dns "$allow_dns" --argjson ip "$allow_ip" '
+      def challenges($list): if $list == null then del(.challenges) else .challenges = $list end;
       ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .claims.maxTLSCertDuration ) = $max
       | ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .options.x509.template ) = $template
       | ( .authority.provisioners[] | select(.type == "ACME" and .name == $acme) ) |=
           ( .claims.minTLSCertDuration = $amin
           | .claims.defaultTLSCertDuration = $adef
           | .claims.maxTLSCertDuration = $amax
-          | .options.x509.template = $template )
+          | .options.x509.template = $template
+          | challenges($achallenges) )
+      | reduce $declared[] as $d (.;
+          ( .authority.provisioners[] | select(.type == $d.type and .name == $d.name) ) |=
+            ( .claims.minTLSCertDuration = $d.min
+            | .claims.defaultTLSCertDuration = $d.lifetime
+            | .claims.enableSSHCA = false
+            | .claims.maxTLSCertDuration = $d.max
+            | .options.x509.template = (if $d.profile == "client" then $client else $template end)
+            | if $d.type == "ACME" then challenges($d.challenges) else . end ) )
       | if ($dns | length) + ($ip | length) > 0
         then .authority.policy.x509.allow =
           ( ( if ($dns | length) > 0 then { dns: $dns } else {} end )
@@ -259,11 +505,13 @@ apply_settings() {
     mv "$file.new" "$file"
     log "configuration updated: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")$(describe_acme "$file")"
   fi
+  describe_declared "$file"
 }
 
 describe_acme() {
   if jq -e --arg acme "$acme" '.authority.provisioners[]? | select(.type == "ACME" and .name == $acme)' "$1" >/dev/null; then
-    printf "; '%s' issues for %s (%s to %s), serverAuth only" "$acme" "$acme_lifetime" "$acme_min" "$acme_max"
+    printf "; '%s' issues for %s (%s to %s), serverAuth only, challenges %s" "$acme" "$acme_lifetime" "$acme_min" "$acme_max" \
+      "$(jq -r 'if . == null then "http-01, dns-01, tls-alpn-01 (all, step-ca'\''s default)" else join(", ") end' <<<"$acme_challenge_list")"
   else
     printf "; no ACME provisioner '%s', nothing set for it" "$acme"
   fi
@@ -282,6 +530,8 @@ describe_acme() {
 rotate_provisioner() {
   [ -f "$config" ] || die "no CA in $STEPPATH: nothing to rotate"
   check_acme_lifetimes
+  check_acme_challenges
+  load_declared
   local old_kid new_kid
   old_kid=$(jq -r --arg name "$provisioner" '.authority.provisioners[] | select(.type == "JWK" and .name == $name) | .key.kid' "$config")
   [ -n "$old_kid" ] || die "the CA has no JWK provisioner '$provisioner'"

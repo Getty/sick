@@ -48,7 +48,21 @@
 #      restart the next order lasts 10m; a second start with the same values
 #      changes nothing; a lifetime above the maximum stops init-ca.sh before
 #      it touches anything
-#   8. teardown, also after a failure or Ctrl-C: the project down with its
+#   8. declared provisioners (k58, k50): with docker/compose.provisioners.yml
+#      and docker/provisioners.example.json, and SICK_CA_ACME_CHALLENGES=
+#      tls-alpn-01, on the running CA after a restart: init-ca.sh makes
+#      "clients", "cert-manager" and "acme-long" and says so; ca.json gives
+#      each its template (clientAuth only / serverAuth only), its lifetimes
+#      and "acme-long" the challenge http-01, "acme" tls-alpn-01 alone; the
+#      passwords are generated in the volume (0600, user step, no newline at
+#      the end) and appear in no log; step-ca lists all three; "clients"
+#      issues clientAuth only for 720h, "cert-manager" serverAuth only for
+#      720h; an ACME order through "acme" fails, its http-01 not being
+#      offered, one through "acme-long" lasts 1440h, serverAuth only; a second
+#      start changes nothing (ca.json and the passwords byte for byte); a
+#      provisioner taken out of the file stays and is named in the log; a
+#      broken file stops init-ca.sh before it touches anything
+#   9. teardown, also after a failure or Ctrl-C: the project down with its
 #      volumes, the helper containers (labelled sick=1 and
 #      sick-e2e=ca-ceremony) removed by their labels, nothing named sick-e2e-
 #      ceremony* left, the private working directory (stand-in root key
@@ -176,6 +190,8 @@ SICK_CA_ALLOW_DNS=$1
 SICK_CA_ALLOW_IP=$2
 SICK_CA_ACME_LIFETIME=${acme_lifetime:-}
 SICK_CA_ACME_MIN_LIFETIME=${acme_min:-}
+SICK_CA_ACME_CHALLENGES=${acme_challenges:-}
+SICK_CA_PROVISIONERS=$work/provisioners.json
 SICK_CA_PORT=127.0.0.1:$ca_port
 SICK_TRUST_PORT=127.0.0.1:0
 SICK_INTERVAL=1d
@@ -185,11 +201,16 @@ EOF
 write_env '' ''
 unset SICK_BUILD_CONTEXT SICK_CONFIG_FILE SICK_SECRETS_DIR SICK_CA_NAME SICK_CA_DNS SICK_CA_PORT \
   SICK_CA_MAX_LIFETIME SICK_CA_ACME_LIFETIME SICK_CA_ACME_MAX_LIFETIME SICK_CA_ACME_MIN_LIFETIME SICK_CA_ALLOW_DNS SICK_CA_ALLOW_IP SICK_CA_IMPORT SICK_CA_IMPORT_DIR \
-  SICK_TRUST_PORT SICK_INTERVAL SICK_RUN_OPTIONS SICK_IMAGE SICK_FROM STEP_VERSION BUSYBOX_VERSION SICK_E2E_HERE
+  SICK_TRUST_PORT SICK_INTERVAL SICK_RUN_OPTIONS SICK_IMAGE SICK_FROM STEP_VERSION BUSYBOX_VERSION SICK_E2E_HERE \
+  SICK_CA_ACME_CHALLENGES SICK_CA_PROVISIONERS SICK_CA_PROVISIONERS_FILE
 
+# with_provisioners=yes adds docker/compose.provisioners.yml (part 8)
+with_provisioners=no
 compose() {
+  local -a extra=()
+  [ "$with_provisioners" = no ] || extra=(-f "$repo/docker/compose.provisioners.yml")
   docker compose --env-file "$work/compose.env" -p "$project" \
-    -f "$repo/docker/compose.yml" -f "$repo/docker/compose.import.yml" \
+    -f "$repo/docker/compose.yml" -f "$repo/docker/compose.import.yml" "${extra[@]}" \
     -f "$here/compose.local.yml" -f "$here/compose.ceremony.yml" "$@"
 }
 in_ca() { compose exec -T ca "$@"; }
@@ -197,14 +218,14 @@ in_sick() { compose run --rm --no-deps -T -e STEPPATH=/tmp/step -e HOME=/tmp --e
 ca_log() { compose logs --no-log-prefix ca 2>&1 | plain; }
 issued() { ca_log | grep -E 'method=POST' | grep -E 'path=/sign ' | grep -c 'status=201' || true; }
 
-#### 8. teardown, armed before anything exists
+#### 9. teardown, armed before anything exists
 
 armed=
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
-  printf '\n=== 8. teardown\n'
+  printf '\n=== 9. teardown\n'
   # the helpers by their labels (sick=1 and this script's), never by name
   docker ps -aq --filter label=sick=1 --filter "label=$label" | xargs -r docker rm -f -v >/dev/null 2>&1
   if [ -n "$armed" ]; then
@@ -563,15 +584,15 @@ result device gnutls-cli accepted 'the device, live, against the root alone'
 # acme_order <name>: a real ACME order with step, http-01 answered by its
 # standalone solver in a helper container the CA reaches under <name>.
 # Prints step's output, then the certificate (leaf first) between markers.
-acme_order() {
+acme_order() { # <name> [<provisioner>]
   docker run --rm --name sick-e2e-ceremony-acme --label sick=1 --label "$label" \
     --network "${project}_default" --network-alias "$1" \
     -v "${project}_handover:/etc/sick/ca:ro" -e STEPPATH=/tmp/step -e HOME=/tmp \
     --entrypoint sh sick:local -c '
-      cd /tmp && step ca certificate "$0" /tmp/a.crt /tmp/a.key --provisioner acme \
+      cd /tmp && step ca certificate "$0" /tmp/a.crt /tmp/a.key --provisioner "$1" \
         --ca-url https://ca.example.internal:9000 --root /etc/sick/ca/root_ca.crt --http-listen :80 2>&1
       echo "exit: $?"
-      if [ -s /tmp/a.crt ]; then echo "--- certificate"; cat /tmp/a.crt; fi' "$1" 2>&1 | plain
+      if [ -s /tmp/a.crt ]; then echo "--- certificate"; cat /tmp/a.crt; fi' "$1" "${2:-acme}" 2>&1 | plain
 }
 # lifetime_of <output of acme_order>: notAfter - notBefore of the leaf, in seconds
 leaf_of() { sed -n '/^--- certificate$/,$p' <<<"$1" | sed 1d | openssl x509; }
@@ -654,4 +675,139 @@ show <<<"$out"
 [ "$code" -ne 0 ] || fail 'init-ca.sh accepted 30d'
 expect 'init-ca.sh refuses 30d (Go knows no days)' "SICK_CA_ACME_LIFETIME '30d' is not a positive Go duration" "$out"
 
-# 8. runs in the EXIT trap
+#### 8. declared provisioners
+
+step 'declared provisioners: clients, cert-manager, acme-long; the challenge types of "acme"'
+install -m 0644 "$repo/docker/provisioners.example.json" "$work/provisioners.json"
+note 'docker/provisioners.example.json as SICK_CA_PROVISIONERS (compose.provisioners.yml), SICK_CA_ACME_CHALLENGES=tls-alpn-01, docker compose up -d'
+with_provisioners=yes acme_challenges=tls-alpn-01
+write_env '*.example.internal' '192.0.2.0/25'
+since=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+compose up -d --wait ca >/dev/null 2>&1 || { compose logs ca 2>&1 | tail -30 >&2; fail 'the CA did not come back healthy'; }
+again=$(compose logs --no-log-prefix --since "$since" ca 2>&1 | plain | grep '^init-ca:' || true)
+show <<<"$again"
+expect "init-ca.sh makes 'clients' with a password generated in the volume" "^init-ca: made the declared JWK provisioner 'clients' \(password generated in /home/step/secrets/provisioner_clients_password\)$" "$again"
+expect "... 'cert-manager' likewise" "^init-ca: made the declared JWK provisioner 'cert-manager' \(password generated in /home/step/secrets/provisioner_cert-manager_password\)$" "$again"
+expect "... and the ACME provisioner 'acme-long'" "^init-ca: made the declared ACME provisioner 'acme-long'$" "$again"
+expect "... says what 'clients' issues" "^init-ca: declared provisioner 'clients' \(JWK\) issues for 720h \(5m to 2160h\), clientAuth only$" "$again"
+expect "... 'cert-manager'" "^init-ca: declared provisioner 'cert-manager' \(JWK\) issues for 720h \(5m to 2160h\), serverAuth only$" "$again"
+expect "... 'acme-long'" "^init-ca: declared provisioner 'acme-long' \(ACME\) issues for 1440h \(5m to 2160h\), serverAuth only, challenges http-01$" "$again"
+expect "... and 'acme' offers tls-alpn-01 alone" "configuration updated: .*'acme' issues for 10m \(1m to 2160h\), serverAuth only, challenges tls-alpn-01$" "$again"
+refuse '... names no provisioner as undeclared' 'neither built in nor declared' "$again"
+
+conf=$(in_ca jq -r '.authority.provisioners[] | select(.name == "clients" or .name == "cert-manager" or .name == "acme-long" or .name == "acme")
+  | "\(.name) \(.type) claims \(.claims.minTLSCertDuration) \(.claims.defaultTLSCertDuration) \(.claims.maxTLSCertDuration) ssh \(.claims.enableSSHCA)"
+    + " eku \(.options.x509.template | [scan("\"extKeyUsage\": \\[([^\\]]*)\\]")[0] | gsub("[\" ]"; "")] | join("|"))"
+    + " ku \(.options.x509.template | [scan("\"keyUsage\": \\[([^\\]]*)\\]")[0] | gsub("[\" ]"; "")] | join("|"))"
+    + " challenges \(.challenges // ["default"] | join(","))"' /home/step/config/ca.json 2>&1 | plain)
+show <<<"$conf"
+expect 'ca.json: clients is JWK, 5m/720h/2160h, no SSH, clientAuth alone, key usage digitalSignature' '^clients JWK claims 5m 720h 2160h ssh false eku clientAuth ku digitalSignature challenges default$' "$conf"
+expect '... cert-manager is JWK, 5m/720h/2160h, serverAuth alone' '^cert-manager JWK claims 5m 720h 2160h ssh false eku serverAuth ku .* challenges default$' "$conf"
+expect '... acme-long is ACME, 5m/1440h/2160h, serverAuth alone, challenge http-01' '^acme-long ACME claims 5m 1440h 2160h ssh false eku serverAuth ku .* challenges http-01$' "$conf"
+expect '... acme offers tls-alpn-01 alone' '^acme ACME claims 1m 10m 2160h .* eku serverAuth .* challenges tls-alpn-01$' "$conf"
+
+pws=$(in_ca sh -c 'for f in /home/step/secrets/provisioner_clients_password /home/step/secrets/provisioner_cert-manager_password; do
+    echo "$(stat -c "%a %U" "$f") $(wc -c <"$f") last=$(tail -c 1 "$f" | od -An -c | tr -d " ") ${f##*/}"; done' 2>&1 | plain)
+show <<<"$pws"
+expect 'the passwords: mode 0600, user step, 40 characters, no newline at the end' '^600 step 40 last=[A-Za-z0-9] provisioner_clients_password$' "$pws"
+expect '... both' '^600 step 40 last=[A-Za-z0-9] provisioner_cert-manager_password$' "$pws"
+# compared here, never printed
+if ca_log | grep -qF -f <(in_ca sh -c 'cat /home/step/secrets/provisioner_clients_password; echo; cat /home/step/secrets/provisioner_cert-manager_password; echo' 2>/dev/null); then
+  fail '... but a password appears in the log of the CA'
+fi
+pass '... and appear in no log of the CA'
+
+
+listed=$(in_ca step ca provisioner list --ca-url https://ca.example.internal:9000 --root /home/step/certs/root_ca.crt 2>/dev/null \
+  | jq -r '.[] | "\(.type) \(.name)"' | plain)
+show <<<"$listed"
+for p in 'JWK clients' 'JWK cert-manager' 'ACME acme-long'; do
+  expect "step-ca lists $p" "^$p\$" "$listed"
+done
+
+note 'issuing through the JWK provisioners, inside the CA container (the passwords stay in the volume)'
+issue_jwk() { # <provisioner> <subject> [<step options>]: the certificate, or the error
+  compose exec -T -u step ca sh -c '
+    d=$(mktemp -d); cd "$d"
+    STEPPATH=$d step ca certificate "$1" c.crt c.key --provisioner "$0" \
+      --provisioner-password-file "/home/step/secrets/provisioner_$0_password" \
+      --ca-url https://ca.example.internal:9000 --root /home/step/certs/root_ca.crt $2 >out 2>&1
+    echo "exit: $?"; cat out; [ ! -s c.crt ] || { echo "--- certificate"; cat c.crt; }
+    rm -rf "$d"' "$1" "$2" "${3:-}" 2>&1 | plain
+}
+# a DNS name: the policy of this CA (*.example.internal) refuses email and
+# URI SANs - t/e2e/client-san.sh is about those
+out=$(issue_jwk clients backup1.example.internal)
+expect "'clients' issues for backup1.example.internal" '^exit: 0$' "$out"
+facts=$(leaf_of "$out" | openssl x509 -noout -ext subjectAltName,keyUsage,extendedKeyUsage)
+show <<<"$facts"
+expect '... with the name' 'DNS:backup1\.example\.internal' "$facts"
+expect '... extended key usage clientAuth' '^ *TLS Web Client Authentication$' "$facts"
+refuse '... and not serverAuth' 'Server Authentication' "$facts"
+expect '... key usage digitalSignature alone' '^ *Digital Signature$' "$facts"
+lifetime_is $((720 * 3600)) "$out" '... lifetime 720h'
+out=$(issue_jwk cert-manager svc.example.internal)
+expect "'cert-manager' issues for svc.example.internal" '^exit: 0$' "$out"
+facts=$(leaf_of "$out" | openssl x509 -noout -ext extendedKeyUsage)
+expect '... serverAuth' '^ *TLS Web Server Authentication$' "$facts"
+refuse '... and not clientAuth' 'Client Authentication' "$facts"
+lifetime_is $((720 * 3600)) "$out" '... lifetime 720h'
+
+note 'ACME: "acme" without http-01, "acme-long" with it'
+out=$(acme_order acme.example.internal acme)
+show <<<"$(sed '/^--- certificate$/,$d' <<<"$out")"
+refuse 'an order through "acme" (tls-alpn-01 alone) is not granted to the http-01 client' '^exit: 0$' "$out"
+expect '... as no challenge it can answer is offered' 'unable to validate any challenges' "$out"
+out=$(acme_order acme.example.internal acme-long)
+show <<<"$(sed '/^--- certificate$/,$d' <<<"$out")"
+expect 'an order through "acme-long" (http-01) is granted' '^exit: 0$' "$out"
+lifetime_is $((1440 * 3600)) "$out" '... lifetime 1440h'
+facts=$(leaf_of "$out" | openssl x509 -noout -ext extendedKeyUsage)
+expect '... serverAuth' '^ *TLS Web Server Authentication$' "$facts"
+refuse '... and not clientAuth' 'Client Authentication' "$facts"
+
+note 'the same file again: docker compose restart ca'
+before=$(in_ca sha256sum /home/step/config/ca.json /home/step/secrets/provisioner_clients_password /home/step/secrets/provisioner_cert-manager_password 2>&1 | plain)
+since=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+compose restart ca >/dev/null 2>&1 || fail 'docker compose restart ca'
+compose up -d --wait ca >/dev/null 2>&1 || fail 'the CA did not come back healthy'
+again=$(compose logs --no-log-prefix --since "$since" ca 2>&1 | plain | grep '^init-ca:' || true)
+show <<<"$again"
+expect 'a second start changes nothing and says so' '^init-ca: configuration unchanged: ' "$again"
+refuse '... makes nothing' 'made the declared' "$again"
+refuse '... warns of nothing' 'WARNING' "$again"
+expect '... and still names what the declared ones issue' "^init-ca: declared provisioner 'clients' \(JWK\) issues for 720h" "$again"
+[ "$(in_ca sha256sum /home/step/config/ca.json /home/step/secrets/provisioner_clients_password /home/step/secrets/provisioner_cert-manager_password 2>&1 | plain)" = "$before" ] \
+  || fail '... but ca.json or a password changed'
+pass '... ca.json and both passwords are unchanged, byte for byte'
+
+note 'acme-long taken out of the file: docker compose restart ca'
+jq '.provisioners |= map(select(.name != "acme-long"))' "$repo/docker/provisioners.example.json" >"$work/provisioners.json.new"
+cat "$work/provisioners.json.new" >"$work/provisioners.json"   # the same inode: the bind mount sees it
+rm -f "$work/provisioners.json.new"
+since=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+compose restart ca >/dev/null 2>&1 || fail 'docker compose restart ca'
+compose up -d --wait ca >/dev/null 2>&1 || fail 'the CA did not come back healthy'
+again=$(compose logs --no-log-prefix --since "$since" ca 2>&1 | plain | grep '^init-ca:' || true)
+show <<<"$again"
+expect 'a provisioner no longer declared is named in the log' "^init-ca: provisioner 'acme-long' \(ACME\) is neither built in nor declared in /etc/step-ca/provisioners.json: left as it is, not removed$" "$again"
+expect '... and stays in ca.json' '^acme-long$' "$(in_ca jq -r '.authority.provisioners[].name' /home/step/config/ca.json 2>&1 | plain)"
+
+note 'a broken provisioners file: init-ca.sh --initialise in a one-off container'
+printf '{ "provisioners": [ { "name": "clients", "type": "JWK", "profile": "both", "colour": "red" } ] }\n' >"$work/broken.json"
+chmod 644 "$work/broken.json"
+before=$(in_ca sha256sum /home/step/config/ca.json 2>&1 | plain)
+set +e
+out=$(compose run --rm --no-deps -T -v "$work/broken.json:/etc/step-ca/broken.json:ro" \
+  -e SICK_CA_PROVISIONERS_FILE=/etc/step-ca/broken.json ca --initialise 2>&1 | plain)
+code=$?
+set -e
+show <<<"$out"
+[ "$code" -ne 0 ] || fail 'init-ca.sh accepted a broken provisioners file'
+expect 'init-ca.sh refuses an unknown key' "provisioners\[0\] \(clients\): unknown key colour" "$out"
+expect '... and an unknown profile' 'profile is "server" or "client"' "$out"
+expect '... and changes nothing' 'no provisioner changed' "$out"
+[ "$(in_ca sha256sum /home/step/config/ca.json 2>&1 | plain)" = "$before" ] || fail '... but ca.json changed'
+pass '... ca.json is untouched'
+
+# 9. runs in the EXIT trap

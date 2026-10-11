@@ -1,0 +1,13 @@
+{
+  "comment": "The provisioner of step-issuer, made and kept in line by init-ca.sh (docker/README.md, 'Further provisioners'). Its password is generated in the CA volume; README.md next to this file says how it becomes the Secret of step-issuer.",
+  "provisioners": [
+    {
+      "name": "cert-manager",
+      "type": "JWK",
+      "profile": "server",
+      "lifetime": "720h",
+      "max": "2160h",
+      "password_file": "secrets/provisioner_cert-manager_password"
+    }
+  ]
+}

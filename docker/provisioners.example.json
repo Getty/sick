@@ -1,0 +1,32 @@
+{
+  "comment": "Provisioners init-ca.sh makes and keeps in line besides 'sick' and 'acme'. Format and the reasons for these values: docker/README.md, 'Further provisioners'.",
+  "provisioners": [
+    {
+      "name": "clients",
+      "comment": "client certificates (mTLS) for people and machines: clientAuth only",
+      "type": "JWK",
+      "profile": "client",
+      "lifetime": "720h",
+      "max": "2160h",
+      "password_file": "secrets/provisioner_clients_password"
+    },
+    {
+      "name": "cert-manager",
+      "comment": "step-issuer in Kubernetes (k8s/cert-manager): server certificates, its own password",
+      "type": "JWK",
+      "profile": "server",
+      "lifetime": "720h",
+      "max": "2160h",
+      "password_file": "secrets/provisioner_cert-manager_password"
+    },
+    {
+      "name": "acme-long",
+      "comment": "ACME clients that renew at fixed days, like Proxmox VE (less than 30 days left): 60 days",
+      "type": "ACME",
+      "profile": "server",
+      "lifetime": "1440h",
+      "max": "2160h",
+      "challenges": ["http-01"]
+    }
+  ]
+}

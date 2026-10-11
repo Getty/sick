@@ -1,0 +1,22 @@
+# Further provisioners: init-ca.sh makes and keeps in line those the file
+# SICK_CA_PROVISIONERS declares (format: README.md, "Further provisioners";
+# an example: provisioners.example.json).
+#
+#   SICK_CA_PROVISIONERS=$PWD/provisioners.json \
+#     docker compose -f compose.yml -f compose.provisioners.yml up -d
+#
+# The file holds no secret and has to be readable by the user of the CA
+# image (mode 0644 will do). The passwords of JWK provisioners are made in
+# the volume "ca", never in this file.
+
+services:
+  ca:
+    environment:
+      SICK_CA_PROVISIONERS_FILE: /etc/step-ca/provisioners.json
+    volumes:
+      - type: bind
+        source: ${SICK_CA_PROVISIONERS:?SICK_CA_PROVISIONERS names the provisioners file}
+        target: /etc/step-ca/provisioners.json
+        read_only: true
+        bind:
+          create_host_path: false

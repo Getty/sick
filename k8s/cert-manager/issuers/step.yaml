@@ -4,7 +4,8 @@
 # caBundle holds the root (base64 of root_ca.crt) and kid the key id of the
 # provisioner; your overlay sets both, they exist once the CA does. The
 # password that opens the provisioner key is the Secret
-# step-issuer/sick-step-provisioner (key "password"), made by hand:
+# step-issuer/sick-step-provisioner (key "password"), made by hand from the
+# password init-ca.sh generated in the CA volume (README.md):
 #
 #   kubectl -n step-issuer create secret generic sick-step-provisioner \
 #     --from-file=password=<file>

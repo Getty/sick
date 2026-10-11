@@ -7,7 +7,7 @@ by [`t/e2e/acme-k8s.sh`](../../t/e2e/acme-k8s.sh).
 
 | Directory | Holds |
 |---|---|
-| [`ca/`](ca/) | the CA of `k8s/test` alone (no `sick`, no trust page), named `ca.dev-sick.svc`, policy `*.example.internal`, a NetworkPolicy on who reaches it |
+| [`ca/`](ca/) | the CA of `k8s/test` alone (no `sick`, no trust page), named `ca.dev-sick.svc`, policy `*.example.internal`, the provisioner `cert-manager` declared in `provisioners.json`, a NetworkPolicy on who reaches it |
 | [`issuers/`](issuers/) | `ClusterIssuer sick-acme` (ACME, http-01) and `StepClusterIssuer sick-step` |
 | [`demo/`](demo/) | per issuer a `Certificate`, an nginx Deployment serving it and its Service; a client Pod that trusts the CA through a ConfigMap |
 
@@ -75,8 +75,10 @@ What has to be true before the CA signs a name, per issuer.
   test) points `web-acme.example.internal` at Traefik. In a real setup the
   internal DNS does that, and the CA must resolve the names the same way the
   clients do - never through a public resolver. Note that step-ca offers
-  dns-01, http-01 and tls-alpn-01 for every order; the provisioner could be
-  limited to http-01 (not done: `init-ca.sh` owns it).
+  dns-01, http-01 and tls-alpn-01 for every order unless the provisioner is
+  limited: `SICK_CA_ACME_CHALLENGES=http-01` in the environment of the `ca`
+  container would do that (not set here, *not tried* in this cluster; the
+  Compose setup proves it in `t/e2e/ca-ceremony.sh`).
 
 **step-issuer (`sick-step`)**
 
@@ -101,22 +103,25 @@ A provisioner of its own, `cert-manager`, not SICK's `sick`:
   would silently break step-issuer, and its rotation would break SICK.
 - Its own lifetimes: 30 days by default, at most 90, like ACME.
 
-It is made by hand, once, on the running CA; `init-ca.sh` does not know it
-and leaves it alone (a provisioner it does not own survives its starts):
+It is declared in [`ca/provisioners.json`](ca/provisioners.json), a
+ConfigMap the `ca` container reads as `SICK_CA_PROVISIONERS_FILE`:
+`init-ca.sh` makes it at the first start with a password it generates in
+the CA volume (`secrets/provisioner_cert-manager_password`), and brings its
+template (serverAuth only) and lifetimes (5m / 720h / 2160h) back in line
+at every start (`docker/README.md`, "Further provisioners"). The password
+goes into the Secret through the Kubernetes API, and from nowhere else:
 
-    kubectl -n dev-sick exec -i deploy/sick -c ca -- su step -s /bin/bash -c '
-      pw=$(mktemp); cat >"$pw"
-      step ca provisioner add cert-manager --type JWK --create \
-        --password-file "$pw" --ca-config /home/step/config/ca.json
-      rm -f "$pw"' <password-file
-    # then claims (5m/720h/2160h) and the x509 template of "sick" (serverAuth
-    # only) into ca.json, and: pkill -HUP -x step-ca
+    kubectl -n dev-sick exec deploy/sick -c ca -- \
+      cat /home/step/secrets/provisioner_cert-manager_password >password-file
     kubectl -n step-issuer create secret generic sick-step-provisioner \
       --from-file=password=password-file
+    rm password-file
 
-The password file must not end in a newline: `step` strips it from a file,
+The key id (`kid` of the issuer) is in `step ca provisioner list`. The
+password must not end in a newline: `step` strips it from a file,
 step-issuer takes the Secret byte for byte and fails with "error decrypting
-provisioner key". `t/e2e/acme-k8s.sh` does all of it (part `up`).
+provisioner key"; `init-ca.sh` writes it without one. `t/e2e/acme-k8s.sh`
+does all of it (part `up`).
 
 ## Renewal
 

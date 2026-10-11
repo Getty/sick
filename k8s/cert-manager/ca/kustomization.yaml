@@ -1,6 +1,8 @@
 # The CA of k8s/test alone, for cert-manager: step-ca with its ACME
-# provisioner "acme", reachable as ca.dev-sick.svc inside the cluster, issuing
-# for *.example.internal and nothing else. No sick, no trust page.
+# provisioner "acme" and the JWK provisioner "cert-manager" for step-issuer
+# (declared in provisioners.json, made by init-ca.sh), reachable as
+# ca.dev-sick.svc inside the cluster, issuing for *.example.internal and
+# nothing else. No sick, no trust page.
 #
 #   kubectl apply -k k8s/cert-manager/ca
 #
@@ -14,6 +16,12 @@ resources:
   - ../../daten
   - ../../test
   - networkpolicy.yaml
+configMapGenerator:
+  # the provisioners init-ca.sh makes and keeps in line besides "sick" and
+  # "acme": here "cert-manager"
+  - name: sick-provisioners
+    files:
+      - provisioners.json
 patches:
   - patch: |-
       apiVersion: apps/v1
@@ -39,7 +47,16 @@ patches:
                   - name: SICK_CA_ALLOW_DNS
                     value: "*.example.internal"
                   # the ACME lifetimes stay init-ca.sh's: 720h, 5m to 2160h
+                  - name: SICK_CA_PROVISIONERS_FILE
+                    value: /etc/step-ca/provisioners.json
+                volumeMounts:
+                  - name: provisioners
+                    mountPath: /etc/step-ca/provisioners.json
+                    subPath: provisioners.json
+                    readOnly: true
             volumes:
+              - name: provisioners
+                configMap: { name: sick-provisioners }
               - name: state
                 $patch: delete
               - name: trust
