@@ -1,0 +1,43 @@
+# A first device for the Compose setup of docker/: nginx, which serves the
+# certificate that SICK writes for the device "web" (type files, see
+# sick.yml next to this file). Added on top of docker/compose.yml:
+#
+#   docker compose -f docker/compose.yml \
+#     -f contrib/devices/files-nginx/compose.yml up -d
+#
+# nginx reads the state volume of the sick service read-only, where the
+# device's dir lies (/var/lib/sick/certs/web), and loads fullchain.pem and
+# key.pem at every handshake (a variable in ssl_certificate, nginx 1.15.9
+# or later). So it starts before the first certificate exists - the device
+# is "missing", not "unreachable", and the first run fills it - and picks
+# up every new certificate without a reload.
+#
+# The handshake runs in the worker, not the master, so nginx runs as a
+# whole as uid 101 with group 0: key.pem is root's (sick runs as root) and
+# has mode_key 0640 in sick.yml. Nothing else in the container is root.
+#
+# On the network of the project the service is web.example.internal (an
+# alias; in a real network DNS). SICK_WEB_PORT publishes port 443 on
+# 127.0.0.1 of the host (8443) for a client there.
+
+services:
+  web:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    user: "101:0"
+    entrypoint: ["nginx", "-c", "/etc/nginx/web.conf", "-g", "daemon off;"]
+    command: []
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      # relative to docker/, the directory of the first file of the command
+      - ../contrib/devices/files-nginx/nginx.conf:/etc/nginx/web.conf:ro
+      - state:/var/lib/sick:ro
+    tmpfs:
+      - /tmp:mode=0700,uid=101,gid=0,size=16m
+    networks:
+      default:
+        aliases: [web.example.internal]
+    ports:
+      - "127.0.0.1:${SICK_WEB_PORT:-8443}:443"

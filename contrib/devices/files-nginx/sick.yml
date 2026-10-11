@@ -1,0 +1,15 @@
+# The device entry for nginx of compose.yml next to this file, for the
+# devices: section of docker/sick.yml.
+#
+# No reload: nginx reads the files at every handshake. host and port are
+# what SICK checks: the certificate nginx really presents, from the sick
+# container, under the alias of the service.
+
+devices:
+  web:
+    type: files
+    host: web.example.internal
+    port: 443
+    names: [web.example.internal]
+    dir: /var/lib/sick/certs/web       # in the state volume, which nginx reads
+    mode_key: 0640                     # nginx runs with group 0, never as root

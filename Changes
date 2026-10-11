@@ -291,3 +291,6 @@ Revision history for SICK
       and say that the change takes effect at the next start.
     - docker/sick.example.yml names no device, so the first start runs clean;
       its examples are commented out.
+    - contrib/devices/files-nginx: an nginx that reads its certificate from
+      SICK's state volume at every handshake, with its device entry, as the
+      first device of the Docker setup.
