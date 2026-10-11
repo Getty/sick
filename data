@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-11T06:58:29Z
+created: 2026-10-11T05:24:35Z
+id: 61
+priority: low
+started: 2026-10-11T06:41:36Z
+status: done
+tags:
+- devices
+- e2e
+- finding
+title: 'device-routeros: a failed import exited 1 once; the ''always exit 0'' finding
+  is not stable'
+updated: 2026-10-11T06:58:40Z
+---
+
+Observed 2026-10-11 in the e2e run against 7ee55aa: '/certificate import file-name=<missing>' over ssh to RouterOS CHR 7.24.5 exited 1 (message 'input does not match any value of file-name'), while three earlier runs and the rerun right after exited 0. The run was under load (a k3d test ran in parallel). So the handbook's 'RouterOS ends run-time failures with exit 0' holds often, not always; the port check catches both. Done when: the assertion records the exit code instead of requiring 0, and docs/findings/device-routeros.md and handbook chapter 5 say 'may exit 0'.
+
+w-image: device-routeros.sh records the exit code of the failed import (RECORD line), asserts the error text and that /certificate is unchanged; docs/findings/device-routeros.md says may exit 0 (four of five) or 1 (once, under load). One run: ALL PASSED (standin chr), 47 PASS, RECORD exit 0. Left for the main agent (prose, outside my lane): docs/handbook/05-devices.md line 187 still says RouterOS answers failures with exit code 0 - needs 'may exit 0'. From the removal: handbook 05-devices.md (198, 254, 264), 08-client-certificates.md (175), contrib/devices/proxmox/README.md (13, 148) and sick.example.yml (11) still point at the removed t/e2e/device-proxmox.sh.
+
+Committed as 1edbf1e
