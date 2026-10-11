@@ -167,6 +167,22 @@ lifetime is the bound on a lost or stolen device. Tested, and important:
 
 ## Test report
 
+All e2e scripts were run against the committed state `7ee55aa` on
+2026-10-11, at the end of this package: `run-local.sh` 33 PASS,
+`ca-ceremony.sh` 146, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings,
+`trust-runtimes.sh` 147, `ops.sh` 72, `acme-services.sh` 31 per service,
+`acme-k8s.sh` all parts, `device-ssh.sh` 71, `device-proxmox.sh` 73,
+`client-san.sh` 65, `mtls.sh` 79. Two scripts failed on the first run and
+passed when repeated alone: `trust-os.sh` (465 PASS on the repeat; the first
+run broke in the Rocky container because the distribution's package
+repository was inconsistent: `nothing provides gnutls = 3.8.10-9.el9_8`)
+and `device-routeros.sh` (46 PASS on the repeat; the first run, under load
+from a parallel k3d test, saw RouterOS end a failed import with exit 1
+instead of 0 – card k61). Afterwards nothing labelled `sick=1`, no `sick-*`
+k3d cluster, the host's default kubeconfig untouched. The rows below are the
+development runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/e2e/client-san.sh` | step-ca 0.30.2, OpenSSL 3.5.7, GnuTLS 3.8.9, Go 1.27.2, Temurin 25.0.4.1 | what step-ca issues and the stacks accept for email and URI SANs under DNS/IP constraints, with email/URI constraints, and with the policy | as tabled in `client-san.md`: DNS/IP constraints do not bound email/URI; Go refuses hostless URIs, Java a single-label CN; with email/URI constraints and policy, outside names are refused | other stacks (.NET, Rust) |
