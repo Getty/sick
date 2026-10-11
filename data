@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-10-11T08:46:29Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-10-11T10:13:09Z
+created: 2026-10-11T08:10:19Z
+id: 67
+priority: high
+started: 2026-10-11T08:19:44Z
+status: done
+tags:
+- handbook
+- p9
+title: P9a Walkthroughs from zero by agents without prior knowledge
+updated: 2026-10-11T10:13:09Z
+---
+
+Planning+CA, clients+first device, services+operations; each gap fixed in the handbook; repeated with fresh agents until a section runs without a question; transcripts with neutral names in the handbook. Part of P9 (k20); binding: docs/roadmap.md section P9 and the hub's brief of 2026-10-11.
+
+sick-worker: items 1-9 of the walkthrough fixes implemented in docker/, contrib/, t/e2e/ (SICK_CA_ALIAS, ceremony message, ACME compose.lab.yml, SickDeviceError, sick-notify --help, contrib/devices/files-nginx, clean sick.example.yml, What is open, offline switch/retire/rotate). Proofs so far: promtool check+test, files-nginx and caddy lab in own projects. Running the e2e scripts now.
+
+sick-worker: done, tree commit-ready (no commit). e2e green on the final tree: ops.sh, ca-ceremony.sh, acme-services.sh caddy, run-local.sh, ca-rollover.sh (new part 8: switch/retire/rotate on the stopped CA). prove -lr t green, no skips. Own proofs: files-nginx device, caddy compose.lab.yml against an import-mode CA. Deviation: the CA alias went into docker/compose.yml, not compose.import.yml (that file is for the first start only). Drift for sick-target-proxmox: a missing ca file reports 'at (eval 288) line 1.' in its message. Card left in-progress: it is the orchestrator's umbrella card.
+
+Done. Five rounds of walkthroughs by agents without prior knowledge; round 5 ran every section without blocker or guess. Findings fixed in the handbook (f135c76, 391ff3b, c7d37f4, 04879a9, 164b272); record in docs/handbook/walkthroughs.md.
