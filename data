@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-11T06:57:19Z
+created: 2026-10-11T05:49:42Z
+id: 66
+priority: low
+started: 2026-10-11T06:41:14Z
+status: done
+tags:
+- core
+- target
+- proxmox
+title: Let a target type name its default port
+updated: 2026-10-11T06:57:31Z
+---
+
+SICK::Device has port with default 443 and no predicate; a target cannot tell 'port: 443' from 'not set'. proxmox-ve / proxmox-bs listen on 8006 / 8007 and refuse port 443 meanwhile (a node behind NAT on 443 cannot be listed). Wish: Device::has_port or Target::default_port used by Config. Decision: ../sick-target-proxmox docs/decisions/0003-types-and-options.md. From SICK-Target-Proxmox (../sick-target-proxmox, card #6 there).
+
+Done: SICK::Target->default_port (443), Device has_port/default_port, port = explicit or default_port; Config asks class_for softly (unknown/broken type still a per-device run error); class_for keeps the first compile error (perl's 'Attempt to reload' otherwise). endpoint uses device port if has_port else target default_port. Tests t/13, t/30. Follow-up for ../sick-target-proxmox: define default_port 8006/8007 and drop the port-443 refusal.
+
+Committed as b1b04cb
