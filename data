@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-11T03:35:53Z
+created: 2026-10-10T22:01:10Z
+id: 43
+priority: low
+started: 2026-10-11T03:04:24Z
+status: done
+tags:
+- ops
+- finding
+title: 'Inventory: an optional owner/contact per device'
+updated: 2026-10-11T03:36:04Z
+---
+
+From k39 (2026-10-10): the roadmap's inventory names an owner per device; the device list has no such key. Add an optional 'owner' (free text, no secret) shown by sick inventory and as a label of sick_device_info. Done when: key validated, shown, tested.
+
+2026-10-11 03:04 Done in tree: owner in Config @DEVICE_KEYS (validated: plain value, not empty, one line <=200 chars, no control chars; messages without the value), SICK::Device->owner (Maybe[Str]); Report check/inventory JSON field owner (null without), sick_device_info label owner only when set (escaped, after status); inventory table column OWNER (last). Alert rules unchanged: to show the owner a rule would need '* on(device) group_left(owner) sick_device_info' — possible, not trivial, left to decide.
+
+2026-10-11 03:04 Done: owner key validated (t/13), shown in inventory table/JSON, check JSON, sick_device_info label only when set (t/43, red before, green after). Ciscosb suite green (90-live skipped as always).
+
+Committed as df35999
