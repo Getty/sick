@@ -69,7 +69,10 @@ curl --cacert root_ca.crt --resolve caddy.example.internal:443:127.0.0.1 \
   https://caddy.example.internal/                               # hello
 ```
 
-(the recipe READMEs say the same for each service). **In the lab it is
+(the recipe READMEs say the same for each service; if you set
+`SICK_LAB_HTTPS_PORT` to another port than 443, put it into `--resolve` and
+the URL as well, e.g. `caddy.example.internal:8443:127.0.0.1` and
+`https://caddy.example.internal:8443/`). **In the lab it is
 different**, and the recipes' tests say so: the CA and
 the services share one Docker network on one host; Compose's built-in
 resolver (or a `coredns-custom` entry in k3d) is the "DNS", there is no

@@ -252,8 +252,9 @@ prints `✔ Certificate: c.crt`; with `outside.example.org` instead its error
 (the line before `Re-run with STEPDEBUG=1`) is
 `DNS name "outside.example.org" is not permitted by any constraint`, with
 `198.51.100.7` in `IP address "198.51.100.7" is not permitted by any
-constraint`, with `a.b.example.internal` in `dns name "a.b.example.internal"
-not allowed` (the policy).
+constraint`, with `a.b.example.internal` in `The request was forbidden by the
+certificate authority: dns name "a.b.example.internal" not allowed` (the
+policy).
 
 What the provisioner `sick` gives out:
 
@@ -301,7 +302,9 @@ the default project `sick` (`docker volume ls` shows it):
 /safe/ca-2026-10-10.tar.manifest`; `restore` prints `the archive matches its
 manifest`, `restored into sick_ca_drill: 11 files, each as in the manifest`
 and how long the intermediate is still valid. Move the `.manifest` to a
-different place than the archive afterwards (see below).
+different place than the archive afterwards, and keep a second copy of it in
+a third place (see below). `restore` reads `FILE.manifest` next to the
+archive: for a restore, put it back there first.
 
 `backup` stops the CA for the copy (step-ca keeps its Badger database open
 and Smallstep documents no online backup; the lab CA was down for 1–2
@@ -353,6 +356,16 @@ its volume, `docker compose up -d`.
 
 ## Rotating the provisioner `sick`
 
+To see the old password fail afterwards, save it **first**, in a private
+directory (the container's user must be able to read it):
+
+```bash
+mkdir -m 700 ~/rot && docker compose exec -T sick cat /etc/sick/ca/provisioner.pw > ~/rot/old.pw
+chmod 711 ~/rot && chmod 644 ~/rot/old.pw
+```
+
+Then rotate:
+
 ```bash
 docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --rotate-provisioner
 ```
@@ -366,13 +379,10 @@ volume, step-ca reloads, and SICK issues with it at once. A token signed
 with the old key is refused (HTTP 401).
 
 Check it with the issuing command of "What the CA will and will not issue"
-above: it issues with the new password the `sick` container now has. To see
-the old one fail, save it **before** rotating, in a private directory, and
-delete it after the check:
+above: it issues with the new password the `sick` container now has. The
+saved old one must fail; delete it after the check:
 
 ```bash
-mkdir -m 700 ~/rot && docker compose exec -T sick cat /etc/sick/ca/provisioner.pw > ~/rot/old.pw
-chmod 711 ~/rot && chmod 644 ~/rot/old.pw              # the container's user must read it
 docker compose run --rm -v ~/rot/old.pw:/old.pw:ro --entrypoint sh sick -c 'cd /tmp && \
   step ca certificate www.example.internal c.crt c.key --ca-url https://ca.example.internal:9000 \
   --root /etc/sick/ca/root_ca.crt --provisioner sick --password-file /old.pw'
@@ -506,9 +516,13 @@ Handle its output as for the first: write the root fingerprint down, copy
 command of "The ceremony", with `root2` and `for-the-ca-2`), keep
 `for-the-ca-2/*.crt` on both media. Put the new root where the `sick`
 service can read it – the secrets directory is mounted already and owned by
-root; a root is public, so mode 0644 – and announce it:
+root; a root is public, so mode 0644 – and announce it. Before the trust
+page changes, keep a copy of its scripts: in phase C clients remove the old
+root with them (the new page's scripts carry both roots):
 
 ```bash
+mkdir -p ~/trust-before-A && for f in trust-linux.sh trust-nss.sh trust-macos.sh trust-windows.ps1; do
+  curl -fsS -o ~/trust-before-A/$f http://127.0.0.1:8080/$f; done
 cd sick/docker
 sudo install -m 0644 -o root /media/offline/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
 # in sick.yml, ca section:   additional_roots: [/etc/sick/secrets/root_ca_2.crt]
@@ -518,7 +532,9 @@ docker compose run --rm sick sick trust /srv/trust
 
 The trust page now carries both roots (`root_ca_2.pem`/`.crt`, both in
 `ca_bundle.pem` and the Apple profile). Clients install the new root the
-same way as the first, its fingerprint checked over the second channel.
+same way as the first, its fingerprint checked over the second channel;
+the script now carries two roots and wants both fingerprints, the flag
+repeated: `install --fingerprint <old root> --fingerprint <new root>`.
 Wait until the clients that matter have it.
 
 **Phase B, switch.** The CA of the new root runs on a second volume; the old
@@ -545,18 +561,24 @@ follow the roles: from phase B on `root_ca.*` is the **new** root and
 `root_ca_2.*` the old one – the fingerprints on the page say which is
 which. Clients change nothing –
 they trust both roots. From now on every `docker compose` command names
-`compose.ca-next.yml`; without it Compose goes back to the old volume.
+`compose.ca-next.yml`; without it Compose goes back to the old volume. Once
+you are past the point of a rollback (phase C), make that permanent: put
+`COMPOSE_FILE=compose.yml:compose.ca-next.yml` into `.env`. Otherwise a
+plain `docker compose up` after the old volume is gone creates an empty
+`_ca` volume, and the CA on it starts in lab mode – a new CA with a new
+root.
 
 **Phase C, retire** – when every device presents the new hierarchy
 (`sick inventory --live`): set `additional_roots: []` in `sick.yml`,
 recreate `sick`, run `sick trust`, and have clients remove the old root
 (chapter 3, "Taking trust away"). Then the old volume can go (`docker volume
 rm sick_ca`, the project's `_ca` volume – keep its last backup until you are
-sure), and so can `secrets/root_ca_2.crt` and `secrets/root_ca_old.crt`.
-Point `SICK_CA_IMPORT` in `.env` at `for-the-ca-2`, so the file says what the
-CA is built on, and back up the new volume (`./ca-backup.sh backup --volume
-sick_ca-next --to …`). Clients remove the old root with a script from a page
-**from before phase A**, or by file name – the phase-A scripts carry both
+sure), and so can the two root files (`sudo rm secrets/root_ca_2.crt
+secrets/root_ca_old.crt`). Put `COMPOSE_FILE=compose.yml:compose.ca-next.yml`
+into `.env` (`SICK_CA_IMPORT` points at `for-the-ca-2` since phase B), and
+back up the new volume (`./ca-backup.sh backup --volume sick_ca-next --to
+…`). Clients remove the old root with the script kept in phase A
+(`~/trust-before-A/`), or by file name – the phase-A scripts carry both
 roots.
 
 **Rollback.** In a *planned* replacement, going back is starting without

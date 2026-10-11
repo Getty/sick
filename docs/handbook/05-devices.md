@@ -107,10 +107,10 @@ unprivileged worker):
 ```bash
 cd sick/docker
 # put the web: entry of ../contrib/devices/files-nginx/sick.yml under devices: in sick.yml,
-# then recreate the sick service, which reads sick.yml at start (chapter 2):
+# then start the device and recreate the sick service, which reads sick.yml at start (chapter 2):
+docker compose -f compose.yml -f ../contrib/devices/files-nginx/compose.yml up -d web
 docker compose up -d --force-recreate sick
 curl -fsS -o root_ca.pem http://127.0.0.1:8080/root_ca.pem   # compare its fingerprint with the ceremony's
-docker compose -f compose.yml -f ../contrib/devices/files-nginx/compose.yml up -d web
 docker compose run --rm sick sick check web
 docker compose run --rm sick sick run web
 curl --cacert root_ca.pem --resolve web.example.internal:8443:127.0.0.1 \
@@ -119,7 +119,11 @@ curl --cacert root_ca.pem --resolve web.example.internal:8443:127.0.0.1 \
 
 (`root_ca.pem` from the trust page, checked against the ceremony's
 fingerprint – `root_ca.crt` is the same certificate as DER, which curl does
-not read; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). Compose
+not read; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). The
+recreated `sick` service runs once at start: if that run already found
+`web`, it renewed it (`docker compose logs sick` shows `renewed`), and
+`check` and `run` show `ok` / `unchanged` instead of `missing` / `renewed`
+– the same result. Compose
 warns about "orphan containers" (`web`) when a command does not name the
 device's file: that is expected – do **not** follow its hint
 `--remove-orphans`, which would remove the device. On a Debian or Ubuntu

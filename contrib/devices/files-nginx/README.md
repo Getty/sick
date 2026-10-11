@@ -26,7 +26,9 @@ curl --cacert root_ca.pem --resolve web.example.internal:8443:127.0.0.1 \
 ```
 
 `root_ca.pem` comes from the trust page (`http://<host>:8080/root_ca.pem`),
-compared with the root fingerprint the CA logged at its first start. Give
+compared with the root fingerprint the CA logged at its first start. If
+the `sick` service was (re)started after `web`, its run at start may have
+renewed it already: then the two commands show `ok` and `unchanged`. Give
 every `docker compose` command both files, or Compose does not know `web`.
 The scheduled run of the `sick` service renews it from then on.
 

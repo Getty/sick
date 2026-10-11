@@ -13,9 +13,9 @@
 # collector of node_exporter (replaced at once) and the trust page.
 #
 # Mail by cron (MAILTO) is the second channel: what these commands print
-# reaches it, and they print only when something is wrong - sick-notify
-# when it could not deliver, sick check and sick trust when they could not
-# write. Without sick-notify, replace "|| [ $? -eq 3 ] || sick-notify ..."
+# reaches it: sick-notify after every failed run (it reports "delivered"
+# or why it could not deliver, on stderr), sick check and sick trust when
+# they could not write. Without sick-notify, replace "|| [ $? -eq 3 ] || sick-notify ..."
 # by "|| cat /var/lib/sick/last-run.log": cron then mails the log of a
 # failed run.
 #

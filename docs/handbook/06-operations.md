@@ -100,11 +100,15 @@ See `k8s/README.md`.
 `SICK_INTERVAL` and `sick trust` after each run (chapter 2). It has no
 notification and no metrics of its own. For both, set `SICK_INTERVAL` long
 (the timer below does the runs) or leave it, and add on the host a cron
-line that runs through the container (in `sick/docker`; `-T` because cron
-has no terminal; Compose's own messages go to `/dev/null` so that only
-SICK's output reaches the notification):
+line that runs through the container – a file in `/etc/cron.d/`, run as a
+user allowed to use `docker` (here `admin`), in `sick/docker`; `-T` because
+cron has no terminal; Compose's own messages go to `/dev/null` so that only
+SICK's output reaches the notification. Cron's own `PATH` is
+`/usr/bin:/bin`: without the `PATH` line, `sick-notify` in `/usr/local/bin`
+is "not found" and the failure goes unreported:
 
 ```cron
+PATH=/usr/local/bin:/usr/bin:/bin
 17 4 * * *  admin  cd /srv/sick/docker && docker compose run --rm -T sick sick run >/var/tmp/sick-run.log 2>/dev/null || [ $? -eq 3 ] || sick-notify "sick run failed" </var/tmp/sick-run.log; docker compose run --rm -T sick sick check --format prometheus 2>/dev/null >/var/lib/prometheus/node-exporter/sick.prom.tmp; [ -s /var/lib/prometheus/node-exporter/sick.prom.tmp ] && mv /var/lib/prometheus/node-exporter/sick.prom.tmp /var/lib/prometheus/node-exporter/sick.prom
 ```
 
@@ -112,7 +116,11 @@ SICK's output reaches the notification):
 standard output and a rename on the host do the same. The file is moved
 whatever the exit code – `sick check` exits 1 exactly when a device is
 unreachable, which is when the metrics matter. On the host, install
-`sick-notify` and `/etc/sick/notify.conf` as in the systemd block above.)
+`sick-notify` and `/etc/sick/notify.conf` as in the systemd block above.
+`sick-notify` reports on standard error also when it delivered
+(`webhook: delivered (HTTP 200)`), so cron mails that line after every
+failed run as well; append `2>/dev/null` to it if the notification alone
+is enough.)
 
 ## Notification when a run fails
 

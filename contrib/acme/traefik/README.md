@@ -15,7 +15,7 @@ for services that speak ACME, not for devices that cannot.
 # the root of your CA from the trust page of docker/, compared with the
 # root fingerprint in ceremony.txt (or the one init-ca.sh logged, lab mode)
 curl -fsS -o contrib/acme/traefik/root_ca.crt http://127.0.0.1:8080/root_ca.pem
-openssl x509 -in contrib/acme/traefik/root_ca.crt -noout -fingerprint -sha256
+openssl x509 -in contrib/acme/traefik/root_ca.crt -noout -fingerprint -sha256 | tr -d : | tr A-F a-f
 docker compose -f contrib/acme/traefik/compose.yml up -d
 ```
 

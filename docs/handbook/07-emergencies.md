@@ -77,7 +77,8 @@ Watch `SickCAUnreachable` (chapter 6): it fires after half an hour.
    a restore drill"), in `sick/docker`:
 
    Put the manifest you keep apart from the archive back next to it as
-   `<archive>.manifest` first (compare it with your other copy) – without it
+   `<archive>.manifest` first (compare it with the second copy chapter 2 has
+you keep) – without it
    nothing is restored.
 
    ```bash
@@ -173,9 +174,10 @@ off for clients. Keep the order.
 4. **Start the CA** (`docker compose up -d`), and check that it signs under
    the new intermediate: issue a test certificate with the command of
    [chapter 2, "Try it"](02-the-ca.md#what-the-ca-will-and-will-not-issue)
-   and read its issuer (`openssl x509 -in c.crt -noout -issuer` →
-   `CN=Example Intermediate CA 2026-…`); the start log does not name the
-   intermediate.
+   and read its issuer in the same container – `c.crt` is gone with it –
+   by appending `&& openssl x509 -in c.crt -noout -issuer` inside the
+   `sh -c '…'` (→ `issuer=CN=Example Intermediate CA 2026-…`); the start log
+   does not name the intermediate.
 5. **Re-issue everything:** `sick run --force` (without a device name it
    forces every device); make every ACME client renew (Traefik and Caddy:
    delete their stored certificate and restart; acme.sh: `acme.sh --renew
@@ -183,16 +185,16 @@ off for clients. Keep the order.
    Secrets).
 6. **Publish** – first keep a copy of the old page (`curl -fsS -o
    old-ca_bundle.pem http://127.0.0.1:8080/ca_bundle.pem`, and the old
-   `trust-nss.sh`), then `docker compose run --rm sick sick trust /srv/trust` – otherwise
+   `trust-nss.sh`, `trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`
+   the same way: step 8 removes the old root with them), then `docker compose run --rm sick sick trust /srv/trust` – otherwise
    the page keeps the old intermediate until the next scheduled run. Replace
    `ca_bundle.pem` wherever a program uses it. In NSS databases the new
    page's `trust-nss.sh remove` would remove the *root*; take the old
    intermediate out by its nickname instead:
    `certutil -D -d sql:<db> -n 'sick intermediate <first 16 hex digits of its SHA-256>'`.
-   Keep a copy of the old page before you regenerate it.
-7. **Backups:** take a new one now (chapter 2); check the rotation in its
-   output (`rotated provisioner 'sick': key … replaces key …` – two
-   different key IDs). **Every backup from before
+7. **Backups:** take a new one now (chapter 2). (The rotation you checked
+   in step 3's output: `rotated provisioner 'sick': key … replaces key …` –
+   two different key IDs.) **Every backup from before
    step 3 holds the stolen key and the old provisioner – destroy them, and
    never restore one.** Wipe the old `for-the-ca/intermediate_ca_key` and
    `password` on the offline media and the key and password in
@@ -204,7 +206,8 @@ off for clients. Keep the order.
    runs on the volume `<project>_ca-next` – back that one up
    (`./ca-backup.sh backup --volume sick_ca-next --to …`) and destroy every
    backup of the old volume. Clients remove the old root with a script from
-   a page **from before phase A** (it carries the old root alone) or by its
+   a page **from before phase A** (it carries the old root alone – the
+   copies of step 6, or chapter 2's `~/trust-before-A/`) or by its
    file name (`sick-root-<first 16 hex digits>`, chapter 3) – a script from
    the phase-A page carries both roots, and its `remove` would take the new
    one out too.
