@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-11T05:25:05Z
+created: 2026-10-10T06:23:58Z
+id: 19
+priority: low
+started: 2026-10-11T02:52:55Z
+status: done
+tags:
+- mtls
+title: 'P8 Client certificates (mTLS): recipe with step, import, nginx check'
+updated: 2026-10-11T05:25:16Z
+---
+
+Recipe only, no SICK code unless a gap shows. Package, result and 'done when': docs/roadmap.md, section P8 Client certificates (mTLS).
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: separate client trust set (clientAuth only); one key per holder; SAN->principal mapping; negatives: no cert, other CA, serverAuth-only leaf, expired, unauthorized identity (403), spoofed header.
+
+P8 complete: k58 225a9f4+ea2f8d2+3ee7c38+22d1531, k50 ea2f8d2, k59 b72f496, k60 7ee55aa + a5ecf9e; small cards k23 da50dcf, k43 df35999, k57 e620cfe+ea2f8d2+7ee55aa; e2e green at 7ee55aa (trust-os and device-routeros on repeat, k61 filed)
