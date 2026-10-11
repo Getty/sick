@@ -226,3 +226,6 @@ Revision history for SICK
       sudo rule; a variant with a forced command needs no shell at all.
       Proven by t/e2e/device-ssh.sh, including a refused host key, a refused
       key, a failing reload and an unreachable host.
+    - MikroTik RouterOS: recipe in contrib/devices/routeros (device entry, a
+      group with ssh,ftp,read,write), proven by t/e2e/device-routeros.sh
+      against a recording stand-in and a real RouterOS CHR 7.24.5 in qemu.

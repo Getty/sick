@@ -1,0 +1,20 @@
+# A MikroTik router in SICK's device list. Neutral names and addresses.
+# The deploy key and known_hosts are files; nothing secret is in here.
+devices:
+  router:
+    type: acmesh
+    hook: routeros
+    names: [router.example.internal]
+    # where SICK looks at the certificate: the www-ssl service
+    host: router.example.internal
+    port: 443
+    key: rsa2048
+    env:
+      ROUTER_OS_HOST: router.example.internal
+      ROUTER_OS_USERNAME: sick
+      # With ROUTER_OS_SSH_CMD/_SCP_CMD set, ROUTER_OS_PORT is not used:
+      # a port other than 22 goes in here (ssh -p, scp -P).
+      ROUTER_OS_SSH_CMD: ssh -i /etc/sick/router.key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/sick/known_hosts
+      ROUTER_OS_SCP_CMD: scp -i /etc/sick/router.key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/sick/known_hosts
+      # the hook sets www-ssl itself; further services by this line
+      ROUTER_OS_ADDITIONAL_SERVICES: "/ip service set api-ssl certificate=router.example.internal.cer_0"
