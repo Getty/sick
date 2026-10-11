@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-11T10:14:23Z
+created: 2026-10-11T08:10:54Z
+id: 70
+priority: high
+started: 2026-10-11T10:14:23Z
+status: done
+tags:
+- handbook
+- p9
+title: P9d Review, release audits in three repos, final report for the maintainer
+updated: 2026-10-11T10:14:23Z
+---
+
+Structure and cross references, test reports, not-tried vs HQ checklist, dated claims, README, Changes, roadmap closed; release audit per repo (report only, blockers become cards); final report under docs/. Part of P9 (k20); binding: docs/roadmap.md section P9 and the hub's brief of 2026-10-11.
+
+Done. Review, release audits of three repos (blockers became k72-k74, cisco #6, proxmox #8), final report docs/final-report.md, all e2e green against 164b272; last-run record committed in 4082903.
