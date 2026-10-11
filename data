@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-10-11T04:30:21Z
+created: 2026-10-11T02:01:08Z
+id: 57
+priority: low
+started: 2026-10-11T03:04:46Z
+status: done
+tags:
+- devices
+- acme
+- finding
+title: PVE native ACME renews daily with 30-day certificates; document realm for the
+  proxmoxve hook
+updated: 2026-10-11T04:30:33Z
+---
+
+Findings from k54 (2026-10-11). (1) pveupdate renews an ACME certificate once it expires within 30 days, so with SICK_CA_ACME_LIFETIME=720h a PVE node renews every day. Options: a longer ACME lifetime for the CA (affects all ACME clients), a second ACME provisioner for PVE with 60-90 days (needs init-ca support, cf. k50), or accept daily renewal. (2) README 'acmesh' example and the SYNOPSIS of SICK::Target::Acmesh set no DEPLOY_PROXMOXVE_USER_REALM; the hook falls back to pam. Done when: decided and documented; the example fixed.
+
+2026-10-11 03:04 Docs part done: README acmesh example and SICK::Target::Acmesh SYNOPSIS set DEPLOY_PROXMOXVE_USER=sick, DEPLOY_PROXMOXVE_USER_REALM=pve with a comment that both default to root@pam (verified in acme.sh 3.1.6 deploy/proxmoxve.sh lines 66-81, proxmoxbs.sh 54-70), pointer to contrib/devices/proxmox/. Part (1), renewal with 30-day ACME certs, is not decided by me; contrib/devices/proxmox/README.md already recommends an ACME lifetime above 30 days.
+
+2026-10-11 03:04 Docs part done (README + Acmesh POD realm, pointer to contrib/devices/proxmox/). Part (1) decision left open for the maintainer; see note.
+
+Docs part committed as e620cfe; acme-long provisioner part in ea2f8d2
+
+docs e620cfe, provisioner acme-long ea2f8d2, PVE recipe points to it in 7ee55aa
