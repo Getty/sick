@@ -1,300 +1,90 @@
 Revision history for SICK
 
 {{$NEXT}}
-    - Initial release
-    - SICK::Config: the device list (YAML) with the ca, defaults and devices
-      sections; unknown keys are an error with their path, type-specific
-      keys of a device end up in its options; read_secret reads a secret
-      from a file and never puts its content into a message
-    - SICK::Bundle: certificate, chain and key as PEM plus what openssl
-      reads from the certificate - names (DNS and IP SANs, the CN without
-      SANs), validity, SHA-256 fingerprint, subject and issuer DN,
-      is_issued_by
-    - SICK::Issuer with SICK::Issuer::StepCA (the step CLI against a JWK
-      provisioner of step-ca) and SICK::Issuer::SelfSigned (plain openssl,
-      for tests and for trying things out)
-    - SICK::Target: base class and plugin loader for device types
-      ("cisco-sb" loads SICK::Target::CiscoSB), default presented_cert over
-      TLS; SICK::Target::Files writes PEM files and runs a reload command
-    - SICK::Decision: renew or not - missing, foreign-ca, names, expiring
-    - SICK::Runner: check, issue, deploy, check again for every device;
-      a device that fails or does not answer does not stop the others, and
-      a deployment only counts when the device presents the certificate
-      that was issued
-    - sick, the command line: check, run (--force, --dry-run, --verbose)
-      and trust; exit code 1 when a device failed, 2 for a wrong command
-      line or device list
-    - SICK::Target::Acmesh: hands the certificate to a deploy hook of
-      acme.sh ("type: acmesh"), secrets from files reach the hook through
-      its environment only; verified with acme.sh 3.1.6 and its localcopy
-      hook
-    - SICK::Trust and "sick trust": the root certificate as PEM, DER and
-      Apple configuration profile, and a page with the fingerprints and the
-      installation steps for each platform
-    - "name" in the ca section: what the CA is called on that page
-    - X.509 handling goes through the openssl command line, started without
-      a shell; runtime dependencies beyond core Perl are Moo (with
-      namespace::autoclean and Type::Tiny), Path::Tiny and YAML::PP
-    - "intermediates" in the ca section: the intermediate certificate of
-      the CA. step-ca signs through an intermediate, and a device that
-      presents its certificate alone (a switch with one certificate per
-      slot) was "foreign-ca" on every run without it. The root file holds
-      the root alone - step refuses a file with two certificates, and so
-      does SICK now, saying where the intermediate belongs
-    - SICK::Issuer::StepCA verified against step 0.30.2 and step-ca 0.30.2:
-      the command lines were right; what step reports is now cleaned of its
-      progress lines, colours and debug hint before it reaches the user
-    - "foreign-ca" names the issuer readably: fields of a name that hold
-      nothing but blanks are left out, no stray backslash
-    - docker/: a Compose setup of step-ca (made at the first start, with a
-      JWK provisioner for SICK and an ACME provisioner), SICK on a schedule
-      and a web server for the page of "sick trust"; t/e2e/run-local.sh
-      proves it with Docker alone (a web container as the device),
-      t/e2e/run-lab.sh against a real switch; t/e2e/install-tools.sh puts
-      step, step-ca and acme.sh in pinned versions into ~/.local
-    - docker/README.md: the sick container has no capabilities, so the device
-      list and the secrets must be owned by root or readable by everyone
-    - The example device list no longer sets ROUTER_OS_PASSWORD, which the
-      routeros hook of acme.sh does not read (it logs in with an SSH key);
-      the env_files example is the API token of the proxmoxve hook
-    - "sick trust" publishes the intermediate certificate as well when the
-      ca section names "intermediates": intermediate_ca.pem,
-      intermediate_ca.crt (DER) and ca_bundle.pem (root and intermediate in
-      one file). A client that installed the root alone kept refusing every
-      device that presents its certificate without the intermediate - a
-      switch with one certificate per slot. The Apple profile carries the
-      root as trusted root and the intermediate as a plain certificate
-      (com.apple.security.pkcs1) and replaces the profile of the root alone;
-      the page says for each platform where root and intermediate go and
-      whether the intermediate takes a trust setting, and has Firefox for
-      Android. Without "intermediates" the four files are what they were,
-      byte for byte
-    - SICK::Trust->write takes intermediates_pem, refuses an intermediate
-      that does not lead to the root, and removes the intermediate files of
-      an earlier call that it no longer writes; SICK::Trust->files takes
-      the number of intermediates
-    - t/e2e/run-lab.sh fetches the new files from the trust page and
-      connects to the switch with nothing but ca_bundle.pem from there
-    - SICK::Issuer, SICK::Issuer::StepCA and SICK::Issuer::SelfSigned are Moo
-      classes; an issuer subclass declares its ca keys with has. An empty
-      optional key in the ca section counts as not given.
-    - SICK::Target, SICK::Target::Files and SICK::Target::Acmesh are Moo
-      classes; class_for loads device types with Module::Runtime (new
-      prerequisite). Targets written with use parent keep working.
-    - SICK::Issuer::SelfSigned no longer moves a new CA key into a directory
-      that stands where ca.key belongs; it fails instead.
-    - SICK::Runner is a Moo class; now, verify_timeout and verify_interval
-      can be read back as attributes.
-    - SICK::CLI is a Moo class; the sick command line is unchanged.
-    - The trust page no longer tells anyone to put the intermediate
-      certificate into the system store of Debian, Fedora or Arch, or into
-      Android's CA list. There it became a trust anchor that stayed trusted
-      after the root was removed. Those stores get the root only. A device
-      that presents its certificate alone is reached through ca_bundle.pem
-      as a program's own CA file, or through an intermediate kept without
-      trust (Firefox, Chrome on Linux, Windows, macOS, the Apple profile).
-      On Android only devices that send their chain are accepted.
-    - step-ca: ca.root has to be a single self-signed CA certificate and
-      every certificate in ca.intermediates a CA certificate leading to it;
-      otherwise each device fails with a message naming the key, the file
-      and the reason. Messages say ca.root / ca.intermediates instead of
-      "CA root" / "CA intermediates". New SICK::Bundle methods is_ca and
-      signs_itself.
-    - Docker: docker/ceremony.sh makes root and name-constrained
-      intermediate offline and writes a ceremony record; init-ca.sh gains
-      an import mode (compose.import.yml) that builds the CA on that
-      hierarchy without the root key, the old behaviour is now "lab mode";
-      the provisioner "sick" issues serverAuth-only certificates;
-      t/e2e/ca-ceremony.sh proves enrollment and path negatives with
-      OpenSSL and GnuTLS.
-    - A new certificate whose private key does not belong to it is no longer
-      deployed: the device fails with "not deployed: the private key does
-      not belong to the certificate" before its target is called. New
-      SICK::Bundle method key_matches.
-    - Docker: docker/ca-backup.sh backs up the CA volume with the CA stopped
-      (archive 0600 plus a manifest of checksums and fingerprints) and
-      restores it, after checking the manifest, into an empty volume only;
-      init-ca.sh --rotate-provisioner replaces key and password of the
-      provisioner "sick", hands the password to the sick service and reloads
-      step-ca; t/e2e/ca-recovery.sh proves an isolated restore drill and the
-      rotation.
-    - ca.additional_roots: further root certificates during a root
-      replacement (the next root before the switch, the previous one after
-      it), checked like ca.root; sick trust publishes them as
-      root_ca_2.pem/.crt..., in ca_bundle.pem after the root, in the profile
-      as trusted roots, and on the page next to the current root. step and
-      the judgement of devices do not use them.
-    - sick trust refuses an intermediate that is not a CA certificate
-      (CA:TRUE), naming its subject, instead of publishing a device
-      certificate of the root as intermediate.
-    - Docker: ceremony.sh --renew-intermediate makes a new intermediate under
-      the existing root, copying the name constraints from the current one;
-      init-ca.sh --switch-intermediate and --retire-intermediate switch a
-      running CA with an overlap in which the handover and the trust page
-      carry both; docker/compose.ca-next.yml runs the CA of a new root on a
-      second volume; t/e2e/ca-rollover.sh proves both with OpenSSL and
-      GnuTLS clients.
-    - sick trust writes trust-linux.sh, trust-macos.sh, trust-windows.ps1
-      and trust-nss.sh, which carry the certificates, install only when
-      given the SHA-256 fingerprint of every root (from the CA's operator,
-      not the page) and remove exactly what they installed; the page now
-      puts that out-of-band check first and adds removal per platform,
-      Android's Network Security Configuration limits, the unsigned-profile
-      warning and programs with their own trust store.
-    - The trust page's section on programs with their own store follows the
-      container matrix: requests ignores the system store, Temurin Java and
-      Node need their own setup, and loaded roots stay until a restart; each
-      line is marked tested in containers or not tried.
-    - trust-linux.sh remove on p11-kit systems (Arch) now reports "removed"
-      only when an anchor was really there, and "not installed" otherwise,
-      like Debian and RHEL; trust anchor --remove exits 0 also when nothing
-      matched.
-    - sick run keeps one record per device in the state directory (new key
-      'state', default /var/lib/sick): last look, last certificate issued
-      (serial, fingerprint, names, until, issuer), last deployment, failures
-      in a row and back-off; never a key.
-    - sick run takes a lock in the state directory; a second run exits with
-      the new exit code 3. check, trust and run --dry-run take no lock.
-    - A device whose attempt failed after the decision to renew is deferred
-      for 1, 2, 4 ... at most 24 hours, less a 15-minute grace (action
-      'deferred', exit code 1); --force tries anyway. Discarded certificates
-      are not revoked: their key never left a private temporary directory.
-    - SICK::Bundle has serial.
-    - files: cert.pem, chain.pem, fullchain.pem and key.pem are now links into
-      dir/.sick/current, switched to a complete new generation in one step; a
-      failed reload goes back to the previous generation and runs the reload
-      again; plain files of an earlier version become a generation on the
-      first deploy. Mount the directory into containers, not the single
-      files.
-    - trust-linux.sh: the closing note says that Java from the Debian
-      packages follows the system store, while Temurin and other JDKs keep
-      their own cacerts (keytool).
-    - sick check --format json|prometheus: per device the live certificate
-      (fingerprint, serial, issuer, remaining and total lifetime),
-      renew_before, the earliest end along its chain to the root, whether it
-      is the certificate issued last, and the last success, failures and
-      back-off from the records; the root and intermediates of the CA with
-      their ends, and whether the CA answers (step ca health).
-    - sick check --output FILE replaces the file at once (written beside it,
-      mode 0644), for the textfile collector of node_exporter.
-    - sick inventory [--format table|json] [--live]: per device the
-      certificate issued last, when it was deployed and when a run last saw
-      the device present it, from the records alone; --live looks at the
-      devices and shows whether each presents it.
-    - contrib/prometheus/sick-alerts.yml: alert rules with thresholds
-      relative to each device's renew_before, tested with promtool.
-    - SICK::Issuer gains health (step-ca: step ca health with a 10-second
-      timeout); the states of SICK::Runner->check gain presented.
-    - contrib/systemd: sick.service and sick.timer (daily, randomized per
-      machine but fixed, catches up after downtime); afterwards always the
-      Prometheus textfile and the trust page; on failure
-      sick-notify@.service; exit code 3 (lock held) is no failure.
-    - contrib/notify/sick-notify: sends the failed run to a webhook (URL
-      from a file, never in an argument or the output) and/or by mail,
-      configured in /etc/sick/notify.conf.
-    - contrib/cron/sick: a cron.d line that notifies on failure except for
-      exit code 3, writes the textfile and the trust page.
-    - k8s/cronjob: sick run as a CronJob (Forbid, no retries), metrics
-      served for Prometheus, alert rules for failed Jobs.
-    - t/e2e/ops.sh: container tests for the notifications, the alert rules
-      against real output of sick check (stale device, unreachable CA), and
-      the CronJob in a k3d cluster.
-    - The CA's ACME provisioner "acme" now issues server certificates with
-      serverAuth only, for 30 days by default and at most 90. Set the
-      lifetimes with SICK_CA_ACME_LIFETIME, SICK_CA_ACME_MAX_LIFETIME and
-      SICK_CA_ACME_MIN_LIFETIME; they are applied at every start and checked
-      as Go durations with min <= lifetime <= max.
-    - contrib/acme: recipes for Traefik, Caddy and nginx with acme.sh against
-      step-ca's ACME endpoint, each with root trust for the CA connection,
-      renewal tuned to 30-day certificates and its enrollment authorization
-      written down; t/e2e/acme-services.sh shows each obtains, renews with
-      the fingerprint on the port changing, is refused a name outside the CA
-      policy and fails a challenge for a name it does not control.
-    - k8s/cert-manager: cert-manager (v1.21.2) gets certificates from the lab
-      CA in two ways, through an ACME ClusterIssuer (http-01 via the k3s
-      Traefik) and through step-issuer with a provisioner of its own; each
-      comes with a Certificate (30 days, renewed 10 days before the end) and
-      an nginx Deployment that reloads on renewal; pods trust the root
-      through a ConfigMap. t/e2e/acme-k8s.sh proves it in a k3d cluster:
-      issuance and renewal seen on the Service from a pod, a name outside the
-      policy refused, and a challenge for a name the client does not control
-      failing.
-    - contrib/devices/linux-ssh/: recipe for a Linux host with nginx, reached
-      over SSH through the acme.sh hook ssh (an acmesh device); the host key
-      is checked and the deploy key is used for nothing else; the account
-      may write only the certificate directory and reload nginx through one
-      sudo rule; a variant with a forced command needs no shell at all.
-      Proven by t/e2e/device-ssh.sh, including a refused host key, a refused
-      key, a failing reload and an unreachable host.
-    - MikroTik RouterOS: recipe in contrib/devices/routeros (device entry, a
-      group with ssh,ftp,read,write), proven by t/e2e/device-routeros.sh
-      against a recording stand-in and a real RouterOS CHR 7.24.5 in qemu.
-    - Proxmox VE and Backup Server: recipe in contrib/devices/proxmox (native
-      ACME vs. the acme.sh hooks proxmoxve/proxmoxbs, minimal API token
-      rights, how to get back) and t/e2e/device-proxmox.sh, which proves the
-      hooks end to end against a stand-in API; the hooks do not verify the
-      API's TLS certificate.
-    - selfsigned CA: created under a lock (ca.lock in its directory), key
-      before certificate; a lone ca.key or ca.crt, or a key that does not
-      belong to the certificate, is an error instead of a new CA.
-    - devices: optional key owner (free text, one line); shown by sick
-      inventory (column OWNER, JSON field), in sick check --format json, and
-      as label owner of sick_device_info where it is set.
-    - docs: the acmesh example for proxmoxve sets DEPLOY_PROXMOXVE_USER and
-      DEPLOY_PROXMOXVE_USER_REALM (the hooks default to root@pam) and points
-      to contrib/devices/proxmox/.
-    - ceremony.sh --email and --uri put permitted email domains and URI hosts
-      into the intermediate, read back like the other constraints; a renewal
-      copies them.
-    - init-ca.sh makes and keeps in line further provisioners declared in a
-      JSON file (SICK_CA_PROVISIONERS, compose.provisioners.yml): JWK or
-      ACME, server or client profile, lifetimes, ACME challenge types;
-      docker/provisioners.example.json ships clients (clientAuth only),
-      cert-manager and acme-long (60 days, for Proxmox VE).
-      SICK_CA_ACME_CHALLENGES limits the challenge types of "acme". The
-      cert-manager setup declares its provisioner instead of adding it by
-      hand.
-    - The CA policy takes SICK_CA_ALLOW_EMAIL (@example.internal,
-      jane@example.internal) and SICK_CA_ALLOW_URI (example.internal,
-      *.example.internal) besides DNS names and addresses; with any policy
-      set, client certificates with email or URI SANs need them listed.
-    - contrib/mtls: client certificates for people and machines from the
-      provisioner "clients" (enroll.sh, PKCS#12, renewal timer), nginx that
-      maps the certificate's subject to an allowed principal and answers 403
-      otherwise, and a terminating proxy that sets X-Client-Identity for a
-      backend that trusts only the proxy's certificate; proven by
-      t/e2e/mtls.sh.
-    - Targets get the roots of the CA as trust_roots (the issuer's root
-      first, then the additional roots), in sick run and sick check, so a
-      device type can verify a device before it sends it a secret. An
-      additional root that cannot be read now fails every device.
-    - A device type can name its default port (SICK::Target->default_port); a
-      device without port uses it, and SICK::Device::has_port tells a port:
-      443 that was written from the default.
-    - The Docker image carries SICK-Target-Proxmox (device types proxmox-ve
-      and proxmox-bs) from the neighbouring checkout, with
-      libio-socket-ssl-perl and the patched libhttp-tiny-perl; the build
-      context now needs three checkouts.
-    - Removed t/e2e/device-proxmox.sh and its stand-in API, which modelled
-      Proxmox wrongly in eleven points; docs/findings/device-proxmox.md marks
-      them corrected and points to SICK-Target-Proxmox.
-    - Handbook and contrib/devices/proxmox: Proxmox VE and Backup Server
-      through the device types proxmox-ve / proxmox-bs of
-      SICK-Target-Proxmox when native ACME cannot reach the node; the
-      acme.sh hooks are no longer recommended.
-    - docker/compose.yml gives the CA the network alias SICK_CA_ALIAS
-      (default ca.example.internal), so that SICK reaches an imported CA
-      under a name inside its name constraints; ceremony.sh names
-      SICK_CA_IMPORT, the variable the user sets.
-    - init-ca.sh --switch-intermediate, --retire-intermediate and
-      --rotate-provisioner work on the stopped CA through docker compose run,
-      and say that the change takes effect at the next start.
-    - docker/sick.example.yml names no device, so the first start runs clean;
-      its examples are commented out.
-    - contrib/devices/files-nginx: an nginx that reads its certificate from
-      SICK's state volume at every handshake, with its device entry, as the
-      first device of the Docker setup.
-    - contrib/acme/*/compose.lab.yml joins a recipe to the CA's network and
-      publishes its ports on 127.0.0.1 only, for a lab without internal DNS.
-    - New alert SickDeviceError for devices in status error; sick-notify
-      --help prints its usage.
+  - Initial release. SICK brings certificates of an internal CA (step-ca) to
+    devices that cannot fetch them themselves and renews them before they
+    expire. A device list in YAML is the whole configuration. X.509 goes
+    through the openssl command line, every external program is started
+    without a shell. Runtime dependencies beyond core Perl: Moo,
+    namespace::autoclean, Type::Tiny, Module::Runtime, Path::Tiny,
+    JSON::MaybeXS and YAML::PP.
+  - The command line sick: check (what does every device present; changes
+    nothing), run (--force, --dry-run, --verbose), inventory and trust.
+    Exit code 0 when everything is in order, 1 when a device failed, was
+    deferred or could not be checked, 2 for a wrong command line or device
+    list, 3 when another sick run holds the lock.
+  - The device list has the sections ca, defaults and devices; unknown keys
+    are an error with their path. A device has type, names, host, port,
+    lifetime, renew_before, key, an optional owner and the options of its
+    type. Secrets are read from files and never appear in a message.
+  - The decision per device: ok, missing, foreign-ca, names or expiring. A
+    deployment only counts when the device presents the certificate that was
+    issued; a device that fails or does not answer does not stop the others,
+    and an unreachable device is never renewed. A new certificate whose
+    private key does not belong to it is not deployed.
+  - sick run keeps one record per device in the state directory (key
+    "state", default /var/lib/sick): the last look, the last certificate
+    issued, the last deployment, failures in a row and the back-off; never
+    a key. The run takes a lock there. A device whose attempt failed after
+    the decision to renew is deferred for 1, 2, 4 ... at most 24 hours, less
+    a 15-minute grace; --force tries anyway.
+  - sick check --format json|prometheus reports per device the live
+    certificate, renew_before, the earliest end along its chain to the root
+    and the figures from the records, and for the CA its certificates and
+    whether it answers; --output FILE replaces a file at once, for the
+    textfile collector of node_exporter. sick inventory [--format
+    table|json] [--live] lists what was issued, deployed and last seen.
+  - Issuers: step-ca (the step CLI against a JWK provisioner) and selfsigned
+    (plain openssl, for tests and for trying things out; created under a
+    lock, a half CA is an error). The ca section takes root, intermediates,
+    additional_roots (the next and the previous root during a root
+    replacement) and name. ca.root has to be a single self-signed CA
+    certificate and every intermediate a CA certificate leading to it;
+    otherwise each device fails with a message naming key, file and reason.
+  - Device types: files (cert.pem, chain.pem, fullchain.pem and key.pem as
+    links into one generation, switched in one step; a failed reload goes
+    back to the previous generation) and acmesh (hands the certificate to a
+    deploy hook of acme.sh; secrets reach the hook through its environment
+    only). A device type is a class under SICK::Target::, "cisco-sb" loads
+    SICK::Target::CiscoSB; it gets the roots of the CA as trust_roots, can
+    name a default_port and verifies a device before it sends it a secret.
+    Further device types are their own distributions: SICK-Target-CiscoSB
+    (cisco-sb) and SICK-Target-Proxmox (proxmox-ve, proxmox-bs).
+  - sick trust writes what clients need into a directory: the root as PEM,
+    DER and Apple configuration profile, the intermediates and further
+    roots, ca_bundle.pem, a page with the fingerprints and the installation
+    steps for each platform, and the scripts trust-linux.sh, trust-macos.sh,
+    trust-windows.ps1 and trust-nss.sh. The scripts install only when given
+    the SHA-256 fingerprint of every root from another channel and remove
+    exactly what they installed. System stores and Android get the root
+    only; an intermediate goes where it is kept without trust, or into
+    ca_bundle.pem as a program's own CA file. The page says which programs
+    keep their own store and marks what was tested in containers.
+  - Docker (docker/): a Compose setup of step-ca, SICK on a schedule and a
+    web server for the trust page. Lab mode makes a CA at the first start;
+    import mode builds it on a hierarchy made offline by ceremony.sh (root
+    and name-constrained intermediate, with a ceremony record, also for
+    email addresses and URIs; --renew-intermediate for the next one).
+    init-ca.sh declares further provisioners in a JSON file, limits the
+    ACME challenge types, sets the lifetimes of the provisioner "acme"
+    (serverAuth only, 30 days) and takes email and URI entries in the CA
+    policy; --switch-intermediate and --retire-intermediate switch a CA with
+    an overlap, --rotate-provisioner replaces key and password of "sick".
+    ca-backup.sh backs up the CA volume with a manifest and restores it into
+    an empty volume only. The image carries SICK-Target-Proxmox; the build
+    context needs three checkouts. Container tests are in t/e2e/.
+  - Kubernetes (k8s/): sick run as a CronJob with metrics and alert rules for
+    failed Jobs, and cert-manager getting certificates from the lab CA by
+    ACME and by step-issuer.
+  - contrib/: systemd units and a cron line that run sick, write the
+    Prometheus textfile and the trust page and notify on failure
+    (sick-notify, by webhook or mail); Prometheus alert rules relative to
+    each device's renew_before, tested with promtool; ACME recipes for
+    Traefik, Caddy and nginx against the lab CA; device recipes for Linux
+    hosts over SSH, MikroTik RouterOS, Proxmox VE and Backup Server, and an
+    nginx reading its certificate from SICK's state volume; an mTLS recipe
+    with client certificates from the provisioner "clients".
+  - The handbook (docs/handbook/): planning, the CA, clients, services,
+    devices, operations, emergencies and client certificates, with test
+    reports, a checklist of what is left to try, and the decisions that are
+    the maintainer's.
