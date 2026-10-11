@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-11T02:03:00Z
+created: 2026-10-11T01:32:04Z
+id: 54
+priority: high
+started: 2026-10-11T01:33:08Z
+status: done
+tags:
+- devices
+- p7
+title: 'P7c Proxmox VE and Backup Server: native ACME vs hooks proxmoxve/proxmoxbs,
+  stand-in tests'
+updated: 2026-10-11T02:03:12Z
+---
+
+Recipes for both ways; recording stand-in API for the hooks; not tried on a real PVE/PBS, on the HQ list. Part of P7 (k17); binding: docs/roadmap.md, section P7, and the hub's brief of 2026-10-11 (per recipe: rights on the device and how to keep them small, where the secret lives, what the device restarts, how sick check sees success on the port, how to get back).
+
+w-proxmox: done, staged, not committed. New: t/e2e/device-proxmox.sh, t/e2e/proxmox-standin.py, contrib/devices/proxmox/{README.md,sick.example.yml}, docs/findings/device-proxmox.md. device-proxmox.sh run twice in a row clean on 2026-10-11: 73 PASS / 0 FAIL each, nothing of project sick-proxmox left. Findings: proxmoxve/proxmoxbs (acme.sh 3.1.6) hard-code HTTPS_INSECURE=1 (curl --insecure; cannot be overridden: token AND private key go over unverified TLS); the token is on curl's argv during the call (counted in the test). No lib change needed. Rights: PVE Sys.Modify on /nodes/<node> (no smaller privilege; also covers network/DNS/services); PBS Sys.Modify on /system/certificates = role Admin there.
+
+Drift for the dispatcher (not touched): (1) README 'acmesh' example and the SYNOPSIS of lib/SICK/Target/Acmesh.pm set DEPLOY_PROXMOXVE_USER: sick without DEPLOY_PROXMOXVE_USER_REALM -> the hook defaults to realm pam; should say pve. (2) docs/handbook/04-services.md, PVE row 'pvenode's own schedule': pveupdate renews ACME certs within 30 days of expiry, so with SICK_CA_ACME_LIFETIME=720h PVE renews daily; the recipe needs a lifetime > 30d (details in docs/findings/device-proxmox.md). (3) Possible follow-up, another repository: a SICK-Target-Proxmox device type that verifies the API's TLS and keeps the token off argv (new repo, needs the maintainer's decision); or an upstream acme.sh change making HTTPS_INSECURE optional (no GitHub action taken).
+
+Committed as 59e5291
