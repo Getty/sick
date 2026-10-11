@@ -1,5 +1,7 @@
 # Device list for the Compose setup in this directory. Copy it to sick.yml
-# and replace the devices by yours. The ca section fits the setup as it is.
+# and add your devices. As shipped it names none, so that the first start
+# runs clean; the entries below are commented examples. The ca section fits
+# the setup as it is.
 #
 # Paths are those inside the sick container:
 #
@@ -7,8 +9,15 @@
 #                        handed over by the ca service
 #   /etc/sick/secrets/   your secrets directory (SICK_SECRETS_DIR, ./secrets)
 #   /var/lib/sick/       the state volume
+#
+# More device types, each with a list entry and a README, in contrib/devices/
+# of the SICK distribution: files-nginx (a first device to run beside this
+# setup), linux-ssh, routeros, proxmox.
 ca:
   name: Example Internal CA                 # what the trust page calls the CA
+  # Lab mode: https://ca:9000. Import mode (compose.import.yml):
+  # https://ca.example.internal:9000 - a name inside the name constraints,
+  # one of SICK_CA_DNS, the alias SICK_CA_ALIAS.
   url: https://ca:9000
   root: /etc/sick/ca/root_ca.crt
   intermediates: /etc/sick/ca/intermediate_ca.crt
@@ -19,21 +28,34 @@ defaults:
   renew_before: 30d
   key: rsa2048
 devices:
-  switch:
-    type: cisco-sb                          # SICK-Target-CiscoSB
-    host: 192.0.2.10
-    names: [switch.example.internal, 192.0.2.10]
-    credentials: /etc/sick/secrets/switch.cred    # line 1 user, line 2 password
-    legacy_algorithms: true                 # old firmware, old SSH
-    host_key_check: accept-new              # the first connection pins the host key
-  hypervisor:
-    type: acmesh                            # a deploy hook of acme.sh
-    hook: proxmoxve
-    host: pve.example.internal
-    port: 8006
-    names: [pve.example.internal]
-    env:
-      DEPLOY_PROXMOXVE_USER: sick
-      DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick
-    env_files:
-      DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/secrets/pve.token
+  # A web server that reads its certificate from a directory SICK writes
+  # (contrib/devices/files-nginx):
+  #
+  # web:
+  #   type: files
+  #   host: web.example.internal
+  #   port: 443
+  #   names: [web.example.internal]
+  #   dir: /var/lib/sick/certs/web
+  #
+  # A Cisco SB switch (SICK-Target-CiscoSB, in the image):
+  #
+  # switch:
+  #   type: cisco-sb
+  #   host: 192.0.2.10
+  #   names: [switch.example.internal, 192.0.2.10]
+  #   credentials: /etc/sick/secrets/switch.cred    # line 1 user, line 2 password
+  #   legacy_algorithms: true                 # old firmware, old SSH
+  #   host_key_check: accept-new              # the first connection pins the host key
+  #
+  # A Proxmox VE node (SICK-Target-Proxmox, in the image; PBS and the
+  # details in contrib/devices/proxmox):
+  #
+  # pve1:
+  #   type: proxmox-ve
+  #   host: pve1.example.internal             # port 8006 by default
+  #   names: [pve1.example.internal]
+  #   node: pve1                              # the node name, as in the GUI
+  #   token_id: sick@pve!sick
+  #   token_file: /etc/sick/secrets/pve1.token
+  #   ca: /etc/sick/secrets/pve-root-ca.pem   # the cluster CA, for the first upload

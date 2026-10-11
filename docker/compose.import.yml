@@ -8,6 +8,15 @@
 # and password - no root key. Once the CA has started, the directory is no
 # longer read: start without this file from then on and keep the directory
 # off the machine, or destroy it (the volume "ca" has its contents).
+#
+# Under the name constraints of the ceremony the CA is reached by a name
+# inside them (https://ca.example.internal:9000), not as "ca" or
+# "localhost". compose.yml gives the ca service that name as an alias on
+# the project's network, SICK_CA_ALIAS (default ca.example.internal): set
+# it to the name of SICK_CA_DNS that the device list uses. It is there and
+# not here because the alias is needed on every start, this file on the
+# first one only. In a real network DNS has that name as well, for
+# everything outside the project.
 
 services:
   ca:

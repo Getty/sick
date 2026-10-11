@@ -282,3 +282,12 @@ Revision history for SICK
       through the device types proxmox-ve / proxmox-bs of
       SICK-Target-Proxmox when native ACME cannot reach the node; the
       acme.sh hooks are no longer recommended.
+    - docker/compose.yml gives the CA the network alias SICK_CA_ALIAS
+      (default ca.example.internal), so that SICK reaches an imported CA
+      under a name inside its name constraints; ceremony.sh names
+      SICK_CA_IMPORT, the variable the user sets.
+    - init-ca.sh --switch-intermediate, --retire-intermediate and
+      --rotate-provisioner work on the stopped CA through docker compose run,
+      and say that the change takes effect at the next start.
+    - docker/sick.example.yml names no device, so the first start runs clean;
+      its examples are commented out.

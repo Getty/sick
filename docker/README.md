@@ -90,6 +90,7 @@ All of them are optional.
 | `SICK_CA_NAME` | `SICK Internal CA` | name of the CA. Used once, when the CA is made |
 | `SICK_CA_DNS` | | further names and addresses under which the CA is reached, comma separated – for its own TLS certificate. Lab mode adds `ca` and `localhost`; import mode requires the list and takes it alone. Used once |
 | `SICK_CA_IMPORT` | | import mode, with `compose.import.yml`: the output directory of `ceremony.sh`. Read at the first start only |
+| `SICK_CA_ALIAS` | `ca.example.internal` | the name of the CA on the Compose network, beside `ca`: in import mode the `sick` service reaches it under this name, inside the constraints. One of `SICK_CA_DNS` |
 | `SICK_CA_MAX_LIFETIME` | `19800h` | the longest lifetime the provisioner `sick` grants (825 days, the most Apple accepts from a private CA). Hours, minutes, seconds – step-ca knows no days |
 | `SICK_CA_ACME_LIFETIME` | `720h` | the lifetime the ACME provisioner `acme` gives a certificate (30 days, see below) |
 | `SICK_CA_ACME_MAX_LIFETIME` | `2160h` | the longest lifetime `acme` grants a client that asks for one (90 days) |
@@ -109,8 +110,12 @@ All of them are optional.
 
 ## The device list and its secrets
 
-`sick.example.yml` is a start. The `ca` section fits this setup as it is; the
-paths are those inside the `sick` container:
+`sick.example.yml` is a start. It names no device, so that the first start
+runs clean; its devices are commented examples (a `files` device, a switch,
+a Proxmox VE node), and `contrib/devices/` has more, each with a README. The
+`ca` section fits this setup as it is – in import mode `ca.url` is
+`https://ca.example.internal:9000`, see the comment there. The paths are
+those inside the `sick` container:
 
 | Path in the container | |
 |---|---|
@@ -346,7 +351,13 @@ contents.
 
 The CA's own names have to lie inside the constraints, or clients refuse its
 TLS certificate – and SICK reaches it as `https://ca.example.internal:9000`,
-not `https://ca:9000`. `t/e2e/ca-ceremony.sh` runs all of this in containers.
+not `https://ca:9000`. `compose.yml` gives the `ca` service that name as an
+alias on the project's network (`SICK_CA_ALIAS`, default
+`ca.example.internal`) – on every start, not only the first with
+`compose.import.yml`; with another name, set both:
+`SICK_CA_DNS=ca.corp.example SICK_CA_ALIAS=ca.corp.example`. Clients outside
+the project find the CA through your internal DNS. `t/e2e/ca-ceremony.sh`
+runs all of this in containers.
 
 ### Restricting the names
 
@@ -432,7 +443,12 @@ checks the restored files and fingerprints again. It starts no CA. A drill
 runs the restored CA on a network of its own without published ports – never
 beside the live one: two CAs with one key and two databases drift apart. To
 replace a lost volume, `docker compose create ca`, restore into its volume,
-`docker compose up -d`.
+`docker compose up -d`. The volume keeps the labels Compose gave it, and
+`docker compose down -v` removes it like any other (tried with Compose
+2.26.1; also with a volume `restore` created itself). `down -v` removes the
+volumes of the files it is given: with `compose.ca-next.yml` the volume `ca`
+belongs to no service and stays, without it `ca-next` does – name the same
+`-f` files as for `up`, or run it once with and once without that file.
 
 Observed in the lab (`t/e2e/ca-recovery.sh`, one host, images cached, an
 archive of 28 KB): 3–4 seconds from `restore` to the first certificate of
@@ -496,6 +512,27 @@ Devices that present their certificate alone are `foreign-ca` from then on
 and renewed by the next run; a device that sends the old intermediate along
 stays `ok` as long as that intermediate is valid – after a compromise,
 `sick run --force`.
+
+**On the stopped CA.** After a compromise of the intermediate the CA must
+not serve while it is replaced. All three operations – switch, retire,
+rotate – also run in a container of their own on the stopped CA's volumes;
+give every command the same `-f` files as the CA:
+
+```bash
+docker compose stop ca
+docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --switch-intermediate
+docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --retire-intermediate
+docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --rotate-provisioner
+docker compose start ca
+docker compose run --rm sick sick run --force
+```
+
+`docker compose cp` writes into the volume of the stopped container. The
+handover is updated as on the running CA; with no step-ca to reload, the
+log says `step-ca is not running: the change takes effect at the next
+start`. Not with the CA running: its step-ca would not learn of the change
+(use `exec` there). `t/e2e/ca-rollover.sh` (part 8) runs this.
 
 **A new root**, in three phases:
 
@@ -667,9 +704,12 @@ release archive from GitHub), `DEBIAN_RELEASE` (trixie).
   checked with `openssl`, GnuTLS, NSS and the system stores of Debian and
   Fedora, not yet on those devices – see
   [the trust service](#the-trust-service).
-- **Name constraints** in the CA certificates themselves – see
-  [Restricting the names](#restricting-the-names).
-- **The root key** stays in the volume unless you move it.
+- **Lab mode** makes the root in the volume, without name constraints, with
+  the root key beside it. Import mode is the answer – `ceremony.sh` makes
+  the hierarchy offline, with name constraints in the intermediate, and the
+  root key never reaches the volume (see
+  [Lab mode and import mode](#lab-mode-and-import-mode)); lab mode stays
+  for trying things out.
 - **`SICK_FROM=cpan`** is written and not built.
 - Only the `cisco-sb` type (in the proof below), `files`, the `localcopy`
   hook of `acmesh`, and `proxmox-ve` and `proxmox-bs` (against PVE and PBS

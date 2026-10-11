@@ -51,9 +51,23 @@
 # drops the previous intermediate from the handover and deletes its key.
 # Devices still under it are "foreign-ca" from then on and renewed by the
 # next run (a device that sends the previous one along stays "ok" while it
-# is valid). On a stopped CA both should work through "docker compose run
-# --rm ca --switch-intermediate"; step-ca reads the result at its next
-# start (not tried).
+# is valid).
+#
+# On the stopped CA - after a compromise of the intermediate the CA must
+# not serve while it is replaced - all three run in a container of their
+# own on the CA's volumes, with the same -f files as the CA:
+#
+#   docker compose stop ca
+#   docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+#   docker compose run --rm --no-deps --entrypoint /bin/bash ca \
+#     /usr/local/bin/init-ca.sh --switch-intermediate
+#   (the same with --retire-intermediate and --rotate-provisioner)
+#   docker compose start ca
+#
+# "docker compose cp" copies into the volume of the stopped container. The
+# handover is updated as on the running CA; there is no step-ca to reload
+# (the log says so), the CA reads the volume at its start. Never with the
+# CA running: that step-ca would not learn of the change.
 #
 #   SICK_CA_IMPORT_DIR    the directory to import at the first start
 #                         (default $STEPPATH/import); it holds
@@ -799,12 +813,14 @@ put() {
 
 #### main
 
-# step-ca reads ca.json again on SIGHUP
+# step-ca reads ca.json again on SIGHUP. In a container of its own on the
+# stopped CA's volume ("docker compose run ... ca", see the header) there is
+# no step-ca to tell; the CA reads the volume when it starts.
 reload() {
   if pkill -HUP -x step-ca; then
     log 'step-ca reloads its configuration (SIGHUP)'
   else
-    log 'no step-ca running here: the next start reads the new configuration'
+    log 'step-ca is not running: the change takes effect at the next start'
   fi
 }
 

@@ -49,7 +49,16 @@
 #      root alone; a client that took the new page (and so dropped the old
 #      root) accepts the devices and refuses a leaf of the old hierarchy
 #      (put on the pilot)
-#   8. teardown, also after a failure or Ctrl-C: the project down with its
+#   8. the stopped CA (a compromised intermediate: the CA must not serve
+#      while it is replaced): ceremony.sh --renew-intermediate under R2;
+#      with the CA stopped, docker compose cp into its volume, then
+#      init-ca.sh --switch-intermediate, --retire-intermediate and
+#      --rotate-provisioner, each in "docker compose run --rm --no-deps
+#      --entrypoint /bin/bash ca"; each says step-ca is not running and
+#      updates the handover. The CA started again issues under the new
+#      intermediate, the old one is out of the handover, and the old
+#      provisioner password is refused
+#   9. teardown, also after a failure or Ctrl-C: the project down with its
 #      volumes (ca, ca-next and the rest), the client container removed by
 #      its labels (sick=1, sick-e2e=ca-rollover), nothing of the project or
 #      with that label left, the private working directory (stand-in root
@@ -153,11 +162,11 @@ mkdir -p "$work"
 chmod 700 "$work"
 work=$(cd "$work" && pwd -P)
 case $work/ in "$context"/*) fail "SICK_E2E_DIR $work lies inside the build context $context" ;; esac
-# gen1/ gen2/ gen3/  what goes to the CA: first hierarchy, renewed
-# intermediate, new hierarchy   rootkey1/ rootkey3/  the stand-in root keys
+# gen1/ gen2/ gen3/ gen4/  what goes to the CA: first hierarchy, renewed
+# intermediate, new hierarchy, its renewed intermediate   rootkey1/ rootkey3/  the stand-in root keys
 # and their passwords, never mounted into the CA   secrets/  for SICK: the
 # additional root   leaves/  hand-signed leaves   pages/  bundles as fetched
-mkdir -m 700 "$work/gen1" "$work/gen2" "$work/gen3" "$work/rootkey1" "$work/rootkey3" "$work/leaves" "$work/pages"
+mkdir -m 700 "$work/gen1" "$work/gen2" "$work/gen3" "$work/gen4" "$work/rootkey1" "$work/rootkey3" "$work/leaves" "$work/pages"
 mkdir -m 755 "$work/secrets"
 for n in 1 3; do
   LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40 >"$work/rootkey$n/root.pw" || true
@@ -250,14 +259,14 @@ in_sick() { compose run --rm --no-deps -T --entrypoint sh sick -c "$1"; }
 sick_do() { compose run --rm --no-deps -T sick sick "$@" 2>&1 | plain; }
 ca_log() { compose logs --no-log-prefix ca 2>&1 | plain; }
 
-#### 8. teardown, armed before anything exists
+#### 9. teardown, armed before anything exists
 
 armed=
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
-  printf '\n=== 8. teardown\n'
+  printf '\n=== 9. teardown\n'
   # by label only: the client carries sick=1 and this script's label
   docker ps -aq --filter label=sick=1 --filter "label=$label" | xargs -r docker rm -f -v >/dev/null 2>&1
   if [ -n "$armed" ]; then
@@ -723,6 +732,89 @@ judge 'phase C, new page: web (leaf alone, R2)' c.pem web web.example.internal a
 judge 'phase C, new page: web3 (chain, R2)' c.pem web3 web3.example.internal accepted
 judge 'phase C, the old page: web2 (R2)' old.pem web2 web2.example.internal refused
 judge 'phase C, the old page: the pilot (R1), control' old.pem pilot pilot.example.internal accepted
+
+#### 8. the stopped CA: switch, retire and rotate offline
+
+step 'the stopped CA: a new intermediate under R2, switched, retired and rotated without step-ca running'
+set +e
+out=$(ceremony --renew-intermediate --out /work/gen4 --root-cert /work/gen3/root_ca.crt \
+  --root-key /work/rootkey3/root_ca_key --root-password-file /work/rootkey3/root.pw \
+  --intermediate /work/gen3/intermediate_ca.crt 2>&1)
+code=$?
+set -e
+show <<<"$out"
+[ "$code" -eq 0 ] || fail "ceremony.sh --renew-intermediate (under R2) ended with $code"
+i4=$(sha256_of "$work/gen4/intermediate_ca.crt")
+int4_name=$(openssl x509 -in "$work/gen4/intermediate_ca.crt" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')
+pass "ceremony.sh --renew-intermediate ran: I4 under R2 ($int4_name)"
+note "I4 $i4"
+in_ca cat /home/step/secrets/provisioner_password >"$work/secrets/old-provisioner.pw"
+chmod 644 "$work/secrets/old-provisioner.pw"
+cp "$work/gen3/root_ca.crt" "$work/secrets/root_ca_current.crt"
+chmod 644 "$work/secrets/root_ca_current.crt"
+
+note 'docker compose stop ca'
+compose stop ca >/dev/null 2>&1 || fail 'docker compose stop ca'
+[ "$(docker inspect -f '{{.State.Running}}' "$(compose ps -aq ca)")" = false ] || fail 'the CA still runs'
+pass 'the CA is stopped'
+note 'docker compose cp gen4/. ca:/home/step/switch (into the volume of the stopped container)'
+compose cp "$work/gen4/." ca:/home/step/switch >/dev/null 2>&1 || fail 'docker compose cp into the stopped CA'
+pass 'docker compose cp works on the stopped container'
+# offline <option>: init-ca.sh in a container of its own on the CA's volumes
+offline() {
+  compose run --rm --no-deps -T --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh "$1" 2>&1 | plain
+  return "${PIPESTATUS[0]}"
+}
+for op in --switch-intermediate --retire-intermediate --rotate-provisioner; do
+  note "docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh $op"
+  set +e
+  out=$(offline "$op")
+  code=$?
+  set -e
+  show <<<"$out"
+  [ "$code" -eq 0 ] || fail "init-ca.sh $op on the stopped CA ended with $code"
+  case $op in
+    --switch-intermediate)
+      expect 'switched: I4 signs from the next start' "switched the intermediate: '$int4_name' \($i4\) signs from now on" "$out"
+      expect '... the handover holds I4 and I3' 'handed over intermediate_ca.crt: the new and the previous intermediate' "$out"
+      expect '... the copied directory is removed' 'removed /home/step/switch' "$out"
+      ;;
+    --retire-intermediate)
+      expect 'retired I3 at once, no overlap' "retired the previous intermediate 'CN=SICK E2E Intermediate CA 2' \($i3\)" "$out"
+      expect '... the handover holds I4 alone' 'handed over intermediate_ca.crt$' "$out"
+      ;;
+    --rotate-provisioner)
+      expect 'rotated the provisioner' "rotated provisioner 'sick': key .* replaces key " "$out"
+      expect '... the new password handed over' 'handed over provisioner.pw' "$out"
+      ;;
+  esac
+  [ "$op" = --retire-intermediate ] \
+    || expect '... no step-ca to reload, and it says so' 'step-ca is not running: the change takes effect at the next start' "$out"
+  [ "$(docker inspect -f '{{.State.Running}}' "$(compose ps -aq ca)")" = false ] || fail 'the CA was started behind the script'\''s back'
+done
+pass 'the CA stayed stopped through all three'
+
+note 'docker compose start ca'
+compose start ca >/dev/null 2>&1 || fail 'docker compose start ca'
+ca_healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q ca)")" = healthy ]; }
+wait_for 90 'the CA to be healthy again' ca_healthy
+pass 'the CA is up again'
+in_ca cat /handover/intermediate_ca.crt | plain >"$work/handover.pem"
+[ "$(bundle_fps "$work/handover.pem" | tr '\n' ' ')" = "$i4 " ] \
+  || fail "the handover holds: $(bundle_fps "$work/handover.pem" | tr '\n' ' ')"
+pass 'the handover holds I4 alone: I3 is out'
+refuse '... and no previous key is left in the volume' 'previous' "$(in_ca find /home/step -name '*previous*' 2>&1 | plain)"
+run=$(sick_do run --force web)
+show <<<"$run"
+expect 'sick run --force web: renewed with the new provisioner password' '^web +renewed ' "$run"
+expect '... by I4' "^$int4_name\$" "$(issuer_presented web web.example.internal)"
+out=$(in_sick 'cd /tmp && step ca certificate old.example.internal x.crt x.key --ca-url https://ca.example.internal:9000 \
+  --root /etc/sick/secrets/root_ca_current.crt --provisioner sick \
+  --provisioner-password-file /etc/sick/secrets/old-provisioner.pw --not-after 24h; echo "exit: $?"' 2>&1 | plain)
+show <<<"$out"
+refuse 'the old provisioner password: refused' '^exit: 0$' "$out"
+expect '... it does not open the new provisioner key' 'decrypt|password' "$out"
+
 record "clients: $(tr '\n' ';' <<<"$versions")"
 
-# 8. runs in the EXIT trap
+# 9. runs in the EXIT trap

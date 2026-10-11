@@ -30,7 +30,8 @@
 #                      as openssl reads them back from the certificates. No
 #                      secret; where the root key went is a path.
 #
-# OUT is what init-ca.sh imports (SICK_CA_IMPORT_DIR, see docker/README.md).
+# OUT is what init-ca.sh imports: SICK_CA_IMPORT on the host, with
+# compose.import.yml (see docker/README.md).
 #
 # Every read-back value is compared with what was asked for; a difference
 # ends the ceremony with exit 1 and a message saying what differs.
@@ -593,5 +594,5 @@ if [ "$renew" = yes ]; then
   log "for the running CA (init-ca.sh --switch-intermediate): $out - the record is $out/ceremony.txt"
 else
   log "root key: $root_key - take it off this machine and keep it with its password, apart from the CA"
-  log "for the CA (SICK_CA_IMPORT_DIR): $out - the record is $out/ceremony.txt"
+  log "for the CA (SICK_CA_IMPORT): $out - the record is $out/ceremony.txt"
 fi

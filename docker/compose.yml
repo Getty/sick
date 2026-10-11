@@ -39,6 +39,13 @@ services:
       - ./init-ca.sh:/usr/local/bin/init-ca.sh:ro
     ports:
       - "${SICK_CA_PORT:-9000}:9000"
+    networks:
+      default:
+        # the CA's name for the sick service (and the ACME recipes of
+        # contrib/acme in a lab): in import mode the name has to lie inside
+        # the constraints, "ca" does not. One of SICK_CA_DNS; in a real
+        # network DNS has it too
+        aliases: ["${SICK_CA_ALIAS:-ca.example.internal}"]
     healthcheck:
       # the CA's TLS certificate checked against the root, under the first
       # host name of the CA: in import mode "localhost" is not one of them,
