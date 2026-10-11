@@ -49,6 +49,12 @@
 #   --intermediate-name NAME   (SICK_CEREMONY_INTERMEDIATE_NAME, "SICK Intermediate CA")
 #   --dns DOMAIN[,DOMAIN]      permitted DNS domains, repeatable  (SICK_CEREMONY_DNS)
 #   --ip CIDR[,CIDR]           permitted IP ranges, repeatable    (SICK_CEREMONY_IP)
+#   --email DOMAIN[,DOMAIN]    permitted email domains (rfc822Name), repeatable:
+#                              example.internal (that host), .example.internal
+#                              (hosts below it) or person@example.internal
+#                                                        (SICK_CEREMONY_EMAIL)
+#   --uri DOMAIN[,DOMAIN]      permitted URI hosts, repeatable: example.internal
+#                              or .example.internal       (SICK_CEREMONY_URI)
 #   --exclude-all-ip           no IP address at all: excludes 0.0.0.0/0 and ::/0
 #                                                        (SICK_CEREMONY_EXCLUDE_ALL_IP=yes)
 #   --kty EC|RSA               key type of both keys     (SICK_CEREMONY_KTY, EC)
@@ -59,7 +65,10 @@
 # At least one --dns or --ip is required. Per RFC 5280 a name form without
 # constraints is not constrained: DNS domains without --ip leave every IP
 # address open, so the ceremony warns, unless --exclude-all-ip says that no
-# certificate under this intermediate carries an address.
+# certificate under this intermediate carries an address. The same holds for
+# email addresses and URIs: without --email and --uri, client certificates
+# under this intermediate may carry any of them (docs/findings/client-san.md).
+# With --uri, a URI without a host (urn:...) is refused by every validator.
 #
 # Renewing the intermediate under the existing root (--renew-intermediate):
 #
@@ -71,8 +80,9 @@
 # already; no new root. The root key is read where it lies, never copied.
 # What is not given is taken from the current intermediate (--intermediate),
 # read back with openssl: the name constraints (permitted and excluded DNS
-# domains and IP ranges; any other kind of constraint ends the ceremony -
-# give the constraints as options then) and the key type. The name defaults
+# domains, IP ranges, email domains and URI hosts; any other kind of
+# constraint ends the ceremony - give the constraints as options then) and
+# the key type. The name defaults
 # to that of the current intermediate with today's date in place of a date
 # at its end: two intermediates with one name and two keys leave the chain
 # to key identifiers. The new intermediate has to end before the root.
@@ -100,6 +110,8 @@ root_name=${SICK_CEREMONY_ROOT_NAME:-SICK Root CA}
 int_name=${SICK_CEREMONY_INTERMEDIATE_NAME:-SICK Intermediate CA}
 dns_list=${SICK_CEREMONY_DNS:-}
 ip_list=${SICK_CEREMONY_IP:-}
+email_list=${SICK_CEREMONY_EMAIL:-}
+uri_list=${SICK_CEREMONY_URI:-}
 exclude_all_ip=${SICK_CEREMONY_EXCLUDE_ALL_IP:-no}
 kty=${SICK_CEREMONY_KTY:-EC}
 size=${SICK_CEREMONY_SIZE:-4096}
@@ -119,7 +131,7 @@ while [ $# -gt 0 ]; do
     --renew-intermediate) renew=yes; shift; continue ;;
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
     --operator|--out|--root-key|--root-password-file|--intermediate-password-file|--root-name|\
-    --intermediate-name|--dns|--ip|--kty|--size|--root-lifetime|--intermediate-lifetime|--root-cert|--intermediate)
+    --intermediate-name|--dns|--ip|--email|--uri|--kty|--size|--root-lifetime|--intermediate-lifetime|--root-cert|--intermediate)
       [ $# -ge 2 ] || die "$1 needs a value" ;;
     *) die "unknown argument '$1' (--help)" ;;
   esac
@@ -133,6 +145,8 @@ while [ $# -gt 0 ]; do
     --intermediate-name) int_name=$2; int_name_given=yes ;;
     --dns) dns_list=${dns_list:+$dns_list,}$2 ;;
     --ip) ip_list=${ip_list:+$ip_list,}$2 ;;
+    --email) email_list=${email_list:+$email_list,}$2 ;;
+    --uri) uri_list=${uri_list:+$uri_list,}$2 ;;
     --kty) kty=$2; kty_given=yes ;;
     --size) size=$2; kty_given=yes ;;
     --root-cert) root_cert=$2 ;;
@@ -239,7 +253,7 @@ int_seconds=$(seconds_of "$int_lifetime") || die "--intermediate-lifetime $int_l
 
 copied=no
 current_nc=
-dns=() ips=() x_dns=() x_ips=()
+dns=() ips=() x_dns=() x_ips=() emails=() uris=() x_emails=() x_uris=()
 
 if [ "$renew" = no ]; then
   [ -z "$root_cert" ] && [ -z "$current" ] || die '--root-cert and --intermediate belong to --renew-intermediate'
@@ -279,7 +293,7 @@ else
   [ "$int_name" != "$(openssl x509 -in "$current" -noout -subject -nameopt multiline | sed -n 's/^ *commonName *= //p')" ] \
     || log "WARNING: the new intermediate gets the name of the current one; clients tell the two apart by key identifiers only"
 
-  if [ -z "$dns_list$ip_list" ] && [ "$exclude_all_ip" = no ]; then
+  if [ -z "$dns_list$ip_list$email_list$uri_list" ] && [ "$exclude_all_ip" = no ]; then
     copied=yes
     current_nc=$(extension "$current_text" 'Name Constraints')
     [ -n "$current_nc" ] || die "$current has no name constraints to copy: give --dns and/or --ip"
@@ -291,7 +305,9 @@ else
         Excluded:) section=excluded ;;
         DNS:*) if [ "$section" = permitted ]; then dns+=("${line#DNS:}"); else x_dns+=("${line#DNS:}"); fi ;;
         IP:*) if [ "$section" = permitted ]; then ips+=("$(cidr_of "${line#IP:}")"); else x_ips+=("$(cidr_of "${line#IP:}")"); fi ;;
-        *) die "cannot copy the constraint '$line' of $current: give the constraints with --dns, --ip, --exclude-all-ip" ;;
+        email:*) if [ "$section" = permitted ]; then emails+=("${line#email:}"); else x_emails+=("${line#email:}"); fi ;;
+        URI:*) if [ "$section" = permitted ]; then uris+=("${line#URI:}"); else x_uris+=("${line#URI:}"); fi ;;
+        *) die "cannot copy the constraint '$line' of $current: give the constraints with --dns, --ip, --email, --uri, --exclude-all-ip" ;;
       esac
     done <<<"$current_nc"
     # what --exclude-all-ip made, read back
@@ -319,6 +335,8 @@ items() { tr ',' '\n' <<<"$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed
 if [ "$copied" = no ]; then
   mapfile -t dns < <(items "$dns_list")
   mapfile -t ips < <(items "$ip_list")
+  mapfile -t emails < <(items "$email_list")
+  mapfile -t uris < <(items "$uri_list")
   if [ "$exclude_all_ip" = yes ]; then
     [ ${#ips[@]} -eq 0 ] || die '--exclude-all-ip and --ip contradict each other'
     x_ips=(0.0.0.0/0 ::/0)
@@ -327,6 +345,13 @@ fi
 label='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
 for d in "${dns[@]}" "${x_dns[@]}"; do
   [[ $d =~ ^($label\.)*$label$ ]] || die "--dns $d is not a domain like example.internal"
+done
+for e in "${emails[@]}" "${x_emails[@]}"; do
+  [[ $e =~ ^([^@[:space:]]+@)?\.?($label\.)*$label$ ]] \
+    || die "--email $e is not a domain like example.internal or .example.internal, nor an address like person@example.internal"
+done
+for u in "${uris[@]}" "${x_uris[@]}"; do
+  [[ $u =~ ^\.?($label\.)*$label$ ]] || die "--uri $u is not a host like example.internal or .example.internal"
 done
 for i in "${ips[@]}" "${x_ips[@]}"; do
   [[ $i =~ ^[0-9.]+/[0-9]+$ || $i =~ ^[0-9A-Fa-f:]+/[0-9]+$ ]] || die "--ip $i is not a network like 192.0.2.0/24"
@@ -379,6 +404,10 @@ constraints='"critical": true'
 [ ${#ips[@]} -eq 0 ] || constraints+=", \"permittedIPRanges\": $(json_strings "${ips[@]}")"
 [ ${#x_dns[@]} -eq 0 ] || constraints+=", \"excludedDNSDomains\": $(json_strings "${x_dns[@]}")"
 [ ${#x_ips[@]} -eq 0 ] || constraints+=", \"excludedIPRanges\": $(json_strings "${x_ips[@]}")"
+[ ${#emails[@]} -eq 0 ] || constraints+=", \"permittedEmailAddresses\": $(json_strings "${emails[@]}")"
+[ ${#uris[@]} -eq 0 ] || constraints+=", \"permittedURIDomains\": $(json_strings "${uris[@]}")"
+[ ${#x_emails[@]} -eq 0 ] || constraints+=", \"excludedEmailAddresses\": $(json_strings "${x_emails[@]}")"
+[ ${#x_uris[@]} -eq 0 ] || constraints+=", \"excludedURIDomains\": $(json_strings "${x_uris[@]}")"
 cat >"$work/intermediate.tpl" <<EOF
 {
   "subject": {{ toJson .Subject }},
@@ -429,15 +458,20 @@ compare 'intermediate key usage' $'X509v3 Key Usage: critical\nCertificate Sign,
 compare 'intermediate basic constraints' $'X509v3 Basic Constraints: critical\nCA:TRUE, pathlen:0' "$(extension "$int_text" 'Basic Constraints')"
 
 want_nc='X509v3 Name Constraints: critical'
-if [ ${#dns[@]} -gt 0 ] || [ ${#ips[@]} -gt 0 ]; then
+# in the order step (Go's crypto/x509) writes them: DNS, IP, email, URI
+if [ ${#dns[@]} -gt 0 ] || [ ${#ips[@]} -gt 0 ] || [ ${#emails[@]} -gt 0 ] || [ ${#uris[@]} -gt 0 ]; then
   want_nc+=$'\nPermitted:'
   for d in "${dns[@]}"; do want_nc+=$'\n'"DNS:$d"; done
   for i in "${ips[@]}"; do want_nc+=$'\n'"$(openssl_ip "$i" || die "--ip $i is not a network")"; done
+  for e in "${emails[@]}"; do want_nc+=$'\n'"email:$e"; done
+  for u in "${uris[@]}"; do want_nc+=$'\n'"URI:$u"; done
 fi
-if [ ${#x_dns[@]} -gt 0 ] || [ ${#x_ips[@]} -gt 0 ]; then
+if [ ${#x_dns[@]} -gt 0 ] || [ ${#x_ips[@]} -gt 0 ] || [ ${#x_emails[@]} -gt 0 ] || [ ${#x_uris[@]} -gt 0 ]; then
   want_nc+=$'\nExcluded:'
   for d in "${x_dns[@]}"; do want_nc+=$'\n'"DNS:$d"; done
   for i in "${x_ips[@]}"; do want_nc+=$'\n'"$(openssl_ip "$i" || die "excluded $i is not a network")"; done
+  for e in "${x_emails[@]}"; do want_nc+=$'\n'"email:$e"; done
+  for u in "${x_uris[@]}"; do want_nc+=$'\n'"URI:$u"; done
 fi
 read_nc=$(extension "$int_text" 'Name Constraints')
 compare 'intermediate name constraints' "$want_nc" "$read_nc"
@@ -517,6 +551,10 @@ fp() { step certificate fingerprint "$1"; }
     [ ${#x_ips[@]} -eq 0 ] || printf '  excluded IP           %s\n' "${x_ips[*]}"
   fi
   [ ${#x_dns[@]} -eq 0 ] || printf '  excluded DNS          %s\n' "${x_dns[*]}"
+  printf '  permitted email       %s\n' "${emails[*]:-(none: email addresses unconstrained)}"
+  [ ${#x_emails[@]} -eq 0 ] || printf '  excluded email        %s\n' "${x_emails[*]}"
+  printf '  permitted URI         %s\n' "${uris[*]:-(none: URIs unconstrained)}"
+  [ ${#x_uris[@]} -eq 0 ] || printf '  excluded URI          %s\n' "${x_uris[*]}"
   if [ "$renew" = yes ]; then
     printf '\nprevious intermediate: %s\n' "$current"
     printf '  SHA-256 fingerprint   %s\n' "$(fp "$current")"

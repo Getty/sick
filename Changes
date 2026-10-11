@@ -243,3 +243,6 @@ Revision history for SICK
     - docs: the acmesh example for proxmoxve sets DEPLOY_PROXMOXVE_USER and
       DEPLOY_PROXMOXVE_USER_REALM (the hooks default to root@pam) and points
       to contrib/devices/proxmox/.
+    - ceremony.sh --email and --uri put permitted email domains and URI hosts
+      into the intermediate, read back like the other constraints; a renewal
+      copies them.
