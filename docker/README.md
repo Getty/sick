@@ -197,7 +197,8 @@ is the time the CA may be down – restore from backup included – before
 services start to expire. A longer lifetime buys more of that time and keeps
 a mistake (a wrong name, a key that leaked) around longer; a shorter one the
 reverse. Clients that count fixed days instead of a share of the lifetime
-need that set to match; the recipes for each service say how.
+need that set to match; the recipes in [contrib/acme/](../contrib/acme/) and
+[k8s/cert-manager/](../k8s/cert-manager/) say how (handbook, chapter 4).
 
 The container starts as root for `init-ca.sh`, which hands over the three
 files and then starts step-ca as the unprivileged user `step` of the image.

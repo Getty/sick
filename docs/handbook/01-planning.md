@@ -75,10 +75,10 @@ and the way it gets one. The way decides the rest of the work:
 
 | It … | Way | Chapter |
 |---|---|---|
-| speaks ACME itself (Traefik, Caddy, Proxmox VE, cert-manager, an nginx with an ACME client) | the ACME endpoint of step-ca | 5 (P6) |
-| has an API or SSH but no ACME, and acme.sh has a deploy hook for it | SICK, type `acmesh` with that hook | 5 (P7) |
-| is a Cisco Small Business switch | SICK, type `cisco-sb` (SICK-Target-CiscoSB) | 4 |
-| reads its certificate from files | SICK, type `files` with a `reload` | 4 |
+| speaks ACME itself (Traefik, Caddy, Proxmox VE, cert-manager, an nginx with an ACME client) | the ACME endpoint of step-ca | 4 |
+| has an API or SSH but no ACME, and acme.sh has a deploy hook for it | SICK, type `acmesh` with that hook | 5 |
+| is a Cisco Small Business switch | SICK, type `cisco-sb` (SICK-Target-CiscoSB) | 5 |
+| reads its certificate from files | SICK, type `files` with a `reload` | 5 |
 | none of these | a SICK-Target-* distribution has to be written, or the device stays as it is | – |
 
 For each row note the names (DNS and IP), how it is reached for the check
@@ -97,7 +97,7 @@ one limits the work. These are the defaults; each is a setting.
 | root | 20 years, EC P-256 | `ceremony.sh --root-lifetime`, `--kty` | replacing it means touching every client (chapter 2, root rollover); its key is offline and used every few years |
 | intermediate | 5 years, EC P-256 | `ceremony.sh --intermediate-lifetime` | its key is online in step-ca; a rotation needs only the offline root, no client changes. Renew it at least one device lifetime before it ends |
 | devices (through SICK) | 397 days, RSA 2048, renewed 30 days before the end | `defaults: lifetime`, `renew_before`, `key` in the device list; ceiling `SICK_CA_MAX_LIFETIME` (19800h = 825 days) | devices have no automation of their own; old firmware takes RSA only. The 30 days are the recovery budget: SICK may fail for a month before a device expires |
-| services (ACME) | step-ca's 24 hours today; **recommendation 30 days** (P6 sets it) | ACME provisioner `--x509-default-dur`, `--x509-max-dur` | an ACME client renews at about two thirds of the lifetime; with 24 hours a CA outage longer than about 8 hours breaks services, with 30 days it may last about 10 days |
+| services (ACME) | 30 days, at most 90 | `SICK_CA_ACME_LIFETIME`, `SICK_CA_ACME_MAX_LIFETIME` | an ACME client renews at about two thirds of the lifetime; with 24 hours a CA outage longer than about 8 hours breaks services, with 30 days it may last about 10 days |
 
 Apple platforms refuse a TLS server certificate issued after 2019-07-01
 that is valid for more than 825 days, or that lacks the `serverAuth`
@@ -120,7 +120,7 @@ what the Docker setup makes.
 | Provisioner | Who holds the credential | What it can obtain | Profile |
 |---|---|---|---|
 | JWK `sick` | the sick service only: the password is a file in the CA volume, handed over read-only | any name the intermediate's constraints and the CA policy allow | `serverAuth` only, up to `SICK_CA_MAX_LIFETIME` |
-| ACME `acme` | anyone who can reach the CA and prove control of a name (HTTP-01, TLS-ALPN-01, DNS-01) | names within the constraints and the policy that they can prove | today step-ca's defaults (`serverAuth` and `clientAuth`, 24 h); P6 narrows it to `serverAuth` and sets the lifetime |
+| ACME `acme` | anyone who can reach the CA and prove control of a name (HTTP-01, TLS-ALPN-01, DNS-01) | names within the constraints and the policy that they can prove | `serverAuth` only, 30 days by default, at most 90 (chapter 4) |
 | client certificates | – (P8) | – | a provisioner of its own with `clientAuth` only |
 | root key | the person(s) named in the ceremony record | a new intermediate | ceremonies only |
 
@@ -142,7 +142,7 @@ Each is a setting; the recommendation is ours, with the reason.
 | Names and networks | `ceremony.sh --dns`, `--ip`, `--exclude-all-ip`; `SICK_CA_ALLOW_DNS`, `SICK_CA_ALLOW_IP` | the one internal domain and the private ranges in use, nothing wider | the constraint is enforced by step-ca when it issues and by clients when they verify (both proven, chapter 2) |
 | Lifetimes | table above | as in the table | recovery budget |
 | Key types | `--kty`, device `key` | EC P-256 for the CA, RSA 2048 for device leaves | compatibility with old device firmware |
-| Who may use ACME | network access to the CA, policy | admin networks only, until P6 | the ACME endpoint issues to whoever proves a name |
+| Who may use ACME | network access to port 9000, policy, external account binding (`requireEAB`, card k51) | the CA reachable from the service networks only, policy no wider than your domain; EAB when it must be reachable more widely | the ACME endpoint issues to whoever proves a name – chapter 4 |
 | Visibility of the repositories, CPAN release, image name and registry | – | the maintainer's | – |
 | `docker/` and `t/e2e/` in the CPAN tarball | `dist.ini` | ship `docker/`, keep `t/e2e/` out | `docker/` is a documented way to run SICK; `t/e2e/run-lab.sh` changes a real switch |
 

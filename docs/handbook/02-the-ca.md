@@ -167,8 +167,9 @@ What the provisioner `sick` gives out:
 - **No longer than `SICK_CA_MAX_LIFETIME`** (19800h = 825 days): a request
   for more is refused.
 
-The ACME provisioner still has step-ca's defaults (both usages, 24 hours);
-chapter 5 (P6) narrows it.
+The ACME provisioner `acme` issues `serverAuth` only as well, for 30 days by
+default and at most 90 (`SICK_CA_ACME_LIFETIME`, `SICK_CA_ACME_MAX_LIFETIME`,
+`SICK_CA_ACME_MIN_LIFETIME`); chapter 4 says why and how services use it.
 
 ## Revocation
 

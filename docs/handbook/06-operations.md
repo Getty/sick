@@ -139,10 +139,13 @@ a week, and is noise for one that lives two years. With the defaults (397
 days, renew 30 days before), `SickRenewalLate` fires 15 days before the
 end and `SickCertificateExpiring` 7.5 days before.
 
-Note what `sick run` does **not** fix: a device that presents an *older*
-valid certificate of your CA with the right names counts as `ok` and is
-left alone; only `SickDeviceStale` notices (card k44 decides whether SICK
-should redeploy).
+Note what `sick run` does **not** fix, on purpose: a device that presents
+an *older* valid certificate of your CA with the right names counts as `ok`
+and is left alone; `SickDeviceStale` is the signal. Decided 2026-10-11
+(card k44): the older certificate is valid and reaches the normal renewal
+threshold by itself; a device that loses its state needs a person to find
+out why; and redeploying on every fallback would issue a new certificate
+each time and hide the fault.
 
 ## The inventory
 
