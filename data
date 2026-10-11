@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-11T04:29:57Z
+created: 2026-10-11T02:52:43Z
+id: 60
+priority: high
+started: 2026-10-11T04:29:04Z
+status: done
+tags:
+- mtls
+- p8
+title: 'P8c Handbook chapter 8: client certificates, decision record, HQ section'
+updated: 2026-10-11T04:30:09Z
+---
+
+Chapter with the decision record (separate client intermediate vs clientAuth-only provisioner), lifetime and renewal of person certificates, loss of a device (passive revocation only), the recipe, test report; HQ checklist section. Part of P8 (k19); binding: docs/roadmap.md, section P8, and the hub's brief of 2026-10-11.
+
+Committed as 7ee55aa
