@@ -20,7 +20,7 @@ clients what they have to trust – three containers, one `docker compose up`.
 | Service | Image | What it does |
 |---|---|---|
 | `ca` | the official `smallstep/step-ca` | the CA. `init-ca.sh` sets it up at the first start – root and intermediate made there (lab mode) or imported from a ceremony (import mode) –, a JWK provisioner `sick` that grants up to 825 days, an ACME provisioner `acme` |
-| `sick` | built here: Debian, Perl, `SICK`, `SICK-Target-CiscoSB`, `step`, `acme.sh` with its deploy hooks, `openssl`, `ssh` | `sick run` now and then every `SICK_INTERVAL`, `sick trust` after every run |
+| `sick` | built here: Debian, Perl, `SICK`, `SICK-Target-CiscoSB`, `SICK-Target-Proxmox`, `step`, `acme.sh` with its deploy hooks, `openssl`, `ssh` | `sick run` now and then every `SICK_INTERVAL`, `sick trust` after every run |
 | `trust` | `busybox` (its `httpd`) | serves what `sick trust` wrote: `index.html`, the root (`root_ca.pem`, `root_ca.crt`), the intermediate (`intermediate_ca.pem`, `intermediate_ca.crt`), both in one file (`ca_bundle.pem`) and a profile for Apple devices with both (`root_ca.mobileconfig`) |
 
 Run on Debian 13 with Docker Engine 26.1 and Compose 2.26 against an
@@ -30,13 +30,14 @@ which Docker Engine has since version 25, and the build needs BuildKit.
 
 ## Quick start
 
-SICK and SICK-Target-CiscoSB are not on CPAN yet, so the image is built from
-two checkouts that lie next to each other:
+SICK and its device types are not on CPAN yet, so the image is built from
+three checkouts that lie next to each other:
 
 ```
 somewhere/
   sick/                   this repository
-  sick-target-ciscosb/
+  sick-target-ciscosb/    device type cisco-sb
+  sick-target-proxmox/    device types proxmox-ve and proxmox-bs
 ```
 
 ```bash
@@ -632,11 +633,12 @@ reverse proxy with a certificate your clients already trust it is better off.
 docker compose build                       # from docker/, checkouts side by side
 ```
 
-The build context is the directory *above* the two checkouts
-(`SICK_BUILD_CONTEXT`, default `../..`), because the image needs both.
-`Dockerfile.dockerignore` lets nothing but `sick/lib`, `sick/bin/sick`,
-`sick/docker/entrypoint.sh` and `sick-target-ciscosb/lib` into it, however
-much else lies in that directory. Keep your secrets out of it all the same.
+The build context is the directory *above* the three checkouts
+(`SICK_BUILD_CONTEXT`, default `../..`), because the image needs all of
+them. `Dockerfile.dockerignore` lets nothing but `sick/lib`, `sick/bin/sick`,
+`sick/docker/entrypoint.sh`, `sick-target-ciscosb/lib` and
+`sick-target-proxmox/lib` into it, however much else lies in that
+directory. Keep your secrets out of it all the same.
 
 Without Compose:
 
@@ -645,9 +647,13 @@ cd somewhere
 docker build -f sick/docker/Dockerfile -t sick:local .
 ```
 
-Once both distributions are on CPAN, `SICK_FROM=cpan` (build argument and
-Compose variable) installs them with `cpanm SICK SICK::Target::CiscoSB`
-instead; the second checkout is not needed then. That stage of the
+Once the three distributions are on CPAN, `SICK_FROM=cpan` (build argument
+and Compose variable) installs them with
+`cpanm SICK SICK::Target::CiscoSB SICK::Target::ProxmoxVE` instead (the last
+one brings `SICK::Target::ProxmoxBS` with it); the other two checkouts are
+not needed then. The Debian packages SICK-Target-Proxmox needs
+(`libio-socket-ssl-perl`, `libhttp-tiny-perl`) are installed for both
+ways. That stage of the
 `Dockerfile` cannot have been built yet.
 
 Pinned by build argument: `STEP_VERSION` (0.30.2, the binary is copied out of
@@ -665,8 +671,10 @@ release archive from GitHub), `DEBIAN_RELEASE` (trixie).
   [Restricting the names](#restricting-the-names).
 - **The root key** stays in the volume unless you move it.
 - **`SICK_FROM=cpan`** is written and not built.
-- Only the `cisco-sb` type (in the proof below), `files` and the `localcopy`
-  hook of `acmesh` have run in this image. Other acme.sh hooks may want
+- Only the `cisco-sb` type (in the proof below), `files`, the `localcopy`
+  hook of `acmesh`, and `proxmox-ve` and `proxmox-bs` (against PVE and PBS
+  in containers, `t/e2e/device-proxmox.sh` of SICK-Target-Proxmox) have run
+  in this image. Other acme.sh hooks may want
   programs the image does not have.
 
 ## The proof

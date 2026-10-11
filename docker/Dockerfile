@@ -1,19 +1,21 @@
 # syntax=docker/dockerfile:1
 #
-# The sick image: Perl, SICK and SICK-Target-CiscoSB, and the programs a run
-# calls - step, acme.sh (with its deploy hooks), openssl, ssh.
+# The sick image: Perl, SICK, SICK-Target-CiscoSB and SICK-Target-Proxmox,
+# and the programs a run calls - step, acme.sh (with its deploy hooks),
+# openssl, ssh.
 #
-# Build context: a directory that holds both source trees side by side,
+# Build context: a directory that holds the source trees side by side,
 #
 #   <context>/sick/                   this repository
 #   <context>/sick-target-ciscosb/    SICK-Target-CiscoSB
+#   <context>/sick-target-proxmox/    SICK-Target-Proxmox
 #
 # which is what "docker compose -f docker/compose.yml build" uses when the
-# two checkouts are neighbours (see README.md). Only what is copied below is
+# three checkouts are neighbours (see README.md). Only what is copied below is
 # sent to the builder: Dockerfile.dockerignore keeps everything else out.
 #
 # Once the distributions are on CPAN: --build-arg SICK_FROM=cpan. The source
-# of SICK-Target-CiscoSB is not needed then.
+# of SICK-Target-CiscoSB and SICK-Target-Proxmox is not needed then.
 
 ARG DEBIAN_RELEASE=trixie
 ARG STEP_VERSION=0.30.2
@@ -27,11 +29,17 @@ FROM debian:${DEBIAN_RELEASE}-slim AS base
 # Cpanel::JSON::XS, which its package depends on), Module::Runtime, Moo,
 # namespace::autoclean, Path::Tiny, Type::Tiny and YAML::PP come as Debian
 # packages.
+# SICK-Target-Proxmox speaks HTTPS to the node with HTTP::Tiny on
+# IO::Socket::SSL (libio-socket-ssl-perl brings libnet-ssleay-perl);
+# libhttp-tiny-perl is the patched HTTP::Tiny 0.090, core perl has 0.088.
+# Both are installed here, not in the local stage, so that the CPAN stage
+# finds them too.
 # curl is for the deploy hooks of acme.sh that talk to an HTTP API,
 # openssh-client for SICK-Target-CiscoSB and for hooks that use ssh and scp.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl libjson-maybexs-perl libmodule-runtime-perl libmoo-perl \
+      ca-certificates curl libhttp-tiny-perl libio-socket-ssl-perl \
+      libjson-maybexs-perl libmodule-runtime-perl libmoo-perl \
       libnamespace-autoclean-perl libpath-tiny-perl libtype-tiny-perl \
       libyaml-pp-perl openssh-client openssl perl \
  && rm -rf /var/lib/apt/lists/*
@@ -59,13 +67,14 @@ RUN curl -fsSL -o /tmp/acme.sh.tar.gz \
 FROM base AS from-local
 COPY sick/lib/ /usr/local/lib/site_perl/
 COPY sick-target-ciscosb/lib/ /usr/local/lib/site_perl/
+COPY sick-target-proxmox/lib/ /usr/local/lib/site_perl/
 COPY --chmod=0755 sick/bin/sick /usr/local/bin/sick
 
 # ... or from CPAN
 FROM base AS from-cpan
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cpanminus make \
- && cpanm --notest SICK SICK::Target::CiscoSB \
+ && cpanm --notest SICK SICK::Target::CiscoSB SICK::Target::ProxmoxVE \
  && rm -rf /var/lib/apt/lists/* /root/.cpanm
 
 FROM from-${SICK_FROM}
@@ -80,6 +89,7 @@ RUN mkdir -p /etc/sick /var/lib/sick /srv/trust \
  && printf 'Host *\n    UserKnownHostsFile /var/lib/sick/known_hosts\n' >/etc/ssh/ssh_config.d/sick.conf \
  && sick --version \
  && perl -MSICK::Target::CiscoSB -e 'print "SICK::Target::CiscoSB ", SICK::Target::CiscoSB->VERSION, "\n"' \
+ && perl -MSICK::Target::ProxmoxVE -MSICK::Target::ProxmoxBS -e 'print "SICK::Target::ProxmoxVE ", SICK::Target::ProxmoxVE->VERSION, ", SICK::Target::ProxmoxBS ", SICK::Target::ProxmoxBS->VERSION, "\n"' \
  && step version \
  && acme.sh --version \
  && test -r /opt/acme.sh/deploy/localcopy.sh

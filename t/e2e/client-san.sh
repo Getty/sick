@@ -68,7 +68,7 @@
 # a cache. Ports on 127.0.0.1 only.
 #
 # Prerequisites: Docker Engine with Compose and BuildKit, openssl on this
-# machine, the two source trees side by side; the internet for the Debian
+# machine, the three source trees side by side; the internet for the Debian
 # packages (openssl, gnutls-bin) and for images not yet here.
 #
 # Parameters, all from the environment:
@@ -131,6 +131,7 @@ docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is 
 [[ $project =~ ^sick-e2e-[a-z0-9_-]+$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick-e2e-*"
 [[ $ca_port =~ ^[0-9]+$ ]] || fail 'SICK_E2E_CA_PORT is a port number'
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+[ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 
 umask 077
 work_parent=$(dirname "$work")

@@ -27,13 +27,13 @@
 #
 # It DESTROYS the Compose project it works on (default sick-e2e), volumes
 # and CA included. It touches nothing else: no other project, no prune.
-# The image sick:local (built from this checkout and ../sick-target-ciscosb)
-# stays; it is a cache.
+# The image sick:local (built from this checkout, ../sick-target-ciscosb and
+# ../sick-target-proxmox) stays; it is a cache.
 #
 # Prerequisites: Docker Engine with the Compose plugin and BuildKit, openssl
-# and curl on this machine; the two source trees side by side
-# (<dir>/sick, <dir>/sick-target-ciscosb); the internet for images and
-# packages at the first build. Run with Compose 2.26.
+# and curl on this machine; the three source trees side by side
+# (<dir>/sick, <dir>/sick-target-ciscosb, <dir>/sick-target-proxmox); the
+# internet for images and packages at the first build. Run with Compose 2.26.
 #
 # Parameters, all from the environment:
 #
@@ -109,6 +109,7 @@ docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is 
 [[ $project =~ ^sick(-[a-z0-9_-]+)?$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick or sick-*"
 [[ $ca_port =~ ^[0-9]+$ && $trust_port =~ ^[0-9]+$ ]] || fail 'SICK_E2E_CA_PORT and SICK_E2E_TRUST_PORT are port numbers'
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+[ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 
 umask 077
 mkdir -p "$work"
@@ -237,7 +238,7 @@ armed=yes
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 note 'docker compose build'
 compose build >"$work/build.log" 2>&1 || { tail -30 "$work/build.log" >&2; fail 'docker compose build'; }
-pass 'the image is built from the two source trees'
+pass 'the image is built from the three source trees'
 note 'docker compose up -d --wait ca trust web'
 compose up -d --wait ca trust web >"$work/up.log" 2>&1 \
   || { plain <"$work/up.log" | tail -20 >&2; compose logs ca web 2>&1 | tail -20 >&2; fail 'the stack did not come up healthy'; }

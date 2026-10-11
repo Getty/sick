@@ -49,7 +49,7 @@
 # every k3d and kubectl call).
 #
 # Prerequisites: Docker with Compose 2.24 or newer, openssl; for "units"
-# systemd-analyze; for "k8s" k3d and kubectl. The two source trees side by
+# systemd-analyze; for "k8s" k3d and kubectl. The three source trees side by
 # side, as for run-local.sh.
 #
 # Parameters, all from the environment:
@@ -251,6 +251,7 @@ if want notify || want alerts; then
   for program in docker openssl; do command -v "$program" >/dev/null || fail "$program is not installed"; done
   docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is not installed'
   [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+  [ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 
   # The webhook's secret: the path of its URL. Generated now, never printed.
   token=$(openssl rand -hex 16)
@@ -336,7 +337,7 @@ EOF
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   note 'docker compose build'
   compose build sick >"$work/build.log" 2>&1 || { tail -30 "$work/build.log" >&2; fail 'docker compose build'; }
-  pass 'the image is built from the two source trees'
+  pass 'the image is built from the three source trees'
   note 'docker compose up -d --wait ca web hook'
   compose up -d --wait ca web hook >"$work/up.log" 2>&1 \
     || { plain <"$work/up.log" | tail -20 >&2; fail 'the stack did not come up healthy'; }

@@ -47,7 +47,7 @@
 # port.
 #
 # Prerequisites: Docker with Compose 2.24 or newer, perl (core) on this
-# machine; the two source trees side by side, as for run-local.sh. sick:local
+# machine; the three source trees side by side, as for run-local.sh. sick:local
 # is built as run-local.sh builds it when it is not there (or always, with
 # SICK_DEVSSH_BUILD=yes).
 #
@@ -112,6 +112,7 @@ done
 docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is not installed'
 [[ $project =~ ^sick(-[a-z0-9_-]+)?$ ]] || fail "SICK_DEVSSH_PROJECT '$project' is not sick or sick-*"
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+[ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 for file in sick.yml sudoers authorized_keys sick-deploy-gate; do
   [ -r "$recipe/$file" ] || fail "$recipe/$file is missing"
 done

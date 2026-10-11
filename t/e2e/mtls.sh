@@ -72,7 +72,7 @@
 # port is published but the CA's, on 127.0.0.1 at a random port.
 #
 # Prerequisites: Docker Engine with Compose 2.24.4 or newer (!reset,
-# !override), openssl on this machine, the two source trees side by side;
+# !override), openssl on this machine, the three source trees side by side;
 # the internet for the Debian packages of the client and for images not yet
 # here.
 #
@@ -138,6 +138,7 @@ done
 docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is not installed'
 [[ $project =~ ^sick-e2e-[a-z0-9_-]+$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick-e2e-*"
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+[ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 
 umask 077
 work_parent=$(dirname "$work")

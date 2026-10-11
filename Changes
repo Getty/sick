@@ -271,3 +271,7 @@ Revision history for SICK
     - A device type can name its default port (SICK::Target->default_port); a
       device without port uses it, and SICK::Device::has_port tells a port:
       443 that was written from the default.
+    - The Docker image carries SICK-Target-Proxmox (device types proxmox-ve
+      and proxmox-bs) from the neighbouring checkout, with
+      libio-socket-ssl-perl and the patched libhttp-tiny-perl; the build
+      context now needs three checkouts.

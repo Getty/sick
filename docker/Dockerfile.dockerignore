@@ -5,3 +5,4 @@
 !sick/bin/sick
 !sick/docker/entrypoint.sh
 !sick-target-ciscosb/lib
+!sick-target-proxmox/lib

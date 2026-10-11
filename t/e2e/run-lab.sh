@@ -20,7 +20,7 @@
 # - Docker Engine 25 or newer with the Compose plugin and BuildKit (run
 #   with 26.1 and Compose 2.26), openssl, curl; the network reaches the
 #   switch on ports 22 and 443, and the internet for images and packages
-# - the two source trees side by side:   <dir>/sick   <dir>/sick-target-ciscosb
+# - the three source trees side by side:   <dir>/sick   <dir>/sick-target-ciscosb   <dir>/sick-target-proxmox
 # - a credentials file for the switch - line 1 user, line 2 password -
 #   readable by its owner only and outside <dir>
 #
@@ -117,6 +117,7 @@ docker compose version >/dev/null 2>&1 || fail 'the Compose plugin of Docker is 
 # the project is what this script destroys; on a shared Docker host it is sick-*
 [[ $project =~ ^sick(-[a-z0-9_-]+)?$ ]] || fail "SICK_E2E_PROJECT '$project' is not sick or sick-*"
 [ -d "$context/sick-target-ciscosb/lib" ] || fail "no checkout of sick-target-ciscosb next to $repo"
+[ -d "$context/sick-target-proxmox/lib" ] || fail "no checkout of sick-target-proxmox next to $repo"
 [ -f "$credentials" ] && [ -r "$credentials" ] || fail "cannot read the credentials file $credentials"
 credentials=$(cd "$(dirname "$credentials")" && pwd)/$(basename "$credentials")
 [ "$(stat -c '%a' "$credentials")" = 600 ] || [ "$(stat -c '%a' "$credentials")" = 400 ] \
@@ -213,7 +214,7 @@ step 'build, and start the CA from nothing'
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 note 'docker compose build'
 compose build >"$work/build.log" 2>&1 || { tail -30 "$work/build.log" >&2; fail 'docker compose build'; }
-pass 'the image is built from the two source trees'
+pass 'the image is built from the three source trees'
 note 'what is in it'
 inside=$(compose run --rm --no-deps -T sick sh -c '
   sick --version

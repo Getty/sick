@@ -54,7 +54,8 @@ services:
   sick:
     image: ${SICK_IMAGE:-sick:local}
     build:
-      # the directory that holds the checkouts "sick" and "sick-target-ciscosb"
+      # the directory that holds the checkouts "sick", "sick-target-ciscosb"
+      # and "sick-target-proxmox"
       context: ${SICK_BUILD_CONTEXT:-../..}
       dockerfile: sick/docker/Dockerfile
       args:
