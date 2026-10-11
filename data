@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-11T01:25:54Z
+created: 2026-10-10T06:23:24Z
+id: 16
+priority: medium
+started: 2026-10-10T23:20:30Z
+status: done
+tags:
+- acme
+title: 'P6 Services that speak ACME: Traefik, Caddy, nginx, cert-manager, Proxmox
+  VE'
+updated: 2026-10-11T01:26:05Z
+---
+
+Recipes against step-ca's ACME endpoint, proven in containers / k3d where possible. Package, result and 'done when': docs/roadmap.md, section P6 Services that speak ACME.
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: renewal inside the test with the live fingerprint changing; refused out-of-policy name; failing challenge for an uncontrolled name; enrollment authorization documented; cert-manager Ready only counts with a pod probe.
+
+From k29 (2026-10-10): the ACME provisioner still has step-ca defaults (serverAuth+clientAuth, 24h). P6 sets its template (serverAuth only) and lifetimes in init-ca.sh, as k29 did for the JWK provisioner.
+
+P6 complete: k46 d0ef1f5, k47 f03a9ad, k45 2e000cf, k48 95af713, k49 03ef482 + bd9eac3, k44 decided (alert only); e2e all green at 03ef482; open: k50 (init-ca second provisioner, challenge types), k51 (EAB, maintainer)
