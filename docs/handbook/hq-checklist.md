@@ -70,13 +70,15 @@ host from which the devices are reachable.
       `contrib/devices/routeros/`. *Passed:* `sick run` renews, www-ssl on
       443 presents the issued certificate, a second run changes nothing;
       also with a chain (intermediate) and, if wanted, an EC key.
-- [ ] **Proxmox VE through the hook `proxmoxve`** on a node the CA cannot
-      reach: the recipe in `contrib/devices/proxmox/`, the API token with
-      the minimal role. *Passed:* the custom certificate is uploaded,
-      pveproxy restarts and presents it on 8006 within `verify_timeout`;
-      `DELETE …/certificates/custom` brings the cluster certificate back.
-      Note card k56 (the hook does not verify TLS) before using it.
-- [ ] **Proxmox Backup Server through the hook `proxmoxbs`** likewise on 8007.
+- [ ] **Proxmox VE and Proxmox Backup Server with `proxmox-ve` /
+      `proxmox-bs`** on real nodes under systemd, a PVE cluster and a node
+      over a real network: the checklist of SICK-Target-Proxmox,
+      [`docs/hq-checklist.md`](https://github.com/Getty/sick-target-proxmox/blob/main/docs/hq-checklist.md)
+      in that repository (`../sick-target-proxmox/docs/hq-checklist.md` in a
+      checkout), with the pass criteria for each step – token and rights,
+      first upload by cluster CA and by pin, restart time, second run, wrong
+      anchor, cluster, the way back. **It replaces a real node's certificate
+      and restarts its proxy.**
 - [ ] **A Linux host outside Docker** with the `ssh` recipe (sudo rule or
       forced command). *Passed:* as in the container test.
 - [ ] **Dell iDRAC 7 and 8**: settle the open questions of card k18 (which

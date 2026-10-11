@@ -149,8 +149,9 @@ certificates (`docker/provisioners.example.json`): PVE renews once less than
 `acme`. The standalone plugin answers http-01 on port 80 of the node, so the CA
 must reach the node there under that name. Proxmox Backup Server has the
 same mechanism (`proxmox-backup-manager acme …`, *not tried*). If the node
-cannot be reached by the CA, use SICK with the acme.sh hook `proxmoxve`
-instead (chapter 5).
+cannot be reached by the CA, use SICK with the device types `proxmox-ve` /
+`proxmox-bs` instead (chapter 5) – not the acme.sh hooks, which do not
+verify the API's TLS certificate.
 
 ## When something goes wrong
 

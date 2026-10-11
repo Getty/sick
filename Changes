@@ -278,3 +278,7 @@ Revision history for SICK
     - Removed t/e2e/device-proxmox.sh and its stand-in API, which modelled
       Proxmox wrongly in eleven points; docs/findings/device-proxmox.md marks
       them corrected and points to SICK-Target-Proxmox.
+    - Handbook and contrib/devices/proxmox: Proxmox VE and Backup Server
+      through the device types proxmox-ve / proxmox-bs of
+      SICK-Target-Proxmox when native ACME cannot reach the node; the
+      acme.sh hooks are no longer recommended.

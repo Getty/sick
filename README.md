@@ -601,7 +601,10 @@ your credentials, so read it first.
 
 A device type that needs more than the core brings – SSH, an HTTP client, a vendor
 API – is a distribution of its own, `SICK-Target-*`, so that the core stays
-small. `SICK-Target-CiscoSB` (Cisco Small Business switches) is the first.
+small. `SICK-Target-CiscoSB` (Cisco Small Business switches) is the first,
+`SICK-Target-Proxmox` (`proxmox-ve`, `proxmox-bs`: Proxmox VE and Proxmox
+Backup Server over their API, always verified) the second; the Docker image
+carries both.
 
 A target is a subclass of `SICK::Target` in the namespace `SICK::Target::`.
 Installing it is all it takes: `type: my-box` finds `SICK::Target::MyBox`

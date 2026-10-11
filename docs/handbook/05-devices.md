@@ -20,7 +20,7 @@ SICK's check caught both.
 | Cisco Small Business switch (SG300/SG500) | type `cisco-sb` (distribution SICK-Target-CiscoSB) | the switch has no ACME and no hook in acme.sh; the dialog over its CLI is the only way. Proven against a real switch in the lab (phase 1) |
 | Linux host with a web server, reached over SSH | type `acmesh`, hook `ssh` | the hook exists and is small; a SICK target of our own would add nothing but code. Proven against an sshd container |
 | MikroTik RouterOS | type `acmesh`, hook `routeros` | the hook exists; a target on `WWW::MikroTik` would need that module first. Proven against a real RouterOS CHR 7.24.5 in qemu |
-| Proxmox VE, Proxmox Backup Server | **native ACME** (chapter 4) where the CA can reach the node on port 80; otherwise `acmesh` with the hooks `proxmoxve` / `proxmoxbs` | native ACME keeps the API token out of SICK entirely. The hooks **do not verify the API's TLS certificate** and put the token on curl's command line (card k56); use them only over a network path you trust as much as the token. Hooks proven against a stand-in API; nothing tried on a real PVE/PBS |
+| Proxmox VE, Proxmox Backup Server | **native ACME** (chapter 4) where the CA can reach the node on port 80; otherwise types `proxmox-ve` / `proxmox-bs` (distribution SICK-Target-Proxmox) | native ACME keeps the API token out of SICK entirely. The acme.sh hooks do not verify the API's TLS certificate and put the token on curl's command line, so the maintainer decided for a device type of its own (k56), which always verifies. Proven by `sick run` against real PVE 9.2.21 and PBS 4.2.8 in containers |
 | Kubernetes Secret | **cert-manager in the cluster** (chapter 4); no SICK target | see below |
 | Dell iDRAC 7/8 | a future distribution SICK-Target-IDRAC on `WWW::iDRAC` | that module has no certificate functions yet; card k18 lists what SICK needs and what is open. Deferred |
 
@@ -184,8 +184,9 @@ evidence: [`docs/findings/device-routeros.md`](../findings/device-routeros.md).
   www-ssl presents the new certificate at the next connection. The hook does
   not enable www-ssl – that is setup.
 - **Check:** the port of www-ssl (443 unless moved). This matters more than
-  usual: RouterOS answers failures at run time with exit code 0, so
-  "Success" from the hook does not mean imported.
+  usual: RouterOS may answer a failure at run time with exit code 0 (seen in
+  four of five runs; once it was 1), so "Success" from the hook does not mean
+  imported.
 - **Way back:** none on the router – the hook removes the previous
   `<name>.cer_0` … `_3` before it imports. Keep another certificate on the
   router (one RouterOS made itself) to point www-ssl at in an emergency.
@@ -194,40 +195,63 @@ evidence: [`docs/findings/device-routeros.md`](../findings/device-routeros.md).
 
 ## Proxmox VE and Proxmox Backup Server
 
-Recipe: [`contrib/devices/proxmox/`](../../contrib/devices/proxmox/),
-evidence: [`docs/findings/device-proxmox.md`](../findings/device-proxmox.md).
+Recipe: [`contrib/devices/proxmox/`](../../contrib/devices/proxmox/); the
+device types and their documentation:
+[SICK-Target-Proxmox](https://github.com/Getty/sick-target-proxmox).
 
-**Recommendation: native ACME** (chapter 4) wherever the CA can reach the
-node on port 80 – the node renews by itself and SICK holds no token. Two
-things to know: PVE renews an ACME certificate once it expires within 30
-days (checked daily), so it uses the ACME provisioner `acme-long` with
-60-day certificates (chapter 4), not the 30-day `acme`. PBS renews at a third of the lifetime and fits.
+**Which way when:**
 
-**Otherwise the hooks**, as `acmesh` devices:
+1. **Native ACME** (chapter 4) wherever the CA can reach the node on port
+   80 under its name: the node renews by itself and SICK holds no token. PVE
+   uses the ACME provisioner `acme-long` (60-day certificates: PVE renews once
+   less than 30 days are left), PBS the 30-day `acme`.
+2. **SICK with `proxmox-ve` / `proxmox-bs`** when the CA cannot reach the
+   node (another network, no port 80), or when you want the node in SICK's
+   inventory, metrics and alerts. Decided by the maintainer on 2026-10-11
+   (card k56): a device type of its own instead of the acme.sh hooks.
+3. **Not** the acme.sh hooks `proxmoxve` / `proxmoxbs`: they do not verify
+   the API's TLS certificate and put the token on curl's command line
+   (`contrib/devices/proxmox/README.md`).
 
-- **Access:** PVE: `Sys.Modify` on `/nodes/<node>` – there is no smaller
-  privilege for the custom certificate, and it also covers the node's
-  network, DNS, time, APT and services. Keep it small: a user in the `pve`
-  realm without password, a role with `Sys.Modify` only, a
-  privilege-separated API token with an expiry, the ACL on the one node.
-  PBS: `Sys.Modify` on `/system/certificates`, which only the role `Admin`
-  holds – `Admin` on that path. (Commands in the recipe, from the manuals,
-  *not run*.) Set the realm explicitly (`DEPLOY_PROXMOXVE_USER_REALM=pve`):
-  both hooks default to `root@pam`.
-- **Secret:** the token secret in a file named in `env_files`; SICK hands it
-  to the hook through its environment only. **But** the hook puts it on
-  curl's command line during the call, and **does not verify the API's
-  TLS certificate** (`HTTPS_INSECURE=1`, cannot be switched off): the token
-  and the private key go to whatever answers at that address. Card k56.
-- **Restart:** PVE restarts pveproxy after the upload (the hook always
-  sends `restart=1`); PBS reloads its certificate within the call.
-- **Check:** port 8006 (PVE) or 8007 (PBS); one device per PVE node, with
-  `DEPLOY_PROXMOXVE_NODE_NAME` naming the same node as `host`.
-- **Way back:** delete the custom certificate (`DELETE
-  /api2/json/nodes/<node>/certificates/custom`, in the GUI *Certificates →
-  Delete custom certificate*): PVE falls back to the certificate of its
-  cluster CA, PBS makes a new self-signed one. Remove the device from the
-  list first, or the next run puts a new one in.
+```yaml
+devices:
+  pve1:
+    type: proxmox-ve
+    host: pve1.example.internal            # port 8006 by default
+    names: [pve1.example.internal]
+    node: pve1
+    token_id: sick@pve!sick
+    token_file: /etc/sick/secrets/pve1.token
+    ca: /etc/sick/secrets/pve-root-ca.pem  # the cluster CA, for the first upload
+```
+
+- **Access:** PVE: `Sys.Modify` on `/nodes/<node>` in a role of its own (no
+  smaller privilege exists; it also covers the node's services, network,
+  DNS, time, APT and firewall), a privilege-separated API token with an
+  expiry, two ACL lines. PBS: `Admin` on `/system/certificates`, the only
+  role holding `Sys.Modify` there. The commands are in the POD of
+  `SICK::Target::ProxmoxVE` / `ProxmoxBS`, run as written on PVE 9.2.21 and
+  PBS 4.2.8.
+- **Trust in the node:** always verified, no switch to turn it off. Once the
+  node presents our certificate, the roots of SICK's CA (handed to the
+  target by the run) cover it. For the **first** upload the node still
+  presents its own certificate: PVE's is signed by the cluster CA (`ca:
+  /etc/pve/pve-root-ca.pem`, copied over SSH with a known host key), PBS's is
+  self-signed (`fingerprint:` its SHA-256, taken on the host).
+- **Secret:** the token secret in `token_file` (one line, 0600); it goes into
+  the request header in memory, never into a command line or a message.
+- **Restart:** PVE restarts pveproxy after the upload – old and new
+  certificate alternate for a few seconds, which SICK's check after the
+  deployment waits out; PBS reloads its certificate within the call.
+- **Check:** port 8006 (PVE) or 8007 (PBS) – the types' default ports.
+- **Before the upload** the types check what would break the node: PBS
+  answers 200 to a key that does not belong to the certificate, writes it and
+  then no longer starts its proxy; a wrongly ordered chain stops pveproxy.
+  Both seen on real nodes (the distribution's `docs/api-notes.md`).
+- **Way back:** take the device out of the list, then delete the custom
+  certificate (GUI: *System → Certificates → Delete custom certificate*):
+  PVE presents `pve-ssl.pem` of the cluster CA again, PBS makes a new
+  self-signed one.
 
 ## Dell iDRAC 7/8
 
@@ -261,5 +285,6 @@ runs.
 | `t/e2e/run-local.sh` | step-ca 0.30.2, sick image | a `files` device renewed, checked on its port, a second run changes nothing | ALL PASSED | – |
 | `t/e2e/device-ssh.sh`, twice | debian trixie-20261005-slim (nginx 1.26.3, OpenSSH 10.0p1, sudo 1.9.16p2), step-ca 0.30.2, acme.sh 3.1.6 | renewed, port fingerprint = issued; second run unchanged; the account cannot write elsewhere or sudo anything else; unknown and changed host key refused, nothing written; unauthorized key refused; reload refused → old certificate on the port, backup restores; reload accepted but not taken → SICK fails the device; unreachable → nothing issued; forced-command variant renewed | 71 PASS each run | a real host outside Docker; Apache, HAProxy |
 | `t/e2e/device-routeros.sh` | stand-in on alpine 3.22 (OpenSSH 10.0p1); RouterOS CHR 7.24.5 in qemu 10.0.0 (TCG, no KVM); acme.sh 3.1.6 | stand-in: uploads and the exact command sequence recorded, no secret in any output, unknown host key refused, a failing script fails the device, an exit-0 non-import caught by the port check. CHR: missing → renewed, www-ssl presents the issued certificate, `cer_0` holds it with its key, nothing left on the router; second run unchanged; `--force` replaces; unknown host key refused; a group without `read` fails the device | 46 PASS; the CHR part three times | a physical router; RouterOS 6; a chain with an intermediate; an EC key; the ~4 s gap between `remove` and `set` |
-| `t/e2e/device-proxmox.sh`, twice | python 3.14.8-slim stand-in API, step-ca 0.30.2, acme.sh 3.1.6 | one upload per device with the recorded fields; port 8006/8007 presents the issued certificate; second run uploads nothing; wrong token (401), API error (500), API port closed, node down → device fails or unreachable, port unchanged; no token in any output; DELETE brings the self-signed certificate back | 73 PASS each run | everything against a real PVE or PBS; the `pveum` / `proxmox-backup-manager` commands; native ACME on PVE/PBS |
+| `../sick-target-proxmox/t/e2e/device-proxmox.sh` | real PVE 9.2.21 and PBS 4.2.8 in containers, the sick image with SICK-Target-Proxmox (IO::Socket::SSL 2.089, HTTP::Tiny 0.090) | `sick run` with `proxmox-ve` and `proxmox-bs`: first upload trusted by the cluster CA or a pin, later by the run's roots; second run uploads nothing; wrong anchor refused before any request; token in no output | 64–65 PASS; run against this repository's image (see below) | a node under systemd, a PVE cluster, a node over a real network – HQ checklist; native ACME on PVE/PBS |
+| the acme.sh hooks `proxmoxve` / `proxmoxbs` | – | – | earlier tested against a stand-in API that modelled Proxmox wrongly in eleven points; test removed, findings corrected (`docs/findings/device-proxmox.md`) | – |
 | `t/42-target-acmesh.t` (in `prove -lr t`) | acme.sh 3.1.6 | the `acmesh` mechanism with the hook `localcopy` | green | – |

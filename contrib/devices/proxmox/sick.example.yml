@@ -1,50 +1,39 @@
-# Proxmox VE and Proxmox Backup Server through the acme.sh deploy hooks
-# proxmoxve and proxmoxbs (acme.sh 3.1.6). Device entries for the device
-# list of SICK; the ca: part is the one of your list. Read README.md next to
-# this file first: these hooks do not verify the TLS certificate of the API
-# they send the token and the private key to.
+# Proxmox VE and Proxmox Backup Server with the device types of
+# SICK-Target-Proxmox (proxmox-ve, proxmox-bs; in the sick image since it
+# carries that distribution). Entries for the device list of SICK; the ca:
+# section at the top of the list is yours.
+#
+# The node's API is always verified: by the roots of SICK's CA (handed to
+# the target by the run) once the node presents our certificate, and for the
+# first upload by the node's own CA (`ca`, PVE: /etc/pve/pve-root-ca.pem) or a
+# pin of its current certificate (`fingerprint`, a fresh PBS). There is no
+# way to switch verification off.
 #
 # Each token secret is a file of its own, one line, mode 0600 (in the Docker
-# setup: docker/secrets/, mounted at /etc/sick/secrets). It is never written
-# into this list.
+# setup: docker/secrets/, mounted at /etc/sick/secrets). It goes into the
+# request header only, never into this list or a command line.
 #
-# The shape was run against the stand-in API of t/e2e/device-proxmox.sh,
-# not against a real PVE or PBS.
+# Run end to end against real PVE 9.2.21 and PBS 4.2.8 in containers
+# (../sick-target-proxmox, t/e2e/device-proxmox.sh).
 
 devices:
 
-  # One entry per PVE node: every node has its own certificate and its own
-  # pveproxy. The hook uploads to /nodes/<NODE_NAME>/certificates/custom;
-  # SICK then looks at host:port for the certificate it issued.
+  # One entry per PVE node: every node has its own certificate.
   pve1:
-    type: acmesh
-    hook: proxmoxve
-    host: pve1.example.internal
-    port: 8006
+    type: proxmox-ve
+    host: pve1.example.internal            # port 8006 by default
     names: [pve1.example.internal]
-    env:
-      DEPLOY_PROXMOXVE_SERVER: pve1.example.internal
-      DEPLOY_PROXMOXVE_SERVER_PORT: "8006"
-      DEPLOY_PROXMOXVE_NODE_NAME: pve1      # the node name, as in the GUI
-      DEPLOY_PROXMOXVE_USER: sick
-      DEPLOY_PROXMOXVE_USER_REALM: pve      # the default would be pam
-      DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick
-    env_files:
-      DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/secrets/pve1.token
+    node: pve1                             # the node name, as in the GUI
+    token_id: sick@pve!sick
+    token_file: /etc/sick/secrets/pve1.token
+    ca: /etc/sick/secrets/pve-root-ca.pem  # the cluster CA, for the first upload
 
-  # PBS has one certificate per host; the hook always uploads to the node
-  # "localhost". There is no NODE_NAME setting.
+  # PBS has one certificate per host.
   pbs1:
-    type: acmesh
-    hook: proxmoxbs
-    host: pbs1.example.internal
-    port: 8007
+    type: proxmox-bs
+    host: pbs1.example.internal            # port 8007 by default
     names: [pbs1.example.internal]
-    env:
-      DEPLOY_PROXMOXBS_SERVER: pbs1.example.internal
-      DEPLOY_PROXMOXBS_SERVER_PORT: "8007"
-      DEPLOY_PROXMOXBS_USER: sick
-      DEPLOY_PROXMOXBS_USER_REALM: pbs      # the default would be pam
-      DEPLOY_PROXMOXBS_API_TOKEN_NAME: sick
-    env_files:
-      DEPLOY_PROXMOXBS_API_TOKEN_KEY: /etc/sick/secrets/pbs1.token
+    token_id: sick@pbs!sick
+    token_file: /etc/sick/secrets/pbs1.token
+    fingerprint: 'AB:CD:...:EF'            # SHA-256 of its current self-signed
+                                           # certificate, taken on the host
