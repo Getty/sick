@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-11T00:45:33Z
+created: 2026-10-10T23:19:57Z
+id: 47
+priority: high
+started: 2026-10-10T23:36:16Z
+status: done
+tags:
+- acme
+- p6
+title: 'P6b ACME recipes in Compose: Traefik, Caddy, nginx with an ACME client'
+updated: 2026-10-11T00:45:45Z
+---
+
+Each obtains from the lab CA, renews inside the test with the port fingerprint changing, a name outside the policy is refused, a challenge for an uncontrolled name fails; enrollment authorization written per recipe; images pinned. Part of P6 (k16); binding 'done when': docs/roadmap.md, section P6.
+
+2026-10-11 sick-worker-compose: contrib/acme/{traefik,caddy,nginx} (config, compose.yml, README with enrollment authorization) + t/e2e/acme-services.sh/compose.acme.yml (project sick-e2e-acme, sick=1 on all, nothing published). Each part 31 PASS / 0 FAIL, two clean runs per part plus a rerun after kill -9. Renewal: Traefik certificatesDuration 720 (10d before expiry), Caddy renewal_window_ratio 0.3333 (default), acme.sh --days -10. Findings: Caddy 2.11.7 issues .internal names from its internal CA unless the site names an issuer, and global acme_ca+acme_ca_root identical to the site issuer folds the policy back -> recipe uses a per-site issuer snippet; acme.sh default --days 30 would renew a 30-day cert 1 day before expiry; step-ca 0.30.2 has no renewalInfo (no ARI); step-ca reports a 404 from the target as error type 'connection'. prove -lr t green, no skips.
+
+Committed as f03a9ad
