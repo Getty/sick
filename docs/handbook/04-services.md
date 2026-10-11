@@ -82,7 +82,7 @@ it on port 80 (http-01) or 443 (tls-alpn-01).
 | Service | Challenge | The root goes | Renews | CA down: lasts | Recipe |
 |---|---|---|---|---|---|
 | Traefik v3.7 | http-01 (port 80), or tls-alpn-01 | `caCertificates` in `traefik.yml`, for the CA connection only | by `certificatesDuration: 720` – 10 days before the end, checked every 12 h (Traefik ignores the real lifetime) | about 10 days | [contrib/acme/traefik](../../contrib/acme/traefik/) |
-| Caddy 2.11 | http-01 / tls-alpn-01 (Caddy picks) | `acme_ca_root` in the site's issuer | when a third is left (`renewal_window_ratio`, default 1/3) | about 10 days | [contrib/acme/caddy](../../contrib/acme/caddy/) |
+| Caddy 2.11 | http-01 / tls-alpn-01 (Caddy picks) | `trusted_roots` in the `issuer acme` of the site's snippet | when a third is left (`renewal_window_ratio`, default 1/3) | about 10 days | [contrib/acme/caddy](../../contrib/acme/caddy/) |
 | nginx + acme.sh 3.1.6 | http-01 (webroot) | `--ca-bundle` of acme.sh | `--days -10` – 10 days before the end (the default 30 would renew a 30-day certificate one day before it expires) | about 10 days | [contrib/acme/nginx](../../contrib/acme/nginx/) |
 | cert-manager v1.21 (ACME `ClusterIssuer`) | http-01 through an Ingress | `caBundle` of the issuer | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
 | cert-manager + step-issuer 0.11 | none: a JWK provisioner of its own | `caBundle` of the `StepClusterIssuer` | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
@@ -108,8 +108,8 @@ lifetime.
 `.local`, `.home.arpa` and `localhost` from its *own* internal CA unless the
 site names an issuer – and if the global `acme_ca` matches the site's
 issuer, it folds the site's policy into the global one and drops the
-names. The recipe therefore uses a snippet (`import stepca`) per site with
-`acme_ca` and `acme_ca_root` inside, and no global `acme_ca`. Caddy renews
+names. The recipe therefore uses a snippet (`import stepca`) per site with an
+`issuer acme { dir …; trusted_roots … }` inside, and no global `acme_ca`. Caddy renews
 at a third of the remaining lifetime by default, which fits any lifetime.
 
 ### nginx with acme.sh

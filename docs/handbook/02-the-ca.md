@@ -137,12 +137,14 @@ docker run --rm --network none -v /media/offline:/work:ro -v /media/pwstick:/pw:
 (with `step` and `openssl` on the laptop, the two commands inside the quotes
 work as they are, with the host paths).
 
-Both lines must print the same sum (and the same again for the copy). Keep
+Both lines must print the same sum – and the same again for the copy: mount
+the second medium's `root/` over `/work/root` (`-v /media/copy/root:/work/root:ro`)
+and run the first line again. Keep
 `for-the-ca/root_ca.crt` and `for-the-ca/intermediate_ca.crt` (public) on the
 root medium as well: the next intermediate renewal needs them. Then store the
 two key media and the password medium in three places, and wipe any working
 copy of `for-the-ca/intermediate_ca_key` and `password` once the CA has
-imported them.
+imported them (after the first start, next section).
 
 ### On a YubiKey or an HSM instead of a file
 
@@ -190,7 +192,9 @@ init-ca: configuration updated: 'sick' grants up to 19800h, serverAuth only, nam
 init-ca: root fingerprint (SHA-256): 9c3289606dff96f99812f9cf9f90a499b4d32b674234de2212218ecb47d74a4c
 ```
 
-The root fingerprint must be the one of the ceremony. (`SICK_CA_PORT` and
+The root fingerprint must be the one of the ceremony. Now wipe
+`for-the-ca/intermediate_ca_key` and `password` from the offline media: the
+CA holds them. (`SICK_CA_PORT` and
 `SICK_TRUST_PORT` take `address:port` or a port alone, which publishes on
 all interfaces; put a firewall in front of 9000 either way, chapter 4.
 Comparing fingerprints: `openssl x509 -fingerprint -sha256` prints them with
@@ -363,11 +367,23 @@ with the old key is refused (HTTP 401).
 
 Check it with the issuing command of "What the CA will and will not issue"
 above: it issues with the new password the `sick` container now has. To see
-the old one refused, save it **before** rotating (`docker compose exec -T
-sick cat /etc/sick/ca/provisioner.pw > old.pw`, then `chmod 644 old.pw` so
-the container's user can read it, and delete it after the check), mount it
-into the same command and use it as `--password-file`: the CA answers
-`failed to decrypt JWE: invalid password`.
+the old one fail, save it **before** rotating, in a private directory, and
+delete it after the check:
+
+```bash
+mkdir -m 700 ~/rot && docker compose exec -T sick cat /etc/sick/ca/provisioner.pw > ~/rot/old.pw
+chmod 711 ~/rot && chmod 644 ~/rot/old.pw              # the container's user must read it
+docker compose run --rm -v ~/rot/old.pw:/old.pw:ro --entrypoint sh sick -c 'cd /tmp && \
+  step ca certificate www.example.internal c.crt c.key --ca-url https://ca.example.internal:9000 \
+  --root /etc/sick/ca/root_ca.crt --provisioner sick --password-file /old.pw'
+rm -r ~/rot
+```
+
+It ends in `failed to decrypt JWE: invalid password` – step can no longer
+open the provisioner key with it. (That the CA itself refuses a token signed
+with the old key, HTTP 401, the container test shows.) The rotation prints
+`rotated provisioner 'sick': key … replaces key …`, `handed over
+provisioner.pw` and `step-ca reloads its configuration (SIGHUP)`.
 
 Rotate after anyone who had access to the CA volume or the `sick` container
 leaves, and whenever the password may have been seen.
@@ -427,7 +443,10 @@ previous intermediate`. Wipe `new-intermediate/intermediate_ca_key` and
 there by `new-intermediate/intermediate_ca.crt` – the next renewal follows
 the current intermediate.
 
-Publish the page now rather than at the next scheduled run (up to a day):
+During the overlap the page offers the intermediates as `intermediate_ca_1.*`
+and `intermediate_ca_2.*` (and both in `intermediate_ca.pem` and
+`ca_bundle.pem`); `intermediate_ca.crt` comes back after the retire. Publish
+the page now rather than at the next scheduled run (up to a day):
 
 ```bash
 docker compose run --rm sick sick trust /srv/trust
@@ -470,6 +489,7 @@ to overwrite a key anyway), from the directory that holds the `sick`
 checkout:
 
 ```bash
+mkdir -p /media/offline/root2 && chmod 700 /media/offline/root2
 (umask 077; openssl rand -base64 32 > /media/pwstick/root2.pw)
 docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$PWD/sick/docker/ceremony.sh:/ceremony.sh:ro" \
@@ -481,13 +501,16 @@ docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
   --dns example.internal --ip 192.0.2.0/24
 ```
 
-Write its root fingerprint down, as for the first. Put the new root where the
-`sick` service can read it – the secrets directory is mounted already; a
-root is public, so mode 0644 – and announce it:
+Handle its output as for the first: write the root fingerprint down, copy
+`root2/root_ca_key` to the second medium and compare the public keys (the
+command of "The ceremony", with `root2` and `for-the-ca-2`), keep
+`for-the-ca-2/*.crt` on both media. Put the new root where the `sick`
+service can read it – the secrets directory is mounted already and owned by
+root; a root is public, so mode 0644 – and announce it:
 
 ```bash
 cd sick/docker
-install -m 0644 /media/offline/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
+sudo install -m 0644 -o root /media/offline/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
 # in sick.yml, ca section:   additional_roots: [/etc/sick/secrets/root_ca_2.crt]
 docker compose up -d --force-recreate sick          # it reads sick.yml at start
 docker compose run --rm sick sick trust /srv/trust
@@ -502,7 +525,7 @@ Wait until the clients that matter have it.
 volume stays, unused, for a planned rollback:
 
 ```bash
-install -m 0644 /media/offline/for-the-ca/root_ca.crt secrets/root_ca_old.crt
+sudo install -m 0644 -o root /media/offline/for-the-ca/root_ca.crt secrets/root_ca_old.crt
 # .env:     SICK_CA_IMPORT=/media/offline/for-the-ca-2
 # sick.yml: additional_roots: [/etc/sick/secrets/root_ca_old.crt]
 docker compose stop ca
@@ -514,14 +537,27 @@ docker compose -f compose.yml -f compose.ca-next.yml run --rm sick sick trust /s
 ```
 
 `ca.root` follows the handover to the new root; every device gets a
-certificate of the new hierarchy (`renewed forced`). Clients change nothing –
+certificate of the new hierarchy (`renewed forced` – with no device yet,
+the table stays empty; devices come in chapter 5). Wipe
+`for-the-ca-2/intermediate_ca_key` and `password` from the offline media now
+that the CA has imported them. Note that the file names on the trust page
+follow the roles: from phase B on `root_ca.*` is the **new** root and
+`root_ca_2.*` the old one – the fingerprints on the page say which is
+which. Clients change nothing –
 they trust both roots. From now on every `docker compose` command names
 `compose.ca-next.yml`; without it Compose goes back to the old volume.
 
 **Phase C, retire** – when every device presents the new hierarchy
-(`sick inventory --live`): empty `additional_roots`, recreate `sick`, run
-`sick trust`, and have clients remove the old root (chapter 3, "Taking trust
-away"). Then the old volume can go.
+(`sick inventory --live`): set `additional_roots: []` in `sick.yml`,
+recreate `sick`, run `sick trust`, and have clients remove the old root
+(chapter 3, "Taking trust away"). Then the old volume can go (`docker volume
+rm sick_ca`, the project's `_ca` volume – keep its last backup until you are
+sure), and so can `secrets/root_ca_2.crt` and `secrets/root_ca_old.crt`.
+Point `SICK_CA_IMPORT` in `.env` at `for-the-ca-2`, so the file says what the
+CA is built on, and back up the new volume (`./ca-backup.sh backup --volume
+sick_ca-next --to …`). Clients remove the old root with a script from a page
+**from before phase A**, or by file name – the phase-A scripts carry both
+roots.
 
 **Rollback.** In a *planned* replacement, going back is starting without
 `compose.ca-next.yml` (the old CA is back), pointing `additional_roots` at

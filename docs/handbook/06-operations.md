@@ -73,11 +73,15 @@ systemctl list-timers sick.timer
 - A failure starts `sick-notify@sick.service`, which sends that run's
   journal lines.
 - To check the units before installing them, `systemd-analyze verify` needs
-  them in a root where `/usr/local/bin/sick` exists: copy
-  `/usr/lib/systemd/system`, the three units, a stub `sick` and
-  `sick-notify` into a temporary directory and run `systemd-analyze verify
-  --root=<dir> sick.service sick.timer sick-notify@sick.service` (no
-  output, exit 0).
+  them in a root where `/usr/local/bin/sick` exists:
+
+  ```bash
+  d=$(mktemp -d); mkdir -p $d/usr/lib/systemd $d/etc/systemd/system $d/usr/local/bin
+  cp -r /usr/lib/systemd/system $d/usr/lib/systemd/
+  cp contrib/systemd/sick.service contrib/systemd/sick.timer 'contrib/systemd/sick-notify@.service' $d/etc/systemd/system/
+  cp contrib/notify/sick-notify $d/usr/local/bin/; printf '#!/bin/sh\n' > $d/usr/local/bin/sick; chmod 755 $d/usr/local/bin/*
+  systemd-analyze verify --root=$d sick.service sick.timer sick-notify@sick.service   # no output, exit 0
+  ```
 - The service is sandboxed (`ProtectSystem=strict`, no capabilities,
   `systemd-analyze security` 3.4). A `files` device needs its directory
   added with a drop-in: `ReadWritePaths=/srv/certs/grafana`.
@@ -101,11 +105,14 @@ has no terminal; Compose's own messages go to `/dev/null` so that only
 SICK's output reaches the notification):
 
 ```cron
-17 4 * * *  admin  cd /srv/sick/docker && docker compose run --rm -T sick sick run >/var/tmp/sick-run.log 2>/dev/null || [ $? -eq 3 ] || sick-notify "sick run failed" </var/tmp/sick-run.log; docker compose run --rm -T sick sick check --format prometheus 2>/dev/null >/var/lib/prometheus/node-exporter/sick.prom.tmp && mv /var/lib/prometheus/node-exporter/sick.prom.tmp /var/lib/prometheus/node-exporter/sick.prom
+17 4 * * *  admin  cd /srv/sick/docker && docker compose run --rm -T sick sick run >/var/tmp/sick-run.log 2>/dev/null || [ $? -eq 3 ] || sick-notify "sick run failed" </var/tmp/sick-run.log; docker compose run --rm -T sick sick check --format prometheus 2>/dev/null >/var/lib/prometheus/node-exporter/sick.prom.tmp; [ -s /var/lib/prometheus/node-exporter/sick.prom.tmp ] && mv /var/lib/prometheus/node-exporter/sick.prom.tmp /var/lib/prometheus/node-exporter/sick.prom
 ```
 
 (`--output` cannot write outside the container's read-only file system;
-standard output and a rename on the host do the same.)
+standard output and a rename on the host do the same. The file is moved
+whatever the exit code – `sick check` exits 1 exactly when a device is
+unreachable, which is when the metrics matter. On the host, install
+`sick-notify` and `/etc/sick/notify.conf` as in the systemd block above.)
 
 ## Notification when a run fails
 
@@ -165,9 +172,15 @@ The alert rules in
 | `SickCheckStale` | the file is older than 2 days | the schedule itself stopped |
 
 Check the rules before you load them, with promtool from the Prometheus
-image: `promtool check rules sick-alerts.yml` and `promtool test rules
-sick-alerts.test.yml` (synthetic series for every rule, in the same
-directory) – both print `SUCCESS`.
+image (in `contrib/prometheus`):
+
+```bash
+docker run --rm --entrypoint promtool -v "$PWD:/r:ro" -w /r prom/prometheus:v3.15.0 check rules sick-alerts.yml
+docker run --rm --entrypoint promtool -v "$PWD:/r:ro" -w /r prom/prometheus:v3.15.0 test rules sick-alerts.test.yml
+```
+
+Both print `SUCCESS` (`sick-alerts.test.yml` holds synthetic series for
+every rule).
 
 The thresholds are relative to each device's `renew_before`, not a fixed
 number of days: a fixed 30 days means nothing for a certificate that lives
@@ -191,7 +204,9 @@ sick inventory --live           # and a look at every device
 sick inventory --format json
 ```
 
-Per device: the names, issuer, serial and fingerprint of the certificate
+Per device: the status of the last run (without `--live` it is what the
+records say, which may be older than the device's present state), the names,
+issuer, serial and fingerprint of the certificate
 issued last, the `owner` if the device list names one, until when, when it was deployed and when a run last saw the
 device present it; with `--live`, whether the device presents it right now
 (and then, like `sick check`, exit 1 when a device could not be checked).

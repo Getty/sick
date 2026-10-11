@@ -76,13 +76,20 @@ Watch `SickCAUnreachable` (chapter 6): it fires after half an hour.
 3. Volume lost or damaged: restore the last backup (chapter 2, "Backup and
    a restore drill"), in `sick/docker`:
 
+   Put the manifest you keep apart from the archive back next to it as
+   `<archive>.manifest` first (compare it with your other copy) – without it
+   nothing is restored.
+
    ```bash
    docker compose create ca
    ./ca-backup.sh restore --from /safe/ca-<date>.tar --volume sick_ca
    docker compose up -d
    docker compose logs ca | grep 'root fingerprint'     # = the one you wrote down
-   docker compose run --rm sick sick check
    ```
+
+   Then prove that the CA issues again – the "Try it" command of chapter 2,
+   or `docker compose run --rm sick sick run --force <device>` – since
+   `sick check` only looks at the devices and works without the CA.
 
    Certificates issued after that backup are missing from the database and
    stay valid.
@@ -183,7 +190,9 @@ off for clients. Keep the order.
    intermediate out by its nickname instead:
    `certutil -D -d sql:<db> -n 'sick intermediate <first 16 hex digits of its SHA-256>'`.
    Keep a copy of the old page before you regenerate it.
-7. **Backups:** take a new one now (chapter 2). **Every backup from before
+7. **Backups:** take a new one now (chapter 2); check the rotation in its
+   output (`rotated provisioner 'sick': key … replaces key …` – two
+   different key IDs). **Every backup from before
    step 3 holds the stolen key and the old provisioner – destroy them, and
    never restore one.** Wipe the old `for-the-ca/intermediate_ca_key` and
    `password` on the offline media and the key and password in
@@ -191,7 +200,14 @@ off for clients. Keep the order.
    records), and replace `for-the-ca/intermediate_ca.crt` by the new one:
    the next renewal follows the current intermediate.
 8. **Root replacement** (compromise variant, chapter 2), unless you accept
-   the window until the old intermediate expires.
+   the window until the old intermediate expires. After its phase C: the CA
+   runs on the volume `<project>_ca-next` – back that one up
+   (`./ca-backup.sh backup --volume sick_ca-next --to …`) and destroy every
+   backup of the old volume. Clients remove the old root with a script from
+   a page **from before phase A** (it carries the old root alone) or by its
+   file name (`sick-root-<first 16 hex digits>`, chapter 3) – a script from
+   the phase-A page carries both roots, and its `remove` would take the new
+   one out too.
 
 How long that window is: the intermediate's lifetime (5 years by default,
 chapter 1). A shorter intermediate shortens it, at the cost of more frequent

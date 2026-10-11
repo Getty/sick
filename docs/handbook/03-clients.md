@@ -67,7 +67,9 @@ accepted, after remove refused again:
 ```bash
 curl -fsS https://ca.example.internal:9000/health        # Linux system store
 certutil -L -d sql:<db>                                  # NSS: the root with C,,
-``` No script restarts anything; each tells you what still needs a
+```
+
+No script restarts anything; each tells you what still needs a
 restart.
 
 | Script | Where it puts what |

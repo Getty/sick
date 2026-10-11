@@ -106,7 +106,10 @@ unprivileged worker):
 
 ```bash
 cd sick/docker
-# put the web: entry of ../contrib/devices/files-nginx/sick.yml under devices: in sick.yml
+# put the web: entry of ../contrib/devices/files-nginx/sick.yml under devices: in sick.yml,
+# then recreate the sick service, which reads sick.yml at start (chapter 2):
+docker compose up -d --force-recreate sick
+curl -fsS -o root_ca.pem http://127.0.0.1:8080/root_ca.pem   # compare its fingerprint with the ceremony's
 docker compose -f compose.yml -f ../contrib/devices/files-nginx/compose.yml up -d web
 docker compose run --rm sick sick check web
 docker compose run --rm sick sick run web
@@ -119,7 +122,9 @@ fingerprint – `root_ca.crt` is the same certificate as DER, which curl does
 not read; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). Compose
 warns about "orphan containers" (`web`) when a command does not name the
 device's file: that is expected – do **not** follow its hint
-`--remove-orphans`, which would remove the device. A TLS service that cannot start without a certificate would be
+`--remove-orphans`, which would remove the device. On a Debian or Ubuntu
+host curl also reads `/etc/ssl/certs` beside `--cacert` (chapter 3); add
+`--capath /dev/null` there to make it a check with the root alone. A TLS service that cannot start without a certificate would be
 `unreachable` instead of `missing`, and SICK does not issue for an
 unreachable device.
 
