@@ -1,0 +1,28 @@
+---
+class: standard
+created: 2026-10-10T06:23:47Z
+id: 18
+priority: low
+status: backlog
+tags:
+- targets
+- deferred
+title: 'Deferred: SICK-Target-IDRAC on WWW::iDRAC (iDRAC 7/8)'
+updated: 2026-10-11T02:01:45Z
+---
+
+Needs WWW::iDRAC on CPAN (it lives in the hub) and a reachable iDRAC. Needed from WWW::iDRAC: login/session, upload of certificate and key (or CSR generation with SANs), reset of the web server, read-back of the presented certificate. Do not start before both exist. Package, result and 'done when': docs/roadmap.md, section P7 Devices that cannot.
+
+Sharpened 2026-10-11 (orchestrator). Status: WWW::iDRAC exists as phase 1 in its own repository (Redfish: inventory, sensors, logs, power; run against real iDRAC 7 and 8), not on CPAN, no certificate functions yet.
+What SICK needs from WWW::iDRAC (a SICK-Target-IDRAC dist built on it, own repository, created by the hub):
+1. a session/login with credentials read from a file (no secret in argv or messages);
+2. ONE of: (a) upload of key and certificate (+ chain if the iDRAC takes one) for the web server, or (b) CSR generation on the iDRAC with the names SICK asks for (CN plus SANs) and upload of the signed certificate - SICK prefers (b) only if the CSR carries SANs (cf. the Cisco finding: a CSR with CN only is useless);
+3. a reset/restart of the iDRAC web server (or the whole iDRAC) after the upload, with a way to wait until it answers again;
+4. nothing else: SICK checks success itself by the fingerprint on port 443 (verify_timeout long enough for an iDRAC reset, likely minutes).
+Open questions to settle against the real iDRAC 7 and 8 before building:
+- which firmware levels expose certificate import over Redfish (Dell OEM actions such as DelliDRACCardService ImportSSLCertificate) vs only racadm/WS-Man (sslcertupload/sslkeyupload/sslcsrgen) on iDRAC 7/8;
+- whether the iDRAC 7/8 CSR can carry SANs, and which key types/sizes the web server accepts (RSA 2048 likely);
+- whether a chain can be uploaded or the iDRAC presents the leaf alone (then clients need ca_bundle.pem, chapter 3);
+- how long a reset takes and whether the upload alone already activates the certificate;
+- the minimum iDRAC privilege for certificate management (Configure iDRAC?).
+Done when (later): the module offers 1-3, a live test against a lab iDRAC (opt-in variables like t/90-live.t in ciscosb), recipe in handbook chapter 5. Deferred until WWW::iDRAC has 1-3 and a device is reachable.
