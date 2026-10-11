@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-11T00:47:27Z
+created: 2026-10-10T23:20:19Z
+id: 49
+priority: high
+started: 2026-10-11T00:46:31Z
+status: done
+tags:
+- acme
+- p6
+title: 'P6d Handbook chapter 4: services that speak ACME, Proxmox VE recipe (not tried)'
+updated: 2026-10-11T00:47:38Z
+---
+
+Chapter 4 with a table per service (challenge, where the root goes, how it renews, what happens when the CA is down and for how long), enrollment authorization, lab vs real network, Proxmox VE recipe marked not tried, test report against the committed state. Part of P6 (k16); binding 'done when': docs/roadmap.md, section P6.
+
+Committed as 03ef482
