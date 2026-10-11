@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-11T07:12:07Z
+created: 2026-10-11T05:49:19Z
+id: 64
+priority: medium
+started: 2026-10-11T07:10:27Z
+status: done
+tags:
+- docs
+- handbook
+- proxmox
+- hq
+title: 'HQ checklist: proxmox-ve and proxmox-bs on a real node'
+updated: 2026-10-11T07:12:18Z
+---
+
+Add to docs/handbook/hq-checklist.md the entries for the native device types (replacing or next to the hook entries at lines 73-79): the steps and pass criteria are in ../sick-target-proxmox docs/hq-checklist.md. From SICK-Target-Proxmox (../sick-target-proxmox, card #6 there).
+
+Committed as 9011657
