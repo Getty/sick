@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-10-11T08:14:21Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-10-11T10:13:36Z
+created: 2026-10-11T08:10:31Z
+id: 68
+priority: high
+started: 2026-10-11T08:14:21Z
+status: done
+tags:
+- handbook
+- p9
+title: 'P9b Drills from the text alone: restore the CA, compromised intermediate'
+updated: 2026-10-11T10:13:36Z
+---
+
+Two agents without prior knowledge run the drills from chapters 2 and 7 only. Part of P9 (k20); binding: docs/roadmap.md section P9 and the hub's brief of 2026-10-11.
+
+Done. Restore and compromised-intermediate drills from text alone, rounds 1-5. Round 1 found the compromise procedure wrong in substance (fixed: only root replacement cuts a stolen intermediate off); rounds 4-5 passed, round 5 without a guess.
