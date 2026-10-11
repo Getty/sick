@@ -8,7 +8,7 @@ use SICK::Decision;
 use SICK::Target;
 use Time::HiRes ();
 use Time::Local qw( timegm );
-use Types::Standard qw( CodeRef HasMethods Maybe Num Str );
+use Types::Standard qw( ArrayRef CodeRef HasMethods Maybe Num Str );
 use namespace::autoclean;
 
 our $VERSION = '0.001';
@@ -70,6 +70,12 @@ SHA-256 fingerprint. A device may take a moment for that - see
 L<SICK::Target/verify_timeout>.
 
 =back
+
+Every target is made with the roots of the CA as
+L<SICK::Target/trust_roots>: L<SICK::Issuer/root_pem> first, then
+L<SICK::Issuer/additional_roots_pem>, one certificate each - in L</run> and
+in L</check> alike. An additional root that cannot be read fails every
+device, like a root or intermediates file that cannot be read.
 
 Whatever goes wrong with one device is the result for that device and does
 not stop the others. The key of a new certificate exists in memory, and as a
@@ -421,11 +427,26 @@ sub _intermediates_pem {
   return $self->issuer->intermediates_pem;
 }
 
+# The root first, then the additional roots, one certificate each: what a
+# target may verify the device by (SICK::Target/trust_roots). Asked for once
+# per runner, like the root; a failure is reported for every device.
+has _trust_roots => ( is => 'lazy', isa => ArrayRef [Str], init_arg => undef );
+
+sub _build__trust_roots {
+  my ( $self ) = @_;
+  my $additional = $self->issuer->can('additional_roots_pem') ? $self->issuer->additional_roots_pem : undef;
+  return [ map { $_."\n" } map { /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/sg } grep { defined } $self->_root_pem, $additional ];
+}
+
 sub _target {
   my ( $self, $device ) = @_;
   my $name   = $device->name;
   my $class  = SICK::Target->class_for( $device->type );
-  my $target = $class->new( device => $device, log => sub { $self->_log( $name.': '.$_[0] ) } );
+  my $target = $class->new(
+    device      => $device,
+    log         => sub { $self->_log( $name.': '.$_[0] ) },
+    trust_roots => $self->_trust_roots,
+  );
   $target->validate;
   return $target;
 }

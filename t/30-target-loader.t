@@ -48,6 +48,15 @@ sub new    { bless {}, shift }
 sub deploy { 1 }
 1;
 PERL
+  'Hypervisor.pm' => <<'PERL',
+package SICK::Target::Hypervisor;
+use strict;
+use warnings;
+use parent 'SICK::Target';
+sub default_port { 8006 }
+sub deploy { 1 }
+1;
+PERL
   'Broken.pm' => <<'PERL',
 package SICK::Target::Broken;
 use strict;
@@ -131,6 +140,14 @@ subtest 'classes that are no targets are rejected' => sub {
   $ok = eval { SICK::Target->class_for('broken'); 1 };
   ok !$ok, 'a module that does not compile is rejected';
   like $@, qr/^cannot load SICK::Target::Broken for type 'broken': \S/, '... with the reason';
+  ( my $first = $@ ) =~ s/ at \S+ line [0-9]+\.\n\z//;
+
+  # perl refuses a second require of a file that did not compile with a
+  # message of its own; the reason of the first attempt is what counts
+  $ok = eval { SICK::Target->class_for('broken'); 1 };
+  ok !$ok, 'asked again, it is rejected again';
+  ( my $again = $@ ) =~ s/ at \S+ line [0-9]+\.\n\z//;
+  is $again, $first, '... with the same reason';
 };
 
 subtest 'new, device, option and log' => sub {
@@ -172,6 +189,42 @@ subtest 'defaults of the base class' => sub {
   my $ok = eval { $base->deploy; 1 };
   ok !$ok, 'deploy of the base class dies';
   like $@, qr/^SICK::Target does not implement deploy/, '... saying so';
+};
+
+subtest 'the port of a type' => sub {
+  is( SICK::Target->default_port, 443, 'the default port of the base class is 443' );
+  is( SICK::Target->class_for('hypervisor')->default_port, 8006, 'a type names its own' );
+
+  my $unset = device( type => 'hypervisor' );
+  ok !$unset->has_port, 'a device without port has none set';
+  is_deeply [ SICK::Target::Hypervisor->new( device => $unset )->endpoint ], [ 'box.example.internal', 8006 ],
+    'endpoint without port: the default port of the type';
+  is_deeply [ SICK::Target::CiscoSB->new( device => device() )->endpoint ], [ 'box.example.internal', 443 ],
+    '... 443 for a type that names none';
+
+  my $set = device( type => 'hypervisor', port => 443 );
+  ok $set->has_port, 'port: 443 is a port that was set';
+  is_deeply [ SICK::Target::Hypervisor->new( device => $set )->endpoint ], [ 'box.example.internal', 443 ],
+    '... and wins over the default of the type';
+  is_deeply [ SICK::Target::Hypervisor->new( device => device( type => 'hypervisor', port => 8443 ) )->endpoint ],
+    [ 'box.example.internal', 8443 ], 'so does any other port';
+};
+
+subtest 'trust_roots' => sub {
+  my $target = SICK::Target::CiscoSB->new( device => device() );
+  is_deeply $target->trust_roots, [], 'none unless given';
+
+  my @roots = ( "-----BEGIN CERTIFICATE-----\nMA==\n-----END CERTIFICATE-----\n",
+    "-----BEGIN CERTIFICATE-----\nMQ==\n-----END CERTIFICATE-----\n" );
+  my $given = SICK::Target::CiscoSB->new( device => device(), trust_roots => [@roots] );
+  is_deeply $given->trust_roots, \@roots, 'as given, in their order';
+  push @{ $given->trust_roots }, 'something else';
+  is_deeply $given->trust_roots, \@roots, 'a copy every time: changing it changes nothing in the target';
+
+  for my $bad ( 'a string', [ undef ], [ [] ], { root => 1 } ) {
+    ok !eval { SICK::Target::CiscoSB->new( device => device(), trust_roots => $bad ); 1 }, 'dies for trust_roots that are no list of PEM texts';
+    like $@, qr/^SICK::Target::CiscoSB->new: trust_roots must be a list of PEM certificates/, '... saying so, without the value';
+  }
 };
 
 subtest 'validate' => sub {

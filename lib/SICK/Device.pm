@@ -15,7 +15,8 @@ our $VERSION = '0.001';
     $device->name;            # 'switch'
     $device->type;            # 'cisco-sb'
     $device->host;            # '192.0.2.199', or undef
-    $device->port;            # 443
+    $device->port;            # 443, or the default port of the type
+    $device->has_port;        # true only when the entry sets port
     $device->names;           # [ 'switch.example.internal', '192.0.2.199' ]
     $device->lifetime;        # 34300800 (seconds)
     $device->renew_before;    # 2592000 (seconds)
@@ -44,7 +45,8 @@ around BUILDARGS => sub {
   croak 'SICK::Device->new needs names as a non-empty array reference'
     unless ref $arg{names} eq 'ARRAY' && @{ $arg{names} };
   $arg{names} = [ @{ $arg{names} } ];
-  delete $arg{port}    unless defined $arg{port};
+  delete $arg{port}         unless defined $arg{port};
+  delete $arg{default_port} unless defined $arg{default_port};
   delete $arg{owner}   unless defined $arg{owner};
   delete $arg{options} unless $arg{options};
   return \%arg;
@@ -61,10 +63,13 @@ around BUILDARGS => sub {
       key          => 'rsa2048',
       owner        => 'Monitoring',
       options      => { dir => '/srv/certs/grafana' },
+      default_port => 443,
     );
 
 Takes the values exactly as the accessors return them; C<host>, C<port>,
-C<owner> and C<options> are optional. Nothing is parsed or normalized here - that is the
+C<owner>, C<options> and C<default_port> are optional. C<port> is the port
+the entry sets, C<default_port> the one of the device type
+(L<SICK::Target/default_port>), C<443> when not given. Nothing is parsed or normalized here - that is the
 work of L<SICK::Config/load>.
 
 =cut
@@ -72,7 +77,10 @@ work of L<SICK::Config/load>.
 has name         => ( is => 'ro', isa => Str,           required => 1 );
 has type         => ( is => 'ro', isa => Str,           required => 1 );
 has host         => ( is => 'ro', isa => Maybe[Str] );
-has port         => ( is => 'ro', isa => Int,           default  => 443 );
+# Private: port is the method below, the one of the entry or the default
+# of the type; has_port tells the two apart.
+has _port        => ( is => 'ro', isa => Int,           init_arg => 'port', predicate => 'has_port' );
+has default_port => ( is => 'ro', isa => Int,           default  => 443 );
 has _names       => ( is => 'ro', isa => ArrayRef[Str], required => 1, init_arg => 'names' );
 has lifetime     => ( is => 'ro', isa => Int,           required => 1 );
 has renew_before => ( is => 'ro', isa => Int,           required => 1 );
@@ -81,6 +89,8 @@ has owner        => ( is => 'ro', isa => Maybe[Str] );
 has options      => ( is => 'ro', isa => HashRef,       default  => sub { {} } );
 
 sub names { [ @{ shift->_names } ] }
+
+sub port { $_[0]->has_port ? $_[0]->_port : $_[0]->default_port }
 
 =attr name
 
@@ -95,9 +105,22 @@ L<SICK::Target/class_for>.
 
 Where the device is reached, or C<undef> when the entry has no C<host>.
 
-=attr port
+=method port
 
-The TLS port of the device. Defaults to C<443>.
+The TLS port of the device: the C<port> of the entry, or L</default_port>
+when it has none.
+
+=method has_port
+
+True when the entry sets C<port>, also C<port: 443>; false when L</port> is
+the default. For a target that has to tell a port somebody chose from one
+nobody chose.
+
+=attr default_port
+
+The port of a device of this type without C<port>: what
+L<SICK::Target/default_port> of its class answers, as L<SICK::Config> found
+it. C<443> when not given.
 
 =method names
 

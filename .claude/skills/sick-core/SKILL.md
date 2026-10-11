@@ -61,12 +61,21 @@ in `@INC`. `class_for` is the one place a module is loaded at run time.
 | `validate` | checks those | an override calls `$self->SUPER::validate` first; croaks with `$device->path` |
 | `csr($spec)` | `undef` | PEM when the device makes its own key; the bundle handed to `deploy` then has no key |
 | `presented_cert` | `openssl s_client` | the three outcomes above |
-| `endpoint` | `host` or first name, `port` | where `presented_cert` connects |
+| `endpoint` | `host` or first name, `port` or `default_port` | where `presented_cert` connects |
+| `default_port` | `443` | class method; the port of a device without `port`. `SICK::Config` asks it through `class_for` for `Device::port`, so a type whose devices listen elsewhere (Proxmox: 8006) need not have every entry repeat it |
+| `trust_roots` | `[]` | attribute set by the Runner in `run` and `check`: issuer root first, then the additional roots, one PEM certificate each. For a target that verifies the device before it sends a secret; once the device presents our certificate, these are what it chains to. No intermediates: `deploy` has them in `$bundle->chain`. The core uses them for nothing else |
 | `connect_timeout` | `10` | seconds |
 | `verify_timeout` | `30` | seconds after `deploy`; `0` where waiting cannot change the answer |
 
 `$self->log($line)` reports one line and never carries a secret; `$self->option($name)`
-reads a type-specific setting.
+reads a type-specific setting. `$device->has_port` is true only when the entry wrote
+`port` (also `port: 443`): a type can tell a port somebody chose from its default.
+
+These are a published interface: the Runner passes `trust_roots` to every target's
+`new`, so a subclass's own `BUILDARGS` or `new` passes unknown arguments through
+(Moo ignores them). `class_for` keeps the reason a module did not compile and repeats
+it: Config already tried to load it, and perl answers a second `require` with
+"Attempt to reload".
 
 ## Issuer contract
 

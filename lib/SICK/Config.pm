@@ -7,6 +7,7 @@ use Path::Tiny ();
 use SICK::Device;
 use SICK::Duration;
 use SICK::Names;
+use SICK::Target;
 use Types::Standard qw( ArrayRef HashRef InstanceOf Maybe Str );
 use YAML::PP;
 use YAML::PP::Common qw( PRESERVE_ORDER );
@@ -94,8 +95,11 @@ C<ec256>.
 
 One entry per device, by name. Every entry needs a C<type> and a non-empty
 list of C<names>; C<host>, C<port>, C<lifetime>, C<renew_before>, C<key>
-and C<owner> are optional. All other keys belong to the device type and end up in
-L<SICK::Device/options>; the target of that type checks them
+and C<owner> are optional. Without C<port> the device is reached on the
+default port of its type (L<SICK::Target/default_port>, C<443> unless the
+type says otherwise); a type that cannot be loaded does not stop the list,
+the run reports it for that device. All other keys belong to the device
+type and end up in L<SICK::Device/options>; the target of that type checks them
 (L<SICK::Target/validate>).
 
 C<owner> is free text for humans: who to ask about the device, shown by
@@ -400,6 +404,15 @@ sub _build__devices {
 
 sub _build__by_name { +{ map { $_->name => $_ } $_[0]->devices } }
 
+# The default port of the type, or undef (SICK::Device then has 443). A type
+# without a module, or one that does not load, does not stop the list:
+# SICK::Runner reports it for that device, with the reason class_for kept.
+sub _default_port {
+  my ( $self, $type ) = @_;
+  my $class = eval { SICK::Target->class_for($type) } or return undef;
+  return $class->default_port;
+}
+
 sub _device {
   my ( $self, $name, $entry ) = @_;
   my $where = 'devices.'.$name;
@@ -436,6 +449,7 @@ sub _device {
       unless !ref $port && $port =~ /\A[1-9][0-9]{0,4}\z/ && $port <= 65535;
     $port += 0;
   }
+  my $default_port = $self->_default_port($type);
 
   my $defaults = $self->defaults;
   my $lifetime = exists $entry->{lifetime}
@@ -468,6 +482,7 @@ sub _device {
     type         => $type,
     host         => $host,
     port         => $port,
+    default_port => $default_port,
     names        => \@names,
     lifetime     => $lifetime,
     renew_before => $renew_before,

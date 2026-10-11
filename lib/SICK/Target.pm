@@ -7,7 +7,7 @@ use Module::Runtime qw( use_module );
 use SICK::Bundle;
 use SICK::Names;
 use SICK::OpenSSL;
-use Types::Standard qw( CodeRef HasMethods );
+use Types::Standard qw( ArrayRef CodeRef HasMethods Str );
 use namespace::autoclean;
 
 our $VERSION = '0.001';
@@ -58,6 +58,8 @@ C<new> of its own that calls C<SUPER::new> and stores more in the object.
 
 =cut
 
+my %LOAD_ERROR;    # class => why it did not compile
+
 sub class_for {
   my ( $self, $type ) = @_;
   croak 'class_for needs a device type' unless defined $type && length $type;
@@ -81,12 +83,16 @@ sub class_for {
     unless defined $name;
 
   my $class = 'SICK::Target::'.$name;
+  # perl answers a second require of a file that did not compile with
+  # "Attempt to reload"; the reason of the first attempt is kept instead
+  croak 'cannot load '.$class.' for type \''.$type.'\': '.$LOAD_ERROR{$class} if exists $LOAD_ERROR{$class};
   # the one place a module is loaded at run time: its name comes from the
   # device list
   my $loaded = eval { use_module($class); 1 };
   unless ($loaded) {
     my $error = $@;
     $error =~ s/\s+\z//;
+    $LOAD_ERROR{$class} = $error;
     croak 'cannot load '.$class.' for type \''.$type.'\': '.$error;
   }
 
@@ -111,8 +117,8 @@ Croaks with
     no target for type 'cisco-sb'; install a SICK-Target-* distribution that provides it
 
 when there is no such module, with C<< cannot load <class> ... >> when it
-does not compile, and when the class is not a C<SICK::Target> or does not
-implement L</deploy>.
+does not compile - asked again, with the same reason - and when the class
+is not a C<SICK::Target> or does not implement L</deploy>.
 
 =cut
 
@@ -128,16 +134,29 @@ around BUILDARGS => sub {
   croak $class.'->new: log must be a code reference'
     if defined $arg{log} && ref $arg{log} ne 'CODE';
   delete $arg{log} unless defined $arg{log};
+  if ( defined $arg{trust_roots} ) {
+    croak $class.'->new: trust_roots must be a list of PEM certificates'
+      unless ref $arg{trust_roots} eq 'ARRAY' && !grep { !defined $_ || ref $_ } @{ $arg{trust_roots} };
+    $arg{trust_roots} = [ @{ $arg{trust_roots} } ];
+  }
+  else {
+    delete $arg{trust_roots};
+  }
   return \%arg;
 };
 
 =method new
 
-    my $target = $class->new( device => $device, log => sub { my ($message) = @_; ... } );
+    my $target = $class->new(
+      device      => $device,
+      log         => sub { my ($message) = @_; ... },
+      trust_roots => [ $root_pem, @additional_root_pems ],
+    );
 
 C<device> is the L<SICK::Device> the target works on. C<log> is optional: a
 code reference that is called with one line of text whenever the target has
-something to say. Nothing is checked yet, see L</validate>.
+something to say. C<trust_roots> is optional, see L</trust_roots>.
+Nothing is checked yet, see L</validate>.
 
 =cut
 
@@ -146,9 +165,29 @@ has device => ( is => 'ro', isa => HasMethods [qw( names options )], required =>
 # Private: the public log is the method below, which calls it.
 has _log => ( is => 'ro', isa => CodeRef, init_arg => 'log', predicate => 1 );
 
+has _trust_roots => ( is => 'ro', isa => ArrayRef [Str], init_arg => 'trust_roots', default => sub { [] } );
+
+sub trust_roots { [ @{ $_[0]->_trust_roots } ] }
+
 =attr device
 
 The L<SICK::Device>.
+
+=attr trust_roots
+
+    my @anchors = @{ $self->trust_roots };    # PEM texts, one certificate each
+
+The roots of the CA of the run, as PEM, one certificate per element: the
+root of the issuer (L<SICK::Issuer/root_pem>) first, then the additional
+roots (L<SICK::Issuer/additional_roots_pem>) in the order of the device
+list. L<SICK::Runner> passes them to every target it makes, for C<sick run>
+and for C<sick check>; an empty list when the target was made without them.
+
+They are for a target that has to verify the device before it sends it a
+secret - a token, a key: once the device presents a certificate of our CA,
+these are what it chains up to. The core uses them for nothing else. The
+intermediates are not among them; L</deploy> finds them in the chain of
+its bundle. Every call returns a new array reference.
 
 =cut
 
@@ -255,11 +294,13 @@ C<undef>: SICK generates the key.
 
 sub connect_timeout { 10 }
 
+sub default_port { 443 }
+
 sub endpoint {
   my ( $self ) = @_;
   my $device = $self->device;
   my $host = defined $device->host ? $device->host : $device->names->[0];
-  return ( $host, $device->port );
+  return ( $host, $device->has_port ? $device->port : $self->default_port );
 }
 
 sub verify_timeout { 30 }
@@ -272,12 +313,22 @@ L<SICK::Runner> asks L</presented_cert> again and again for that long before
 it calls the deployment failed. C<30>; a target overrides it for a device
 that is slower, or with C<0> where the answer cannot change by waiting.
 
+=method default_port
+
+    sub default_port { 8006 }
+
+The TLS port of a device of this type when its entry has no C<port>. C<443>;
+a type whose devices listen elsewhere overrides it, and the device list
+then need not repeat the port for every device. Called on the class as
+well: L<SICK::Config> asks it for L<SICK::Device/port>.
+
 =method endpoint
 
     my ( $host, $port ) = $target->endpoint;
 
 Where L</presented_cert> connects to: C<host> and C<port> of the device. A
-device without C<host> is reached under its first name.
+device without C<host> is reached under its first name, one without C<port>
+on L</default_port>.
 
 =method connect_timeout
 

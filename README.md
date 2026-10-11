@@ -640,6 +640,9 @@ sub csr {
 # optional: seconds the device may take until it presents the new certificate
 sub verify_timeout { 60 }
 
+# optional: the port of a device without 'port' in its entry (443 by default)
+sub default_port { 8443 }
+
 1;
 ```
 
@@ -655,6 +658,14 @@ What the core expects of a target:
   and errors carry the place in the list: `devices.switch: missing 'credentials'`.
 - Secrets come from files named in the device list and never appear in a
   message, a log line or a command line.
+- A device that is sent a secret – a password, a token, the key – is verified
+  first. `$self->trust_roots` holds the roots of the CA as PEM, the issuer's root
+  first, then the additional roots of a root replacement: once the device
+  presents one of our certificates, that is what it chains up to. The
+  intermediates are in `$bundle->chain`.
+- `$self->device->port` is the `port` of the entry or the type's `default_port`;
+  `$self->device->has_port` tells a `port: 443` that was written from one that
+  was not.
 
 `SICK::Target::Files` and `SICK::Target::Acmesh` are the examples to read.
 

@@ -264,3 +264,10 @@ Revision history for SICK
       otherwise, and a terminating proxy that sets X-Client-Identity for a
       backend that trusts only the proxy's certificate; proven by
       t/e2e/mtls.sh.
+    - Targets get the roots of the CA as trust_roots (the issuer's root
+      first, then the additional roots), in sick run and sick check, so a
+      device type can verify a device before it sends it a secret. An
+      additional root that cannot be read now fails every device.
+    - A device type can name its default port (SICK::Target->default_port); a
+      device without port uses it, and SICK::Device::has_port tells a port:
+      443 that was written from the default.

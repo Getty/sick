@@ -113,7 +113,24 @@ my %switch;   # how they are told to behave
     return $switch{slow_old};
   }
 }
-$INC{ 'SICK/Target/'.$_.'.pm' } = __FILE__ for qw( Lazy Fragile Keeper Bare Slow );
+
+{
+  package SICK::Target::Recorder;    # writes down the roots it was given, when looking and when deploying
+  our @ISA = ('SICK::Target::Files');
+
+  sub presented_cert {
+    my ( $self ) = @_;
+    push @{ $switch{recorded}{look} }, $self->trust_roots;
+    return $self->SUPER::presented_cert;
+  }
+
+  sub deploy {
+    my ( $self, $bundle ) = @_;
+    push @{ $switch{recorded}{deploy} }, $self->trust_roots;
+    return $self->SUPER::deploy($bundle);
+  }
+}
+$INC{ 'SICK/Target/'.$_.'.pm' } = __FILE__ for qw( Lazy Fragile Keeper Bare Slow Recorder );
 
 # an issuer that refuses the way a CA does
 {
@@ -574,6 +591,40 @@ subtest 'a CA whose root or intermediates are not what they say' => sub {
     'an intermediate of another CA: every device fails, none is renewed';
   like $_->{error}, qr/^ca\.intermediates '\Q$stray->{cert}\E': the certificate 'CN=Check Stray Intermediate' does not lead to ca\.root/,
     '... naming ca.intermediates, the path and the subject' for @results;
+  is_deeply leftovers(), [], 'no temporary directory is left';
+};
+
+subtest 'the roots of the CA reach every target' => sub {
+  my $next     = new_ca( dir => $tmp, name => 'next-root',     cn => 'Next Root' );
+  my $previous = new_ca( dir => $tmp, name => 'previous-root', cn => 'Previous Root' );
+  my $list     = "devices:\n".device_yaml( 'recorded', type => 'recorder' );
+  my $root     = $issuer->root_pem;
+  my $pem      = sub { ( my $text = $_[0] ) =~ s/\A.*?(-----BEGIN CERTIFICATE-----)/$1/s; $text };
+
+  $switch{recorded} = {};
+  my $rolling = Local::Issuer::Moody->new( dir => $tmp.'/ca', additional_roots => [ $next->{cert}, $previous->{cert} ] );
+  my $runner  = runner( $list, issuer => $rolling );
+  my @expected = ( $root, $pem->( $next->{pem} ), $pem->( $previous->{pem} ) );
+
+  $runner->check;
+  is scalar @{ $switch{recorded}{look} }, 1, 'check makes the target once';
+  is_deeply $switch{recorded}{look}[0], \@expected,
+    '... and hands it the root of the issuer first, then the additional roots in the order of the list';
+  is( ( grep { /BEGIN CERTIFICATE.*BEGIN CERTIFICATE/s } @{ $switch{recorded}{look}[0] } ), 0, '... one certificate each' );
+
+  $switch{recorded} = {};
+  is_deeply brief( $runner->run ), [ [ 'recorded', 'renewed', 'missing' ] ], 'run renews';
+  is_deeply $switch{recorded}{deploy}, [ \@expected ], '... and the target that deploys has the same roots';
+  is_deeply $switch{recorded}{look}[0], \@expected, '... as the one that looked';
+
+  $switch{recorded} = {};
+  runner( $list )->check;
+  is_deeply $switch{recorded}{look}, [ [$root] ], 'without additional roots: the root alone';
+
+  my @results = runner( $list, issuer => Local::Issuer::Moody->new( dir => $tmp.'/ca', additional_roots => [ $tmp.'/no-such-root.crt' ] ) )->run;
+  is_deeply brief(@results), [ [ 'recorded', 'failed', 'error' ] ], 'an additional root that cannot be read fails the device';
+  like $results[0]{error}, qr/^cannot read ca\.additional_roots '\Q$tmp\E\/no-such-root\.crt': \S/, '... with path and reason';
+  delete $switch{recorded};
   is_deeply leftovers(), [], 'no temporary directory is left';
 };
 

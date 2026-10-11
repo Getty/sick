@@ -146,6 +146,61 @@ YAML
     'built-in defaults without a defaults section';
 };
 
+subtest 'the port of the type' => sub {
+  # two device types of our own, in a directory of their own in @INC
+  my $lib = $tmp.'/lib';
+  mkdir $_ or die 'mkdir '.$_.': '.$! for $lib, $lib.'/SICK', $lib.'/SICK/Target';
+  write_file( 'lib/SICK/Target/Appliance.pm', <<'PERL' );
+package SICK::Target::Appliance;
+use strict;
+use warnings;
+use parent 'SICK::Target';
+sub default_port { 8006 }
+sub deploy { 1 }
+1;
+PERL
+  write_file( 'lib/SICK/Target/Unfinished.pm', "package SICK::Target::Unfinished;\nthis is not perl (\n1;\n" );
+  local @INC = ( $lib, @INC );
+
+  my $config = SICK::Config->load_string( <<'YAML', 'list.yml' );
+devices:
+  quiet:
+    type: appliance
+    names: [quiet.example.internal]
+  forwarded:
+    type: appliance
+    port: 443
+    names: [forwarded.example.internal]
+  web:
+    type: files
+    names: [web.example.internal]
+  exotic:
+    type: no-such-box
+    names: [exotic.example.internal]
+  half:
+    type: unfinished
+    names: [half.example.internal]
+YAML
+  my $quiet = $config->device('quiet');
+  is $quiet->port, 8006, 'no port: the default port of the type';
+  ok !$quiet->has_port, '... and has_port says that nobody set it';
+  is $quiet->default_port, 8006, '... default_port is the one of the type';
+
+  my $forwarded = $config->device('forwarded');
+  is $forwarded->port, 443, 'port: 443 wins over the default of the type';
+  ok $forwarded->has_port, '... and counts as set';
+
+  my $web = $config->device('web');
+  is $web->port, 443, 'a type that names no port: 443';
+  ok !$web->has_port, '... not set either';
+
+  is $config->device('exotic')->port, 443, 'a type without a module does not stop the list: 443, the run reports the type';
+  is $config->device('half')->port, 443, 'neither does one that does not compile';
+  ok !eval { SICK::Target->class_for('unfinished'); 1 }, '... which the run then reports';
+  like $@, qr/^cannot load SICK::Target::Unfinished for type 'unfinished': (?!Attempt to reload)\S/,
+    '... with the reason, not with the second attempt of perl';
+};
+
 subtest 'names' => sub {
   my $config = SICK::Config->load_string( <<'YAML', 'list.yml' );
 devices:
