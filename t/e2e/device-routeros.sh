@@ -5,7 +5,8 @@
 #   t/e2e/device-routeros.sh               both parts
 #   t/e2e/device-routeros.sh standin chr   the parts named
 #
-# Parts, each with PASS/FAIL lines; the first FAIL ends the script with 1:
+# Parts, each with PASS/FAIL lines; the first FAIL ends the script with 1.
+# RECORD lines are observations that may differ from run to run:
 #
 #   standin  a recording stand-in for the router: an sshd container (Alpine)
 #            whose deploy key has a forced command, t/e2e/routeros-standin.sh.
@@ -17,7 +18,7 @@
 #            /ip service set www-ssl and api-ssl; run; remove), the second run
 #            "unchanged"; refused: an unknown host key, a script run that
 #            exits 1, and one that changes nothing but exits 0 - RouterOS
-#            answers a failure at run time with 0 - where only SICK's
+#            may answer a failure at run time with 0 - where only SICK's
 #            verification notices. The stand-in presents on its TLS port what the commands
 #            "imported" - this proves what our side sends, not what RouterOS
 #            does with it.
@@ -30,7 +31,9 @@
 #            key is taken out of the router the same way. Then the real hook
 #            through SICK: renewed, fingerprint on www-ssl's port equals the
 #            issued one and RouterOS's own; second run unchanged; forced run
-#            replaces cer_0 (the old one is gone); refused: an unknown host
+#            replaces cer_0 (the old one is gone); a failed import over ssh
+#            prints its error and imports nothing (RECORD: its exit code, 0 in
+#            most runs, 1 once); refused: an unknown host
 #            key; a group without "read": the device fails - RouterOS
 #            interrupts the script's creation (acme.sh fails) or, seen once,
 #            accepts it, runs nothing and answers 0 (acme.sh says Success,
@@ -90,6 +93,7 @@ step() { step_no=$((step_no + 1)); printf '\n=== %s. %s\n' "$step_no" "$*"; }
 note() { printf -- '--- %s\n' "$*"; }
 pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
+record() { printf 'RECORD  %s\n' "$*"; }
 show() { sed 's/^/    /'; }
 expect() {
   if grep -Eq -- "$2" <<<"$3"; then pass "$1"; else
@@ -502,7 +506,10 @@ if want chr; then
   [ -z "$(ros_files)" ] || fail "files left on the router: $(ros_files | tr '\n' ' ')"
   [ "$(rest GET /system/script | jq length)" = 0 ] || fail 'the deploy script is still on the router'
   pass 'no file and no script left on the router'
-  # what the stand-in's noop-run imitates: a failure at run time is exit 0
+  # what the stand-in's noop-run imitates: a failure at run time, often
+  # with exit 0 (seen once with 1, under load) - so the exit code is
+  # recorded, and what counts is the message and that nothing was imported
+  before=$(ros_certs)
   set +e
   answer=$(ssh -p "$sshport" -F /dev/null -i "$dir/deploy" -o IdentitiesOnly=yes -o BatchMode=yes \
     -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$dir/known_hosts" sick@127.0.0.1 \
@@ -510,8 +517,10 @@ if want chr; then
   status=${PIPESTATUS[0]}
   set -e
   show <<<"$answer"
-  [ "$status" -eq 0 ] || fail "RouterOS ended a failed import with $status"
-  expect 'RouterOS prints the error of a failed import and the ssh session still exits 0' 'input does not match any value of file-name' "$answer"
+  record "the ssh session of a failed import exits $status"
+  expect 'RouterOS prints the error of a failed import' 'input does not match any value of file-name' "$answer"
+  [ "$(ros_certs)" = "$before" ] || fail 'the failed import changed the certificates of the router'
+  pass '... and imports nothing: the certificates of the router are the same'
 
   step 'a second run changes nothing, a forced one replaces cer_0'
   sick "$dir" run2.log run

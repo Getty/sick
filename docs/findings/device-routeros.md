@@ -90,7 +90,11 @@ failed`, and leaves `<name>.key` on the "router" until the next good run.
   certificate - the only one; the old one is gone.
 - Unknown host key: the device fails, the router is unchanged.
 - `/certificate import` of a file that is not there, over ssh: the error is
-  printed, **exit code 0**. A syntax error (`/foo`) is exit 1; `:error` is 0.
+  printed (`input does not match any value of file-name`) and nothing is
+  imported. **A failed import may exit 0 (seen in four of five runs) or 1
+  (once, under load: a k3d test ran in parallel, 2026-10-11).** The script
+  records the exit code and asserts the message and that `/certificate` is
+  unchanged. A syntax error (`/foo`) is exit 1; `:error` is 0.
 - Group without `read`: RouterOS answers the script creation with
   `interrupted` and exit 1, acme.sh fails, www-ssl keeps the previous
   certificate. Both files stay in `/file`, the key included. (One
@@ -137,10 +141,11 @@ enable www-ssl - that is setup. On 7.24.5 the CHR also has a `reverse-proxy`
 service on 443; with www-ssl enabled, www-ssl answered.
 
 **How `sick check` sees success.** `host`/`port` of the device at www-ssl
-(443 unless moved). This matters more than usual: RouterOS answers failures
-at run time with exit code 0, so `acme.sh: Success` does not mean imported.
-The fingerprint on the port is the only reliable signal, and SICK compares
-it after every deployment.
+(443 unless moved). This matters more than usual: RouterOS may answer failures
+at run time with exit code 0 (a failed import: 0 in four of five runs, 1
+once), so `acme.sh: Success` does not mean imported. The fingerprint on the
+port is the only reliable signal, and SICK compares it after every
+deployment; it catches both cases.
 
 **How to get back.** The hook removes `<name>.cer_0` .. `_3` before it
 imports: after a deployment the previous SICK certificate is gone from
