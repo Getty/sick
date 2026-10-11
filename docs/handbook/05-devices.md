@@ -269,7 +269,19 @@ device type", and SICK-Target-CiscoSB as the worked example.
 
 ## Test report
 
-All e2e scripts were run against the committed state `8c14cbb` on
+All e2e scripts were run again against the committed state `f9a8df8` on
+2026-10-11, after SICK-Target-Proxmox joined the image: `run-local.sh` 33
+PASS, `ca-ceremony.sh` 146, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings, `trust-os.sh`
+465, `trust-runtimes.sh` 147, `ops.sh` 72, `acme-services.sh` 31 per
+service, `acme-k8s.sh` all parts, `device-ssh.sh` 71, `device-routeros.sh`
+47, `client-san.sh` 65, `mtls.sh` 79, and in `../sick-target-proxmox`
+(`b9e7284`) `t/e2e/device-proxmox.sh` 64 PASS against real PVE 9.2.21 and
+PBS 4.2.8 in this repository's image; each with 0 unexpected FAIL and no
+repeat needed; afterwards nothing labelled `sick=1`, no `sick-*` k3d
+cluster, the host's default kubeconfig untouched.
+
+The earlier record, against `8c14cbb`: on
 2026-10-11, at the end of this package: `run-local.sh` 33 PASS,
 `ca-ceremony.sh` 101, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
 `trust-anchors.sh` 96 PASS and its 8 expected FAIL findings, `trust-os.sh`
