@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-11T00:46:47Z
+created: 2026-10-10T23:20:08Z
+id: 48
+priority: high
+started: 2026-10-10T23:36:28Z
+status: done
+tags:
+- acme
+- p6
+title: 'P6c cert-manager in k3d: ACME ClusterIssuer and step-issuer'
+updated: 2026-10-11T00:46:58Z
+---
+
+Both issuers obtain and renew; Ready counts only with a probe from a pod seeing the new fingerprint; out-of-policy name refused; uncontrolled challenge fails; charts and images pinned; k3d sick-* with private kubeconfig. Part of P6 (k16); binding 'done when': docs/roadmap.md, section P6.
+
+sick-worker-k8s: k8s/cert-manager/{ca,issuers,demo} and t/e2e/acme-k8s.sh (parts up/issue/renew/refuse/down) written; cert-manager v1.21.2 manifest, step-issuer chart 1.11.0 (image 0.11.0) via helm v3.22.0 (installed checksum-verified into ~/.local/bin); first runs next
+
+sick-worker-k8s: done, two clean runs of t/e2e/acme-k8s.sh (up issue renew refuse down, each part a separate call) ALL PASSED. Versions: k3d v5.9.0, k3s v1.35.5-k3s1, cert-manager v1.21.2, step-issuer chart 1.11.0/image 0.11.0, helm v3.22.0. Findings for other cards: (1) step-ca's ACME provisioner offers dns-01, http-01 and tls-alpn-01 - init-ca.sh could limit 'acme' to http-01 (docker/, not done here); (2) the step-issuer provisioner 'cert-manager' is made by hand on the running CA - init-ca.sh does not own it (template/claims not re-applied at start); (3) step-ca keeps an http-01 connection error pending (retries), only a wrong answer makes it invalid; (4) cert-manager keeps its last self-check message as Challenge reason after the CA says invalid; (5) step-issuer's chart ClusterRole reads all Secrets. ~/.kube/config mtime unchanged (1791660817).
+
+Committed as 95af713
