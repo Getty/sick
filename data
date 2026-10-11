@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-11T02:02:25Z
+created: 2026-10-11T01:31:53Z
+id: 53
+priority: high
+started: 2026-10-11T01:32:56Z
+status: done
+tags:
+- devices
+- p7
+title: 'P7b MikroTik RouterOS: hook routeros with a recording stand-in, CHR under
+  qemu time-boxed'
+updated: 2026-10-11T02:02:37Z
+---
+
+Recording stand-in shows what our side sends; a RouterOS CHR in qemu without KVM (container, sick=1) if it boots within a fixed time box; otherwise not tried and on the HQ list. Part of P7 (k17); binding: docs/roadmap.md, section P7, and the hub's brief of 2026-10-11 (per recipe: rights on the device and how to keep them small, where the secret lives, what the device restarts, how sick check sees success on the port, how to get back).
+
+w-routeros: stand-in and RouterOS CHR 7.24.5 under qemu TCG both PASS (t/e2e/device-routeros.sh, 46 PASS lines). CHR boots to REST in 31s; real hook through SICK renews, www-ssl fingerprint = issued. Rights ssh,ftp,read,write (each needed, tried). Findings: RouterOS returns exit 0 for run-time failures (acme.sh may say Success, only SICK's verification catches it); after a failed run the private key file stays in /file; the hook removes the old cer_0 (no way back on the router). No lib change needed. Files git added, no commit.
+
+Committed as a3443de
