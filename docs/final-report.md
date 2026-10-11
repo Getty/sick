@@ -54,6 +54,35 @@ both drills ran without a blocker and without a guess. The second drill found a
 mistake in substance in the compromise chapter, which is now corrected: a
 stolen intermediate key is cut off for clients only by a root replacement.
 
+## The last run
+
+All on 2026-10-11 against the committed state – SICK `164b272`,
+SICK-Target-Proxmox `b9e7284` – one after the other on one host, nothing
+of ours left afterwards (no container, volume or network labelled
+`sick=1`, no k3d cluster `sick-*`). `prove -lr t`: 245 tests, all pass, 2
+skipped (no `pwsh`).
+
+| Script | Result |
+|---|---|
+| `run-local.sh` | 33 PASS |
+| `ca-ceremony.sh` | 146 PASS |
+| `ca-recovery.sh` | 51 PASS |
+| `ca-rollover.sh` | 145 PASS |
+| `trust-anchors.sh` | 96 PASS, 8 FAIL – the expected ones: curl and gnutls on Debian and Fedora accept a certificate when only the intermediate is in their CA file (case 5c2, chapter 3: install the root, never an intermediate, as an anchor) |
+| `trust-os.sh` | 465 PASS |
+| `trust-runtimes.sh` | 147 PASS |
+| `ops.sh` | 74 PASS |
+| `acme-services.sh` traefik / caddy / nginx | 31 / 31 / 31 PASS |
+| `acme-k8s.sh` up / issue / renew / refuse / down | 20 / 11 / 7 / 13 / 3 PASS |
+| `device-ssh.sh` | 71 PASS |
+| `device-routeros.sh` | 47 PASS (stand-in and CHR) |
+| `client-san.sh` | 65 PASS |
+| `mtls.sh` | 79 PASS |
+| SICK-Target-Proxmox `t/e2e/device-proxmox.sh` | 64 PASS (its `t/90-live.t` skipped: needs a real node) |
+
+Not run: `run-lab.sh` (changes a real switch) and the live tests of the two
+target distributions.
+
 ## What you decide
 
 Each is a record in [`docs/handbook/decisions.md`](handbook/decisions.md)
