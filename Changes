@@ -204,3 +204,9 @@ Revision history for SICK
       lifetimes with SICK_CA_ACME_LIFETIME, SICK_CA_ACME_MAX_LIFETIME and
       SICK_CA_ACME_MIN_LIFETIME; they are applied at every start and checked
       as Go durations with min <= lifetime <= max.
+    - contrib/acme: recipes for Traefik, Caddy and nginx with acme.sh against
+      step-ca's ACME endpoint, each with root trust for the CA connection,
+      renewal tuned to 30-day certificates and its enrollment authorization
+      written down; t/e2e/acme-services.sh shows each obtains, renews with
+      the fingerprint on the port changing, is refused a name outside the CA
+      policy and fails a challenge for a name it does not control.

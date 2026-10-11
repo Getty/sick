@@ -1,0 +1,28 @@
+# Caddy with certificates from step-ca's ACME endpoint. See README.md.
+#
+#   cp /path/to/root_ca.crt contrib/acme/caddy/   # checked by fingerprint
+#   docker compose -f contrib/acme/caddy/compose.yml up -d
+#
+# "app" stands for your backend; replace the service and reverse_proxy in
+# the Caddyfile.
+
+services:
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"      # http-01 from the CA, redirect to https
+      - "443:443"    # https, tls-alpn-01 from the CA
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./root_ca.crt:/etc/caddy/root_ca.crt:ro
+      - caddy-data:/data
+
+  app:
+    image: busybox:1.37.0
+    restart: unless-stopped
+    command: ["sh", "-c", "mkdir -p /tmp/www && echo hello >/tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"]
+
+volumes:
+  caddy-data:    # /data: ACME account, certificates, keys. Keep it.

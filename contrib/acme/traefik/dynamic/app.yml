@@ -1,0 +1,19 @@
+# Dynamic configuration: one HTTPS router with its certificate from the
+# resolver "stepca" of traefik.yml. Traefik asks for a certificate for the
+# name in Host(); the CA checks that this Traefik answers for that name
+# (http-01) and that the name lies inside its policy.
+
+http:
+  routers:
+    app:
+      rule: Host(`traefik.example.internal`)
+      entryPoints: [websecure]
+      service: app
+      tls:
+        certResolver: stepca
+
+  services:
+    app:
+      loadBalancer:
+        servers:
+          - url: http://app:8080

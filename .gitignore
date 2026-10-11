@@ -17,3 +17,6 @@ cover_db/
 # karr materialized task view -- never commit
 tasks/
 config.yml
+
+# the root of your CA, put next to an ACME recipe to run it
+contrib/acme/*/root_ca.crt

@@ -1,0 +1,141 @@
+# Added by t/e2e/acme-services.sh to docker/compose.yml and the compose.yml
+# of contrib/acme/traefik, caddy and nginx (docker compose -f ... -f this
+# file). The shipped files stay as they are. This one
+#   - publishes no port (ports: !reset) and labels every container, volume
+#     and network sick=1;
+#   - gives the CA and each service a name in example.internal on the
+#     Compose network: that resolver is the lab's DNS, for the CA (which
+#     validates the challenges) as well as for the client;
+#   - mounts the configuration of the recipes from the working directory:
+#     copies of contrib/acme with the renewal timing shortened (the script
+#     says which lines it changes), and the root of the lab CA;
+#   - adds "decoy", a web server under decoy.example.internal that knows
+#     nothing of ACME, and "client" (curl, gnutls-cli, openssl).
+#
+# Relative paths of the contrib files would resolve against docker/, the
+# directory of the first file; every volume list that holds one is
+# replaced here (!override) with absolute paths.
+#
+# SICK_ACME_WORK is the private working directory, SICK_ACME_REPO this
+# checkout (both set by acme-services.sh).
+
+services:
+
+  ca:
+    labels: { sick: "1" }
+    ports: !reset []
+    networks:
+      default:
+        aliases: [ca.example.internal]
+
+  trust:
+    labels: { sick: "1" }
+    ports: !reset []
+
+  sick:
+    labels: { sick: "1" }
+
+  app:
+    labels: { sick: "1" }
+    restart: "no"
+
+  traefik:
+    labels: { sick: "1" }
+    restart: "no"
+    ports: !reset []
+    volumes: !override
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/lab/root_ca.crt:/etc/traefik/root_ca.crt:ro
+      - traefik-acme:/var/lib/traefik
+    networks:
+      default:
+        aliases: [traefik.example.internal]
+
+  caddy:
+    labels: { sick: "1" }
+    restart: "no"
+    ports: !reset []
+    volumes: !override
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/lab/root_ca.crt:/etc/caddy/root_ca.crt:ro
+      - caddy-data:/data
+    networks:
+      default:
+        aliases: [caddy.example.internal]
+
+  nginx:
+    labels: { sick: "1" }
+    restart: "no"
+    ports: !reset []
+    volumes: !override
+      - ${SICK_ACME_REPO:?set by acme-services.sh}/contrib/acme/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${SICK_ACME_REPO:?set by acme-services.sh}/contrib/acme/nginx/wait-for-cert.sh:/docker-entrypoint.d/05-wait-for-cert.sh:ro
+      - nginx-certs:/etc/nginx/certs:ro
+      - acme-webroot:/var/www/acme:ro
+    networks:
+      default:
+        aliases: [nginx.example.internal]
+
+  acme:
+    labels: { sick: "1" }
+    restart: "no"
+    environment:
+      # the test's timing: a look every 20 seconds instead of 12 hours.
+      # ACME_DAYS stays as shipped.
+      ACME_CHECK_INTERVAL: 20s
+      ACME_RETRY_INTERVAL: 10s
+    volumes: !override
+      - ${SICK_ACME_REPO:?set by acme-services.sh}/contrib/acme/nginx/acme-sidecar.sh:/usr/local/bin/acme-sidecar.sh:ro
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/lab/root_ca.crt:/etc/acme/root_ca.crt:ro
+      - acme-state:/acme.sh
+      - nginx-certs:/etc/nginx/certs
+      - acme-webroot:/var/www/acme
+
+  # a web server under a name inside the CA's policy that does not belong
+  # to any of the services: a challenge for it reaches this, not the client
+  decoy:
+    labels: { sick: "1" }
+    image: busybox:1.37.0
+    init: true
+    stop_grace_period: 3s
+    command: ["sh", "-c", "mkdir -p /tmp/www && echo decoy >/tmp/www/index.html && exec httpd -f -p 80 -h /tmp/www"]
+    networks:
+      default:
+        aliases: [decoy.example.internal]
+
+  client:
+    labels: { sick: "1" }
+    image: ${SICK_ACME_DEBIAN:-debian:trixie-20261005-slim}
+    init: true
+    stop_grace_period: 3s
+    command:
+      - sh
+      - -c
+      - >-
+        apt-get update -qq >/tmp/apt.log 2>&1
+        && apt-get install -y -qq --no-install-recommends curl gnutls-bin openssl >>/tmp/apt.log 2>&1
+        && touch /tmp/ready && exec sleep infinity
+    volumes:
+      - ${SICK_ACME_WORK:?set by acme-services.sh}/lab:/etc/lab:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+      start_interval: 2s
+
+volumes:
+  ca: { labels: { sick: "1" } }
+  handover: { labels: { sick: "1" } }
+  state: { labels: { sick: "1" } }
+  trust: { labels: { sick: "1" } }
+  traefik-acme: { labels: { sick: "1" } }
+  caddy-data: { labels: { sick: "1" } }
+  nginx-certs: { labels: { sick: "1" } }
+  acme-webroot: { labels: { sick: "1" } }
+  acme-state: { labels: { sick: "1" } }
+
+networks:
+  default: { labels: { sick: "1" } }

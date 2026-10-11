@@ -1,0 +1,29 @@
+# Traefik with certificates from step-ca's ACME endpoint. See README.md.
+#
+#   cp /path/to/root_ca.crt contrib/acme/traefik/   # checked by fingerprint
+#   docker compose -f contrib/acme/traefik/compose.yml up -d
+#
+# "app" stands for your backend; replace the service and the URL in
+# dynamic/app.yml.
+
+services:
+
+  traefik:
+    image: traefik:v3.7.14
+    restart: unless-stopped
+    ports:
+      - "80:80"      # http-01 from the CA
+      - "443:443"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ./root_ca.crt:/etc/traefik/root_ca.crt:ro
+      - traefik-acme:/var/lib/traefik
+
+  app:
+    image: busybox:1.37.0
+    restart: unless-stopped
+    command: ["sh", "-c", "mkdir -p /tmp/www && echo hello >/tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"]
+
+volumes:
+  traefik-acme:    # acme.json: account key and certificates

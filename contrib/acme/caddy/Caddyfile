@@ -1,0 +1,51 @@
+# Caddy (2.11) with certificates from the ACME endpoint of step-ca. Mounted
+# as /etc/caddy/Caddyfile. See README.md next to this file.
+{
+	# No acme_ca / acme_ca_root here, although they name the CA and its
+	# root for every site: Caddy applies them only to names it considers
+	# public. For localhost and names under .internal, .local and .home.arpa
+	# it takes its own internal CA unless the site names an issuer - and
+	# when the global options and the site's issuer are the same, Caddy
+	# (2.11.7) folds the site's policy into the global one and the name
+	# falls back to the internal CA again. So the issuer is named per site,
+	# in the snippet "stepca" below. For names that do count as public
+	# (int.example.com) the two global options alone would do:
+	#   acme_ca https://ca.example.internal:9000/acme/acme/directory
+	#   acme_ca_root /etc/caddy/root_ca.crt
+
+	# Caddy renews by a share of the lifetime of the certificate it holds:
+	# when less than this ratio is left. 0.3333 is Caddy's default, written
+	# down here because the CA's lifetimes are chosen for it - a 30-day
+	# certificate is renewed with 10 days left. Nothing to change when
+	# SICK_CA_ACME_LIFETIME changes. A CA that offers ACME Renewal
+	# Information (ARI) may move the window; step-ca 0.30.2 does not.
+	renewal_window_ratio 0.3333
+
+	# how often Caddy looks (default 10m: fine for days, too coarse for
+	# certificates of minutes)
+	renew_interval 10m
+
+	# step-ca's certificates name no OCSP responder; nothing to staple
+	ocsp_stapling off
+}
+
+# The issuer of every site, named explicitly: step-ca's ACME endpoint, with
+# the root of your CA. Only the connection to the CA trusts this root; the
+# clients of Caddy need it in their own trust store.
+(stepca) {
+	tls {
+		issuer acme {
+			dir https://ca.example.internal:9000/acme/acme/directory
+			trusted_roots /etc/caddy/root_ca.crt
+		}
+	}
+}
+
+# One site. Caddy asks for a certificate for its name; the CA checks that
+# this Caddy answers for the name (http-01 on port 80 or tls-alpn-01 on
+# port 443, whichever Caddy offers first) and that the name lies inside its
+# policy.
+caddy.example.internal {
+	import stepca
+	reverse_proxy app:8080
+}

@@ -1,0 +1,48 @@
+# Static configuration of Traefik (v3.7) with certificates from the ACME
+# endpoint of step-ca. Mounted as /etc/traefik/traefik.yml, where Traefik
+# looks for it. See README.md next to this file.
+#
+# Traefik reads its static configuration from ONE source: this file, or
+# command line arguments, or TRAEFIK_* variables - not a mix. Change values
+# here, not in the environment.
+
+entryPoints:
+  # port 80: step-ca fetches the http-01 challenge here
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  # routers and services: the files in dynamic/ (no Docker socket needed)
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  stepca:
+    acme:
+      # the ACME directory of the provisioner "acme" of your CA
+      caServer: https://ca.example.internal:9000/acme/acme/directory
+      # The root of your CA, to verify the CA's TLS certificate when Traefik
+      # talks to it. Only this connection: the clients of Traefik need the
+      # root in their own trust store. The same can be given as
+      # LEGO_CA_CERTIFICATES=/etc/traefik/root_ca.crt (Traefik's compatibility
+      # layer with lego); this option is the documented one.
+      caCertificates:
+        - /etc/traefik/root_ca.crt
+      # account key and certificates; keep it in a volume, so a restart does
+      # not make a new account and new certificates
+      storage: /var/lib/traefik/acme.json
+      keyType: EC256
+      # Traefik does not look at the certificate it got: it renews by this
+      # number, in hours, "exclusively used to determine renewal dates".
+      # 720 (30 days, what the CA issues by default) puts Traefik in its
+      # bracket "renew 10 days before expiry, check every 12 hours". The
+      # default 2160 (90 days) would mean "renew 30 days before expiry" -
+      # for a 30-day certificate that is a new certificate at every check.
+      # Change it together with SICK_CA_ACME_LIFETIME of the CA.
+      certificatesDuration: 720
+      # http-01 on the entry point "web"; tlsChallenge: {} would use 443
+      httpChallenge:
+        entryPoint: web

@@ -1,0 +1,53 @@
+# nginx with a certificate that acme.sh fetches from step-ca's ACME
+# endpoint and renews. See README.md.
+#
+#   cp /path/to/root_ca.crt contrib/acme/nginx/   # checked by fingerprint
+#   docker compose -f contrib/acme/nginx/compose.yml up -d
+#
+# "acme" lives in the network and the process namespace of "nginx", as a
+# sidecar in a pod would: the CA reaches the webroot through nginx, and
+# acme.sh reloads nginx with a signal. "app" stands for your backend.
+
+services:
+
+  nginx:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"      # http-01 from the CA, redirect to https
+      - "443:443"
+    volumes:
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./wait-for-cert.sh:/docker-entrypoint.d/05-wait-for-cert.sh:ro
+      - nginx-certs:/etc/nginx/certs:ro
+      - acme-webroot:/var/www/acme:ro
+
+  acme:
+    image: neilpang/acme.sh:3.1.6
+    restart: unless-stopped
+    network_mode: service:nginx
+    pid: service:nginx
+    entrypoint: ["/bin/sh", "/usr/local/bin/acme-sidecar.sh"]
+    command: []
+    environment:
+      ACME_DOMAIN: nginx.example.internal
+      ACME_SERVER: https://ca.example.internal:9000/acme/acme/directory
+      ACME_CA_BUNDLE: /etc/acme/root_ca.crt
+      ACME_DAYS: "-10"
+      ACME_CHECK_INTERVAL: 12h
+    volumes:
+      - ./acme-sidecar.sh:/usr/local/bin/acme-sidecar.sh:ro
+      - ./root_ca.crt:/etc/acme/root_ca.crt:ro
+      - acme-state:/acme.sh
+      - nginx-certs:/etc/nginx/certs
+      - acme-webroot:/var/www/acme
+
+  app:
+    image: busybox:1.37.0
+    restart: unless-stopped
+    command: ["sh", "-c", "mkdir -p /tmp/www && echo hello >/tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"]
+
+volumes:
+  nginx-certs:     # key.pem and fullchain.pem, written by acme.sh
+  acme-webroot:    # the http-01 tokens
+  acme-state:      # acme.sh: account key, orders, certificates. Keep it.
