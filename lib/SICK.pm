@@ -26,6 +26,14 @@ A device list is the whole configuration:
         host: 192.0.2.199
         names: [switch.example.internal, 192.0.2.199]
         credentials: /etc/sick/switch.cred
+      pve1:
+        type: proxmox-ve                # SICK::Target::ProxmoxVE (and proxmox-bs,
+                                        # SICK::Target::ProxmoxBS), their own distribution
+        host: pve1.example.internal
+        names: [pve1.example.internal]
+        node: pve1
+        token_id: sick@pve!sick
+        token_file: /etc/sick/pve1.token
       grafana:
         type: files                     # built in
         names: [grafana.example.internal]
