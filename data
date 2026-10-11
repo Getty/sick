@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-10-11T07:12:29Z
+created: 2026-10-11T02:00:56Z
+id: 56
+priority: medium
+started: 2026-10-11T07:12:29Z
+status: done
+tags:
+- devices
+- security
+- finding
+- decision
+title: Proxmox hooks send the API token and key without verifying TLS
+updated: 2026-10-11T07:12:41Z
+---
+
+Finding from k54 (2026-10-11). acme.sh 3.1.6 hooks proxmoxve and proxmoxbs export HTTPS_INSECURE=1 (curl --insecure), and nothing (env, CA_BUNDLE, CA_PATH) switches it back: the API token and the private key go to whatever answers at that address. While the call runs the token is on curl's command line (-H), visible in /proc. Options: (a) recommend native ACME on PVE/PBS wherever the CA reaches the node (chapter 4/5 does); (b) an upstream change to acme.sh (verification optional, token via a header file); (c) a SICK-Target-Proxmox distribution that verifies TLS against our root and keeps the token off argv (new repository: the hub creates it). Recommendation: (a) now, (b) proposed upstream by the maintainer, (c) only if (b) is refused.
+
+2026-10-11, maintainer decision (relayed by the hub): build an own device type instead of proposing a change to acme.sh first - option (c) without (b). Repository ../sick-target-proxmox (SICK-Target-Proxmox, types proxmox-ve / proxmox-bs): TLS verified always (cluster CA / fingerprint pin / our root), token from a file into the header only, key in the body only. Follow-ups here: image, chapter 5 + contrib, HQ checklist cards.
+
+Decided by the maintainer 2026-10-11: a device type of its own instead of an upstream request; built in the new repository Getty/sick-target-proxmox (0569ddd, b9e7284); in the sick image since 0713477; recipe and handbook moved in this round
