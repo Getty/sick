@@ -21,7 +21,9 @@ them together. This handbook is the path through all of it.
 | [8. Client certificates](08-client-certificates.md) | certificates for people and machines, checked by nginx, mapped to who may enter |
 
 What could not be tried in the lab is collected on the
-[HQ checklist](hq-checklist.md), with what counts as passed.
+[HQ checklist](hq-checklist.md), with what counts as passed. What only the
+person responsible for the CA can decide is in
+[decisions](decisions.md), each with a proposal.
 
 Conventions:
 

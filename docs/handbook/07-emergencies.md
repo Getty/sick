@@ -6,8 +6,9 @@ The distinction that runs through all of them: after a **planned** change
 you may roll back to the previous state; after a **compromise** you may not,
 because the previous state is what the attacker holds.
 
-This edition covers the CA side (chapter 2). Clients, devices and services
-follow with their chapters.
+The CA side comes first, then certificates and devices, then client
+certificates. For a planned change (renewing the intermediate, replacing the
+root) see chapter 2; this chapter is for when something broke.
 
 ## A device's key is exposed
 
@@ -50,10 +51,22 @@ then add it again) to cut every account, and rotate the DNS credential.
 
 ## The CA is down
 
-At stake: nothing at once. Certificates stay valid; only renewals fail.
-How long you have is the recovery budget of chapter 1: about 30 days for
-devices through SICK (`renew_before`), for ACME services about a third of
-their lifetime.
+At stake: nothing at once. Certificates stay valid; only issuing and
+renewing fail. How long you have depends on the consumer – the recovery
+budget of chapter 1:
+
+| Consumer | Renews | You have, with the defaults |
+|---|---|---|
+| devices through SICK | `renew_before` before the end (30 days) | about 30 days; `SickRenewalLate` fires after 15 |
+| ACME services (Traefik, Caddy, acme.sh) | with a third of 30 days left | about 10 days |
+| cert-manager (ACME and step-issuer) | `renewBefore: 240h` | about 10 days |
+| Proxmox VE, native ACME (`acme-long`, 60 days) | less than 30 days left | about 30 days |
+| Proxmox Backup Server, native ACME | a third of 30 days left | about 10 days |
+| machine client certificates (`clients`, 30 days) | `--expires-in 240h` | about 10 days |
+| people's client certificates | when the person renews | until each one's end |
+| clients' trust | does not depend on the CA | – |
+
+Watch `SickCAUnreachable` (chapter 6): it fires after half an hour.
 
 1. `docker compose ps`, `docker compose logs ca` – a full disk or a lost
    volume?
@@ -137,3 +150,61 @@ constraints and issue for any name to every client that trusts your root.
 
 *Not tried* as a drill; the planned root replacement (`t/e2e/ca-rollover.sh`)
 exercises the mechanics.
+
+## A certificate on a device has expired
+
+At stake: clients refuse the device until it has a new certificate. The CA
+is fine. SICK should have renewed long before (`SickRenewalLate`,
+`SickCertificateExpiring`); find out why after the fix (`sick inventory
+--live`, the last run's output, `consecutive_failures`).
+
+1. `sick check <device>` – it says `expiring` (an expired certificate counts
+   as due).
+2. `sick run --force <device>` – a new key and certificate, checked on the
+   port. A device in back-off is tried at once with `--force`.
+3. If the run cannot reach the device, see the next section.
+
+Types that talk to the device over SSH (`cisco-sb`, `acmesh` with the hooks
+`ssh` and `routeros`) and `files` are not affected by the expired
+certificate itself. The Proxmox types verify the node's TLS before they send
+the token: an *expired* certificate of our CA no longer verifies, so they
+refuse the node – do the way back of the device type (next section: the node
+then presents its own certificate again) and run SICK as for a first upload.
+
+## A device is locked out
+
+The device no longer serves HTTPS, or serves something broken, after a
+deployment. Always first: **take the device out of the device list** (or
+`sick run` puts the same thing back), then the way back of its type:
+
+| Type | What happens | Way back |
+|---|---|---|
+| `files` | the service did not take the new files | automatic: a failed `reload` switches `dir/.sick/current` back to the previous generation and reloads again (chapter 6). By hand: point `current` at `.sick/previous` and reload |
+| `cisco-sb` | a refused import can leave the certificate slot empty: the switch's HTTPS has no certificate | over SSH (SICK used SSH, so it still works): `crypto certificate 1 generate key-generate 2048 cn <name>` in configuration mode makes a self-signed certificate in the slot (it reads nothing while it generates the key – wait for the prompt); then fix the cause and `sick run --force` (SICK-Target-CiscoSB, `docs/device-notes.md`) |
+| Linux over SSH (`ssh` hook) | nginx refused the reload: it still serves the old certificate from memory; after a restart it would not start | copy the hook's backup back: `/etc/nginx/tls/backup/<name>-backup-<time>/` (chapter 5); without the backup (forced-command variant), `sick run --force` after fixing the cause |
+| RouterOS (`routeros` hook) | www-ssl points at a certificate that failed to import, or the private key file stays in `/file` | over SSH or WinBox: `/ip service set www-ssl certificate=<another certificate>` (keep one RouterOS made itself), remove the stray key file; there is no previous SICK certificate on the router |
+| Proxmox VE (`proxmox-ve`) | **a wrongly ordered chain stops pveproxy** – no GUI, no API | console or SSH: `rm /etc/pve/local/pveproxy-ssl.*; systemctl restart pveproxy` – the node presents `pve-ssl.pem` of the cluster CA again. The device type checks the order before it uploads; this is for an upload by other means |
+| Proxmox Backup Server (`proxmox-bs`) | **PBS answers 200 to a key that does not belong to the certificate, writes it, and its proxy no longer starts** | console or SSH: `proxmox-backup-manager cert update --force` – a new self-signed certificate. The device type checks key against certificate before it uploads |
+
+The Proxmox commands are from SICK-Target-Proxmox's checklist and were seen
+on real nodes in containers; on a node under systemd they are on the HQ
+checklist.
+
+## A client device is lost (client certificates)
+
+At stake: the person's or machine's certificate works until it expires –
+step-ca revokes passively, and a certificate the lost device renewed before
+you acted keeps renewing (chapter 8).
+
+1. Put the serial into nginx's `revoked-serials.map` and reload nginx – the
+   immediate block (403).
+2. `step ca revoke <serial>`.
+3. Look up later serials of that identity in the CA log (every renewal
+   names subject and serial) and do 1–2 for each.
+4. If in doubt, remove the identity from `principals.map`: nothing of it
+   gets in, whatever the serial.
+5. Issue a new certificate with a new key on a new device (chapter 8).
+
+Tested: the block by `revoked-serials.map` and the refused renewal after
+`step ca revoke` (`t/e2e/mtls.sh`).
+

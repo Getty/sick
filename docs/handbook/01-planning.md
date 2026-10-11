@@ -134,6 +134,9 @@ Two consequences worth stating:
 
 ## Decisions that are yours
 
+The full records – options, proposal, why, where it is set – are in
+[decisions](decisions.md); the table is the short form.
+
 Each is a setting; the recommendation is ours, with the reason.
 
 | Decision | Setting | Recommendation | Why |
