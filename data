@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-11T00:46:08Z
+created: 2026-10-10T22:49:45Z
+id: 45
+priority: low
+started: 2026-10-10T23:36:39Z
+status: done
+tags:
+- e2e
+- hygiene
+- finding
+title: 'run-local.sh: label its Compose resources sick=1'
+updated: 2026-10-11T00:46:19Z
+---
+
+Finding from k41: t/e2e/run-local.sh relies on the Compose project label, not sick=1, unlike the other e2e scripts. Add the label through an override and clean up by it.
+
+2026-10-11 sick-worker-compose: compose.local.yml labels ca, trust, sick (and its built image), web, the five volumes and the default network sick=1; run-local.sh checks this in step 1 and removes leftovers by label sick=1 + project label after down -v, project check kept. run-local.sh run once: ALL PASSED. Note: the rebuilt sick:local now carries the label; the previous unlabelled sick:local image (dangling) was left alone.
+
+Committed as 2e000cf
