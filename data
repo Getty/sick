@@ -1,0 +1,14 @@
+---
+class: standard
+created: 2026-10-11T00:44:50Z
+id: 51
+priority: low
+status: backlog
+tags:
+- acme
+- decision
+title: 'Decide (maintainer): require external account binding on the ACME provisioner'
+updated: 2026-10-11T00:44:50Z
+---
+
+Finding from k47 (2026-10-11). Without EAB anyone who reaches port 9000 can open an ACME account; names are bounded by the challenge path (internal DNS, route from the CA to the service), the CA policy and the name constraints. step-ca supports requireEAB. Recommendation in the handbook (chapter 4 and the decision table): keep the ACME endpoint reachable from admin/service networks only; require EAB when it must be reachable more widely. Not tried. Make it settable in init-ca.sh when decided.
