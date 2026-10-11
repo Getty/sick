@@ -1,0 +1,18 @@
+# /home/sick-deploy/.ssh/authorized_keys - root:root, mode 0644, in a
+# directory .ssh and a home that belong to root as well, so that the
+# account cannot change it (and take the restrictions off again).
+# One of the two lines; replace the key with the public half of your
+# deploy key, 192.0.2.10 with the address SICK connects from.
+#
+# restrict: no pty, no port, agent or X11 forwarding, no ~/.ssh/rc.
+# from:     only the address SICK connects from.
+#
+# 1. With the hook's backup (DEPLOY_SSH_BACKUP_PATH in sick.yml): the hook
+#    sends shell code of its own, so the key gets a shell; what it can do
+#    is bounded by the file permissions and the sudoers rule.
+restrict,from="192.0.2.10" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample sick-deploy
+#
+# 2. Smaller: no shell at all. DEPLOY_SSH_BACKUP: "no" in sick.yml, and
+#    the forced command sick-deploy-gate of this directory, which allows
+#    SFTP and the reload and nothing else.
+#restrict,from="192.0.2.10",command="/usr/local/sbin/sick-deploy-gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample sick-deploy

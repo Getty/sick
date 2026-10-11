@@ -219,3 +219,10 @@ Revision history for SICK
       issuance and renewal seen on the Service from a pod, a name outside the
       policy refused, and a challenge for a name the client does not control
       failing.
+    - contrib/devices/linux-ssh/: recipe for a Linux host with nginx, reached
+      over SSH through the acme.sh hook ssh (an acmesh device); the host key
+      is checked and the deploy key is used for nothing else; the account
+      may write only the certificate directory and reload nginx through one
+      sudo rule; a variant with a forced command needs no shell at all.
+      Proven by t/e2e/device-ssh.sh, including a refused host key, a refused
+      key, a failing reload and an unreachable host.

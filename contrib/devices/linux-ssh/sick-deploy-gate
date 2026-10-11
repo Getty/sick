@@ -1,0 +1,20 @@
+#!/bin/sh
+# /usr/local/sbin/sick-deploy-gate - root:root, mode 0755.
+#
+# The forced command of the deploy key (authorized_keys: restrict,command=
+# "/usr/local/sbin/sick-deploy-gate"). It lets through what the acme.sh hook
+# "ssh" (3.1.6) sends with DEPLOY_SSH_USE_SCP=yes and DEPLOY_SSH_BACKUP=no -
+# two SFTP sessions for key and certificate, then the reload - and refuses
+# everything else, a login shell included.
+#
+# The second pattern is the hook's own spelling of DEPLOY_SSH_REMOTE_CMD
+# (sh -c '<space><command>;'); keep the two in step. With the hook's
+# backup on, it sends shell code of its own first, which this refuses.
+case $SSH_ORIGINAL_COMMAND in
+  /usr/lib/openssh/sftp-server | internal-sftp)
+    exec /usr/lib/openssh/sftp-server ;;
+  "sh -c ' sudo -n /usr/sbin/nginx -s reload;'")
+    exec sudo -n /usr/sbin/nginx -s reload ;;
+esac
+echo "sick-deploy-gate: refused" >&2
+exit 1

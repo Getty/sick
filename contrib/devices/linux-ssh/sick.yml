@@ -1,0 +1,35 @@
+# A Linux host with nginx, reached over SSH by the acme.sh hook "ssh".
+# Merge the device into your device list; ca: and defaults: stay yours.
+# t/e2e/device-ssh.sh uses this file as it stands (www.example.internal is
+# a network alias of the test host there).
+#
+# Nothing in here is secret. The private key of the deploy account is a
+# file (/etc/sick/secrets/www-deploy.key, owned by the user sick runs as,
+# mode 0600); ssh reads it, it is never in the list or the environment.
+# The known_hosts file holds the host key of www, taken from the host
+# itself, not from the network (see README.md).
+devices:
+  www:
+    type: acmesh
+    hook: ssh
+    names: [www.example.internal]
+    # host and port default to the first name and 443: SICK checks what
+    # nginx presents there, before and after the deployment
+    env:
+      DEPLOY_SSH_USER: sick-deploy
+      DEPLOY_SSH_SERVER: www.example.internal
+      # the hook splits these two at spaces: no spaces in the paths
+      DEPLOY_SSH_CMD: ssh -T -i /etc/sick/secrets/www-deploy.key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/sick/secrets/www.known_hosts -o ConnectTimeout=10
+      DEPLOY_SSH_SCP_CMD: scp -q -i /etc/sick/secrets/www-deploy.key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/sick/secrets/www.known_hosts -o ConnectTimeout=10
+      # files by scp: without it the hook puts the private key into the
+      # command line of a shell on the host, readable in ps by every user
+      DEPLOY_SSH_USE_SCP: "yes"
+      DEPLOY_SSH_KEYFILE: /etc/nginx/tls/key.pem
+      DEPLOY_SSH_FULLCHAIN: /etc/nginx/tls/fullchain.pem
+      # the hook's copy of the files it overwrites, kept 180 days; inside
+      # the one directory the account may write. For the smaller access of
+      # sick-deploy-gate (no shell): DEPLOY_SSH_BACKUP: "no" instead
+      DEPLOY_SSH_BACKUP_PATH: /etc/nginx/tls/backup
+      # the one command sudo allows (sudoers in this directory); nginx
+      # checks the configuration and the certificate before it reloads
+      DEPLOY_SSH_REMOTE_CMD: sudo -n /usr/sbin/nginx -s reload

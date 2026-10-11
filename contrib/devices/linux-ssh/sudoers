@@ -1,0 +1,10 @@
+# /etc/sudoers.d/sick-deploy - root:root, mode 0440; check with
+#   visudo -cf /etc/sudoers.d/sick-deploy
+#
+# The deploy account may reload nginx, with exactly these arguments, and
+# nothing else. "nginx -s reload" parses the configuration and loads the
+# certificates first and exits 1 when they do not load; nginx then keeps
+# serving what it had. With systemd, "systemctl reload nginx" would be the
+# rule instead (Debian's unit reloads with "nginx -g ... -s reload" too);
+# not tried, the test host has no systemd.
+sick-deploy ALL=(root) NOPASSWD: /usr/sbin/nginx -s reload
