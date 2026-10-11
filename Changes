@@ -275,3 +275,6 @@ Revision history for SICK
       and proxmox-bs) from the neighbouring checkout, with
       libio-socket-ssl-perl and the patched libhttp-tiny-perl; the build
       context now needs three checkouts.
+    - Removed t/e2e/device-proxmox.sh and its stand-in API, which modelled
+      Proxmox wrongly in eleven points; docs/findings/device-proxmox.md marks
+      them corrected and points to SICK-Target-Proxmox.
