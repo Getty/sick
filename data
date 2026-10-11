@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-10-11T08:13:43Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-10-11T10:13:59Z
+created: 2026-10-11T08:10:42Z
+id: 69
+priority: high
+started: 2026-10-11T08:13:43Z
+status: done
+tags:
+- handbook
+- p9
+title: P9c Chapter 7 completed and the maintainer's decisions in one place
+updated: 2026-10-11T10:13:59Z
+---
+
+Certificate expired, device locked out per device type (files, cisco-sb, Linux/ssh, RouterOS, PVE, PBS incl. the bad-key finding), lost client device, CA unreachable with deadlines per consumer; docs/handbook/decisions.md with decision records for every maintainer decision. Part of P9 (k20); binding: docs/roadmap.md section P9 and the hub's brief of 2026-10-11.
+
+Done. Chapter 7 completed (expired cert, lockout per device type, lost client device, CA-down deadlines per consumer); decisions in docs/handbook/decisions.md (b6501ab and later).
