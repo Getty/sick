@@ -1,7 +1,9 @@
 # Added to docker/compose.yml by t/e2e/run-local.sh (docker compose -f ... -f this file).
-# The shipped file stays as it is; this one only adds the "device": a
+# The shipped file stays as it is; this one adds the "device": a
 # container, "web", that serves over TLS whatever a files device writes into
-# a shared volume, and the volume itself.
+# a shared volume, and the volume itself; and it labels every container,
+# volume and network of the project, and the image it builds, sick=1, by
+# which run-local.sh cleans up.
 #
 # SICK_E2E_HERE is the directory of this file (set by the script), SICK_IMAGE
 # the image the base file builds: it has openssl and a shell, which is all
@@ -9,12 +11,22 @@
 
 services:
 
+  ca:
+    labels: { sick: "1" }
+
+  trust:
+    labels: { sick: "1" }
+
   sick:
+    labels: { sick: "1" }
+    build:
+      labels: { sick: "1" }
     volumes:
       # the dir of the files device
       - devfiles:/srv/device
 
   web:
+    labels: { sick: "1" }
     image: ${SICK_IMAGE:-sick:local}
     pull_policy: never
     init: true
@@ -36,4 +48,11 @@ services:
       start_period: 5s
 
 volumes:
-  devfiles:
+  ca: { labels: { sick: "1" } }
+  handover: { labels: { sick: "1" } }
+  state: { labels: { sick: "1" } }
+  trust: { labels: { sick: "1" } }
+  devfiles: { labels: { sick: "1" } }
+
+networks:
+  default: { labels: { sick: "1" } }

@@ -21,7 +21,9 @@
 #      init-ca.sh logged; curl --cacert root_ca.pem reaches the CA
 #   6. restarting the CA changes nothing
 #   7. teardown, also after a failure or Ctrl-C: the project is taken down
-#      with its volumes, and no container, volume or network of it is left
+#      with its volumes, what is left of it with the label sick=1 is
+#      removed by that label, and no container, volume or network of the
+#      project is left (every one of them carries sick=1, checked in step 1)
 #
 # It DESTROYS the Compose project it works on (default sick-e2e), volumes
 # and CA included. It touches nothing else: no other project, no prune.
@@ -189,6 +191,10 @@ cleanup() {
   if [ -n "$armed" ]; then
     note "docker compose -p $project down -v --remove-orphans"
     compose down --volumes --remove-orphans 2>&1 | plain | sed 's/^/    /'
+    # what is left of the project and carries sick=1: by those labels
+    docker ps -aq --filter label=sick=1 --filter "label=com.docker.compose.project=$project" | xargs -r docker rm -f -v >/dev/null 2>&1
+    docker volume ls -q --filter label=sick=1 --filter "label=com.docker.compose.project=$project" | xargs -r docker volume rm >/dev/null 2>&1
+    docker network ls -q --filter label=sick=1 --filter "label=com.docker.compose.project=$project" | xargs -r docker network rm >/dev/null 2>&1
     left=$(
       docker ps -a --format '{{.Names}}' | grep -E "^${project}[-_]" | sed 's/^/container /'
       docker volume ls --format '{{.Name}}' | grep -E "^${project}[-_]" | sed 's/^/volume /'
@@ -249,6 +255,21 @@ pass 'the root in the CA volume is the one logged'
 hosts=$(docker inspect -f '{{range .NetworkSettings.Ports}}{{range .}}{{.HostIp}} {{end}}{{end}}' "$(compose ps -q ca)" "$(compose ps -q trust)" | tr -d '\n')
 [ "$hosts" = '127.0.0.1 127.0.0.1 ' ] || fail "published on: $hosts (not 127.0.0.1 only)"
 pass 'the CA and the trust page are published on 127.0.0.1 only'
+unlabelled=$(
+  for c in $(docker ps -aq --filter "label=com.docker.compose.project=$project"); do
+    [ "$(docker inspect -f '{{index .Config.Labels "sick"}}' "$c")" = 1 ] || docker inspect -f 'container {{.Name}}' "$c"
+  done
+  for v in $(docker volume ls -q --filter "label=com.docker.compose.project=$project"); do
+    [ "$(docker volume inspect -f '{{index .Labels "sick"}}' "$v")" = 1 ] || echo "volume $v"
+  done
+  for n in $(docker network ls -q --filter "label=com.docker.compose.project=$project"); do
+    [ "$(docker network inspect -f '{{index .Labels "sick"}}' "$n")" = 1 ] || docker network inspect -f 'network {{.Name}}' "$n"
+  done
+  image=sick:local    # SICK_IMAGE is unset above: the default of the base file
+  [ "$(docker image inspect -f '{{index .Config.Labels "sick"}}' "$image")" = 1 ] || echo "image $image"
+)
+[ -z "$unlabelled" ] || { printf '%s\n' "$unlabelled" | sed 's/^/      | /' >&2; fail 'without the label sick=1 (listed above)'; }
+pass 'every container, volume and network of the project, and the image built, carry the label sick=1'
 
 #### 2. check
 
