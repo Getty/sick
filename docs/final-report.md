@@ -41,12 +41,16 @@ cards stay open.
   step with its command and output; a decision page; an HQ checklist; a page
   on how it was tested.
 
-**How it is proven:** 245 unit tests (`prove -lr t`), 14 container test
-scripts under `t/e2e/` (plus `run-lab.sh`, which needs a real switch) (all green against the committed state at the end of
-each package; the last run is recorded in each chapter's test report), and
-the handbook walked through from zero four times by agents without prior
-knowledge, plus the two drills (restore, compromised intermediate) from the
-text alone (`docs/handbook/walkthroughs.md`). The second drill found a
+**How it is proven:** 245 unit tests (`prove -lr t`; 2 skipped without
+`pwsh`, the syntax check of `trust-windows.ps1`), 14 container test scripts
+under `t/e2e/` plus one in SICK-Target-Proxmox (`run-lab.sh`, which needs a
+real switch, is not among them and was not run), all green against the
+committed state at the end of each package – the last run is recorded
+below and in each chapter's test report – and the handbook walked through
+from zero in five rounds by agents without prior knowledge, plus the two
+drills (restore, compromised intermediate) from the text alone
+(`docs/handbook/walkthroughs.md`). In the fifth round every section and
+both drills ran without a blocker and without a guess. The second drill found a
 mistake in substance in the compromise chapter, which is now corrected: a
 stolen intermediate key is cut off for clients only by a root replacement.
 
@@ -119,4 +123,5 @@ iDRAC 7/8 (needs `WWW::iDRAC` first).
 | k72 | which directories ship on CPAN | agent and CI configuration are pruned; the rest is your decision |
 | k73, k74 (and #6 in cisco, #8 in proxmox) | release blockers: pin `SICK 0.001` in the target dists; GitHub metadata wrong because the remotes are SSH host aliases | need the core released first, and the release machine's remote |
 | k75, k76 | two small fixes (a hint in `trust-nss.sh`, an example's `mode_key`) | found in the last walkthroughs, not release-blocking |
+| k77 | `docker/README.md` still shows the lab form of the secrets directory and the root-key medium on the CA host, where the handbook now uses a root-owned directory and a transfer medium | prose under `docker/`, the worker's lane; not release-blocking |
 | cisco #4, #5; proxmox #9 | small findings in the target distributions | not release-blocking |

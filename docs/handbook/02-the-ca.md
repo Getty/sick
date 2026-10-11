@@ -38,6 +38,9 @@ What you need on the table:
   off, or a container with `--network none` as below);
 - the removable medium for the root key (`/media/offline` below), and a
   second one for its copy;
+- a third medium that carries the CA's part to the CA host
+  (`/media/transfer` below) – the media with the root key never go into a
+  machine on the network;
 - a password for the root key in a file **on a different medium** than the
   key (`/media/pwstick` below), later kept apart from the key (a password
   manager, a sealed envelope);
@@ -139,12 +142,15 @@ work as they are, with the host paths).
 
 Both lines must print the same sum – and the same again for the copy: mount
 the second medium's `root/` over `/work/root` (`-v /media/copy/root:/work/root:ro`)
-and run the first line again. Keep
-`for-the-ca/root_ca.crt` and `for-the-ca/intermediate_ca.crt` (public) on the
-root medium as well: the next intermediate renewal needs them. Then store the
-two key media and the password medium in three places, and wipe any working
-copy of `for-the-ca/intermediate_ca_key` and `password` once the CA has
-imported them (after the first start, next section).
+and run the first line again. Copy `for-the-ca/` to the transfer medium,
+the only one that goes to the CA host (`cp -a /media/offline/for-the-ca
+/media/transfer/`), and `for-the-ca/root_ca.crt` and
+`for-the-ca/intermediate_ca.crt` (public) to the second key medium as well –
+the first has them already: the next intermediate renewal needs them. Then
+store the two key media and the password medium in three places, and wipe
+`for-the-ca/intermediate_ca_key` and `password` from the transfer and the
+first key medium once the CA has imported them (after the first start, next
+section).
 
 ### On a YubiKey or an HSM instead of a file
 
@@ -169,8 +175,8 @@ cd sick/docker
 cp sick.example.yml sick.yml        # then set ca.url to https://ca.example.internal:9000;
                                     # the device examples are commented out until you add yours
 sudo install -d -m 0700 -o root secrets   # credential files: owned by root, 0600 (docker/README.md)
-cat > .env <<'END'
-SICK_CA_IMPORT=/media/offline/for-the-ca
+cat >> .env <<'END'                 # appends; keep what an .env of yours already sets
+SICK_CA_IMPORT=/media/transfer/for-the-ca
 SICK_CA_DNS=ca.example.internal
 SICK_CA_ALIAS=ca.example.internal
 SICK_CA_ALLOW_DNS=*.example.internal
@@ -193,8 +199,8 @@ init-ca: root fingerprint (SHA-256): 9c3289606dff96f99812f9cf9f90a499b4d32b67423
 ```
 
 The root fingerprint must be the one of the ceremony. Now wipe
-`for-the-ca/intermediate_ca_key` and `password` from the offline media: the
-CA holds them. (`SICK_CA_PORT` and
+`for-the-ca/intermediate_ca_key` and `password` from the transfer medium and
+the key medium: the CA holds them. (`SICK_CA_PORT` and
 `SICK_TRUST_PORT` take `address:port` or a port alone, which publishes on
 all interfaces; put a firewall in front of 9000 either way, chapter 4.
 Comparing fingerprints: `openssl x509 -fingerprint -sha256` prints them with
@@ -297,7 +303,8 @@ the default project `sick` (`docker volume ls` shows it):
 ./ca-backup.sh restore --from /safe/ca-2026-10-10.tar --volume sick_ca_drill
 ```
 
-`backup` prints, among others, `ca-backup: the CA was stopped for 2s` and
+`backup` prints, among others, `ca-backup: the CA was stopped for Ns` (1–3 s
+in the lab) and
 `ca-backup: wrote /safe/ca-2026-10-10.tar (… bytes, mode 0600) and
 /safe/ca-2026-10-10.tar.manifest`; `restore` prints `the archive matches its
 manifest`, `restored into sick_ca_drill: 11 files, each as in the manifest`
@@ -434,10 +441,12 @@ type from the current intermediate (read back with openssl; `--dns`, `--ip`,
 and writes a record that says which intermediate it follows. The root key
 is only read.
 
-On the CA host:
+Copy `new-intermediate/` to the transfer medium (`cp -a
+/media/offline/new-intermediate /media/transfer/`) and take only that one to
+the CA host:
 
 ```bash
-docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose cp /media/transfer/new-intermediate/. ca:/home/step/switch
 docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
 ```
 
@@ -514,7 +523,9 @@ docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
 Handle its output as for the first: write the root fingerprint down, copy
 `root2/root_ca_key` to the second medium and compare the public keys (the
 command of "The ceremony", with `root2` and `for-the-ca-2`), keep
-`for-the-ca-2/*.crt` on both media. Put the new root where the `sick`
+`for-the-ca-2/*.crt` on both media, and copy `for-the-ca-2/` to the
+transfer medium (`cp -a /media/offline/for-the-ca-2 /media/transfer/`) for
+the CA host. Put the new root where the `sick`
 service can read it – the secrets directory is mounted already and owned by
 root; a root is public, so mode 0644 – and announce it. Before the trust
 page changes, keep a copy of its scripts: in phase C clients remove the old
@@ -524,7 +535,7 @@ root with them (the new page's scripts carry both roots):
 mkdir -p ~/trust-before-A && for f in trust-linux.sh trust-nss.sh trust-macos.sh trust-windows.ps1; do
   curl -fsS -o ~/trust-before-A/$f http://127.0.0.1:8080/$f; done
 cd sick/docker
-sudo install -m 0644 -o root /media/offline/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
+sudo install -m 0644 -o root /media/transfer/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
 # in sick.yml, ca section:   additional_roots: [/etc/sick/secrets/root_ca_2.crt]
 docker compose up -d --force-recreate sick          # it reads sick.yml at start
 docker compose run --rm sick sick trust /srv/trust
@@ -541,8 +552,8 @@ Wait until the clients that matter have it.
 volume stays, unused, for a planned rollback:
 
 ```bash
-sudo install -m 0644 -o root /media/offline/for-the-ca/root_ca.crt secrets/root_ca_old.crt
-# .env:     SICK_CA_IMPORT=/media/offline/for-the-ca-2
+sudo install -m 0644 -o root /media/transfer/for-the-ca/root_ca.crt secrets/root_ca_old.crt
+# .env:     SICK_CA_IMPORT=/media/transfer/for-the-ca-2
 # sick.yml: additional_roots: [/etc/sick/secrets/root_ca_old.crt]
 docker compose stop ca
 docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d
@@ -555,7 +566,8 @@ docker compose -f compose.yml -f compose.ca-next.yml run --rm sick sick trust /s
 `ca.root` follows the handover to the new root; every device gets a
 certificate of the new hierarchy (`renewed forced` – with no device yet,
 the table stays empty; devices come in chapter 5). Wipe
-`for-the-ca-2/intermediate_ca_key` and `password` from the offline media now
+`for-the-ca-2/intermediate_ca_key` and `password` from the transfer and the
+key medium now
 that the CA has imported them. Note that the file names on the trust page
 follow the roles: from phase B on `root_ca.*` is the **new** root and
 `root_ca_2.*` the old one – the fingerprints on the page say which is
@@ -574,12 +586,14 @@ recreate `sick`, run `sick trust`, and have clients remove the old root
 (chapter 3, "Taking trust away"). Then the old volume can go (`docker volume
 rm sick_ca`, the project's `_ca` volume – keep its last backup until you are
 sure), and so can the two root files (`sudo rm secrets/root_ca_2.crt
-secrets/root_ca_old.crt`). Put `COMPOSE_FILE=compose.yml:compose.ca-next.yml`
-into `.env` (`SICK_CA_IMPORT` points at `for-the-ca-2` since phase B), and
-back up the new volume (`./ca-backup.sh backup --volume sick_ca-next --to
+secrets/root_ca_old.crt`). Before you remove the volume, put
+`COMPOSE_FILE=compose.yml:compose.ca-next.yml` into `.env`
+(`SICK_CA_IMPORT` points at `for-the-ca-2` since phase B); then back up the
+new volume (`./ca-backup.sh backup --volume sick_ca-next --to
 …`). Clients remove the old root with the script kept in phase A
-(`~/trust-before-A/`), or by file name – the phase-A scripts carry both
-roots.
+(`~/trust-before-A/`, the old root alone), or by file name – the scripts
+the page serves from phase A on carry both roots and would remove the new
+one too.
 
 **Rollback.** In a *planned* replacement, going back is starting without
 `compose.ca-next.yml` (the old CA is back), pointing `additional_roots` at

@@ -99,7 +99,8 @@ See `k8s/README.md`.
 **Docker Compose**: the `sick` service of `docker/` runs `sick run` every
 `SICK_INTERVAL` and `sick trust` after each run (chapter 2). It has no
 notification and no metrics of its own. For both, set `SICK_INTERVAL` long
-(the timer below does the runs) or leave it, and add on the host a cron
+(the cron line below does the runs) or leave it – the lock keeps the two
+apart, the second ends with exit 3 – and add on the host a cron
 line that runs through the container – a file in `/etc/cron.d/`, run as a
 user allowed to use `docker` (here `admin`), in `sick/docker`; `-T` because
 cron has no terminal; Compose's own messages go to `/dev/null` so that only
@@ -134,6 +135,10 @@ webhook_url_file = /etc/sick/notify-webhook.url
 #webhook_cacert  = /etc/sick/root_ca.pem
 #mail_to         = ops@example.org
 ```
+
+Write the URL file yourself, readable by the user that runs the
+notification only: `sudo sh -c 'umask 077; echo "https://…" >
+/etc/sick/notify-webhook.url'`.
 
 The configuration is parsed, never executed; an unknown key is an error.
 The URL reaches curl on its standard input, never as an argument, and

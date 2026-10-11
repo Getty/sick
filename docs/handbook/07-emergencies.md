@@ -76,10 +76,9 @@ Watch `SickCAUnreachable` (chapter 6): it fires after half an hour.
 3. Volume lost or damaged: restore the last backup (chapter 2, "Backup and
    a restore drill"), in `sick/docker`:
 
-   Put the manifest you keep apart from the archive back next to it as
-   `<archive>.manifest` first (compare it with the second copy chapter 2 has
-you keep) – without it
-   nothing is restored.
+   Put the manifest back next to the archive as `<archive>.manifest`,
+   after checking it against the second copy you keep elsewhere (chapter
+   2, `cmp`). Without it, `restore` refuses.
 
    ```bash
    docker compose create ca
@@ -158,8 +157,8 @@ off for clients. Keep the order.
 1. **Stop the CA**: `docker compose stop ca`. It stays stopped until step 4.
 2. **Offline, a new intermediate with a new key** under the root
    (`ceremony.sh --renew-intermediate`, [chapter 2](02-the-ca.md#renewing-the-intermediate)),
-   and copy it into the stopped CA:
-   `docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch`.
+   and copy it into the stopped CA from the transfer medium:
+   `docker compose cp /media/transfer/new-intermediate/. ca:/home/step/switch`.
 3. **With the CA still stopped**, switch, retire the old one at once (no
    overlap) and rotate the provisioner – it was in the same volume, and a
    stolen provisioner key could otherwise get certificates from the *new*
@@ -183,7 +182,8 @@ off for clients. Keep the order.
    delete their stored certificate and restart; acme.sh: `acme.sh --renew
    --force -d <name>`; cert-manager: `cmctl renew --all` or delete the
    Secrets).
-6. **Publish** – first keep a copy of the old page (`curl -fsS -o
+6. **Publish** – the run of step 5 does not touch the trust page; first
+   keep a copy of the old page (`curl -fsS -o
    old-ca_bundle.pem http://127.0.0.1:8080/ca_bundle.pem`, and the old
    `trust-nss.sh`, `trust-linux.sh`, `trust-macos.sh`, `trust-windows.ps1`
    the same way: step 8 removes the old root with them), then `docker compose run --rm sick sick trust /srv/trust` – otherwise
@@ -197,7 +197,7 @@ off for clients. Keep the order.
    two different key IDs.) **Every backup from before
    step 3 holds the stolen key and the old provisioner – destroy them, and
    never restore one.** Wipe the old `for-the-ca/intermediate_ca_key` and
-   `password` on the offline media and the key and password in
+   `password` on the transfer and key media and the key and password in
    `new-intermediate/` once it is in the CA (keep its `ceremony.txt` with your
    records), and replace `for-the-ca/intermediate_ca.crt` by the new one:
    the next renewal follows the current intermediate.
