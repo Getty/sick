@@ -246,6 +246,17 @@ device type", and SICK-Target-CiscoSB as the worked example.
 
 ## Test report
 
+All e2e scripts were run against the committed state `8c14cbb` on
+2026-10-11, at the end of this package: `run-local.sh` 33 PASS,
+`ca-ceremony.sh` 101, `ca-recovery.sh` 51, `ca-rollover.sh` 125,
+`trust-anchors.sh` 96 PASS and its 8 expected FAIL findings, `trust-os.sh`
+465, `trust-runtimes.sh` 147, `ops.sh` 72, `acme-services.sh` 31 per
+service, `acme-k8s.sh` all parts, `device-ssh.sh` 71, `device-routeros.sh`
+46 (stand-in and CHR), `device-proxmox.sh` 73; each with 0 unexpected
+FAIL; afterwards nothing labelled `sick=1`, no `sick-*` k3d cluster, the
+host's default kubeconfig untouched. The rows below are the development
+runs.
+
 | Test | Versions | Expected | Observed | Not covered |
 |---|---|---|---|---|
 | `t/e2e/run-local.sh` | step-ca 0.30.2, sick image | a `files` device renewed, checked on its port, a second run changes nothing | ALL PASSED | – |
