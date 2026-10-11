@@ -152,7 +152,7 @@ Two lines of defence, both active in the setup above:
    was signed with a stolen intermediate key: `openssl verify` says
    `permitted subtree violation`, GnuTLS says `The certificate chain violates
    the signer's constraints`.
-2. **The policy of the running CA** (`SICK_CA_ALLOW_DNS`,
+2. **The policy of the running CA** (`SICK_CA_ALLOW_DNS`, `_EMAIL`, `_URI`,
    `SICK_CA_ALLOW_IP`): refuses with `dns name "..." not allowed`. It can be
    narrower than the constraints and changed without a ceremony; it does
    nothing against someone who has the CA keys.

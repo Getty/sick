@@ -68,7 +68,7 @@ it on port 80 (http-01) or 443 (tls-alpn-01).
 | nginx + acme.sh 3.1.6 | http-01 (webroot) | `--ca-bundle` of acme.sh | `--days -10` – 10 days before the end (the default 30 would renew a 30-day certificate one day before it expires) | about 10 days | [contrib/acme/nginx](../../contrib/acme/nginx/) |
 | cert-manager v1.21 (ACME `ClusterIssuer`) | http-01 through an Ingress | `caBundle` of the issuer | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
 | cert-manager + step-issuer 0.11 | none: a JWK provisioner of its own | `caBundle` of the `StepClusterIssuer` | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
-| Proxmox VE | http-01 (standalone, port 80) | the node's system store | once less than 30 days are left, checked daily by `pveupdate` – with 30-day certificates that is every day (card k57) | *not tried* | below |
+| Proxmox VE | http-01 (standalone, port 80) | the node's system store | once less than 30 days are left, checked daily by `pveupdate` – so PVE uses the provisioner `acme-long` (60 days): a renewal about every 30 days | *not tried* | below |
 
 "The root goes" is the trust the *service* needs to talk to the CA. The
 clients of the service need the root as in chapter 3.
@@ -137,13 +137,16 @@ Proxmox VE has its own ACME client. Written from the `pvenode` manual
 sudo sh trust-linux.sh install --fingerprint <sha256 from your ceremony record>
 
 pvenode acme account register sick-ca admin@example.internal \
-  --directory https://ca.example.internal:9000/acme/acme/directory
+  --directory https://ca.example.internal:9000/acme/acme-long/directory
 pvenode config set --acme account=sick-ca,domains=pve1.example.internal
 pvenode acme cert order
 systemctl restart pveproxy
 ```
 
-The standalone plugin answers http-01 on port 80 of the node, so the CA
+The directory is that of `acme-long`, a declared provisioner with 60-day
+certificates (`docker/provisioners.example.json`): PVE renews once less than
+30 days are left, and would renew every day with the 30-day certificates of
+`acme`. The standalone plugin answers http-01 on port 80 of the node, so the CA
 must reach the node there under that name. Proxmox Backup Server has the
 same mechanism (`proxmox-backup-manager acme …`, *not tried*). If the node
 cannot be reached by the CA, use SICK with the acme.sh hook `proxmoxve`

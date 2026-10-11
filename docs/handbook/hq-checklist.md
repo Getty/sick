@@ -95,3 +95,20 @@ host from which the devices are reachable.
 - [ ] **Prometheus and Alertmanager** scraping the textfile with the rules
       of `contrib/prometheus/`. *Passed:* `SickCAUnreachable` fires when
       the CA is stopped for half an hour and resolves when it is back.
+
+## Chapter 8 – client certificates
+
+- [ ] **Firefox and Chrome** with a person's PKCS#12 imported (Firefox:
+      *Your Certificates → Import*; Chrome: the OS store). *Passed:* the
+      browser offers the certificate, the mTLS service answers 200 with the
+      principal; without it 400; a not-allowed identity 403.
+- [ ] **Windows and macOS stores**: import the PKCS#12 (double-click, or
+      `security import`). *Passed:* Edge/Safari present it and get in.
+- [ ] **iOS and Android**: install the PKCS#12. *Passed:* Safari / Chrome
+      present it and get in.
+- [ ] **Loss drill**: revoke a person's serial and block it in
+      `revoked-serials.map`. *Passed:* 403 at once; `step ca renew` refused;
+      the CA log names any later serial.
+- [ ] **Decide: OIDC enrolment** for people instead of admin-issued
+      PKCS#12 (not tried).
+

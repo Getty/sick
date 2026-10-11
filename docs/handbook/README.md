@@ -18,6 +18,7 @@ them together. This handbook is the path through all of it.
 | [5. Devices that cannot](05-devices.md) | switches, routers, hypervisors and Linux hosts served by SICK, one recipe each |
 | [6. Operations](06-operations.md) | a schedule, a notification when a run fails, Prometheus metrics with alert rules relative to each device, an inventory of what is deployed |
 | [7. Emergencies](07-emergencies.md) | what to do when a key is lost or exposed, the CA is down or compromised, a certificate expired, a device is locked out |
+| [8. Client certificates](08-client-certificates.md) | certificates for people and machines, checked by nginx, mapped to who may enter |
 
 What could not be tried in the lab is collected on the
 [HQ checklist](hq-checklist.md), with what counts as passed.

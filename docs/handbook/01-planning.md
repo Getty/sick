@@ -121,7 +121,7 @@ what the Docker setup makes.
 |---|---|---|---|
 | JWK `sick` | the sick service only: the password is a file in the CA volume, handed over read-only | any name the intermediate's constraints and the CA policy allow | `serverAuth` only, up to `SICK_CA_MAX_LIFETIME` |
 | ACME `acme` | anyone who can reach the CA and prove control of a name (HTTP-01, TLS-ALPN-01, DNS-01) | names within the constraints and the policy that they can prove | `serverAuth` only, 30 days by default, at most 90 (chapter 4) |
-| client certificates | – (P8) | – | a provisioner of its own with `clientAuth` only |
+| JWK `clients` | the admin who enrols people and machines (chapter 8) | email identities of persons, DNS names of machines, within constraints and policy | `clientAuth` only, 30 days, at most 90 |
 | root key | the person(s) named in the ceremony record | a new intermediate | ceremonies only |
 
 Two consequences worth stating:
@@ -139,7 +139,7 @@ Each is a setting; the recommendation is ours, with the reason.
 | Decision | Setting | Recommendation | Why |
 |---|---|---|---|
 | Where the root key lives | `ceremony.sh --root-key`, `--root-password-file` | an encrypted key file on two removable media kept in different places, password stored separately; a YubiKey/HSM when you have one (chapter 2, *not tried*) | the root is needed every few years; losing it forces a root replacement, stealing it compromises everything |
-| Names and networks | `ceremony.sh --dns`, `--ip`, `--exclude-all-ip`; `SICK_CA_ALLOW_DNS`, `SICK_CA_ALLOW_IP` | the one internal domain and the private ranges in use, nothing wider | the constraint is enforced by step-ca when it issues and by clients when they verify (both proven, chapter 2) |
+| Names and networks | `ceremony.sh --dns`, `--ip`, `--email`, `--uri`, `--exclude-all-ip`; `SICK_CA_ALLOW_DNS`, `_IP`, `_EMAIL`, `_URI` | the one internal domain and the private ranges in use, nothing wider; with client certificates also the email domain (chapter 8) | the constraint is enforced by step-ca when it issues and by clients when they verify (both proven, chapter 2) |
 | Lifetimes | table above | as in the table | recovery budget |
 | Key types | `--kty`, device `key` | EC P-256 for the CA, RSA 2048 for device leaves | compatibility with old device firmware |
 | Who may use ACME | network access to port 9000, policy, external account binding (`requireEAB`, card k51) | the CA reachable from the service networks only, policy no wider than your domain; EAB when it must be reachable more widely | the ACME endpoint issues to whoever proves a name – chapter 4 |

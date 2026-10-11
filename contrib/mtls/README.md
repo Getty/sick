@@ -169,7 +169,7 @@ certificate too (`proxy_ssl_verify on`, `proxy_ssl_name`). `backend.conf`
 answers 403 to every other certificate and 400 to none – also to a valid
 client certificate of a person who goes round the proxy.
 
-A source-address allow (`allow 10.0.0.5; deny all;`) was the alternative:
+A source-address allow (`allow 192.0.2.5; deny all;`) was the alternative:
 simpler, but it trusts whoever has that address – any container on the
 same network, anything after a change of addresses – and it lets the
 header cross the network in clear. The certificate travels with the proxy

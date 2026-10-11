@@ -11,8 +11,8 @@ step-ca, `step` and acme.sh, plus a handbook. Perl code is written only where
 nothing existing does the job.
 
 Status as of 2026-10-10: P1, P2 (both repositories; sick-target-ciscosb 63ed4c4),
-P3, P4, P5, P6 and P7 done; the handbook has
-chapters 1 to 7 and the HQ checklist. Sharpened on 2026-10-10 against the skill `ssl-tls-pki`. Each package is a card on the karr board of this
+P3 to P8 done; the handbook has chapters 1
+to 8 and the HQ checklist. Sharpened on 2026-10-10 against the skill `ssl-tls-pki`. Each package is a card on the karr board of this
 repository (`karr list`); the card number is given in brackets.
 
 ## Inventory

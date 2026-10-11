@@ -200,9 +200,8 @@ evidence: [`docs/findings/device-proxmox.md`](../findings/device-proxmox.md).
 **Recommendation: native ACME** (chapter 4) wherever the CA can reach the
 node on port 80 – the node renews by itself and SICK holds no token. Two
 things to know: PVE renews an ACME certificate once it expires within 30
-days (checked daily), so with the CA's default 30-day ACME certificates a
-PVE node renews every day; give it longer certificates or accept that
-(card k57). PBS renews at a third of the lifetime and fits.
+days (checked daily), so it uses the ACME provisioner `acme-long` with
+60-day certificates (chapter 4), not the 30-day `acme`. PBS renews at a third of the lifetime and fits.
 
 **Otherwise the hooks**, as `acmesh` devices:
 
