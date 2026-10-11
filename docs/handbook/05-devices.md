@@ -72,10 +72,10 @@ $ sick check grafana
 DEVICE   STATUS   RENEW  DETAIL
 grafana  missing  yes    the device presents no certificate
 $ sick run grafana
-DEVICE   ACTION   REASON
+DEVICE   ACTION   REASON   ERROR
 grafana  renewed  missing
 $ sick run grafana
-DEVICE   ACTION     REASON
+DEVICE   ACTION     REASON  ERROR
 grafana  unchanged  ok
 ```
 
@@ -86,13 +86,43 @@ grafana  unchanged  ok
 - **Secret:** none besides the key, written 0600 into the generation
   directory.
 - **Restart:** the `reload` command. The service must read the files
-  through the links (`dir/cert.pem` → `.sick/current/…`); mount the
-  directory into a container, not single files.
+  through the links (`dir/fullchain.pem` → `.sick/current/…`) – serve
+  **`fullchain.pem`** and `key.pem`: `cert.pem` is the leaf alone, which a
+  client that trusts only the root cannot verify. Mount the directory into a
+  container, not single files. A service that reads its certificate at
+  every connection needs no `reload` at all.
 - **Check:** `host`/`port`; without `host`, SICK reads `dir/cert.pem`.
 - **Way back:** automatic – a failed reload switches back to the previous
   generation and reloads again (chapter 6).
 
-`t/e2e/run-local.sh` runs exactly this, in Docker, against the lab CA.
+**In the Docker setup of chapter 2** the reload above cannot run inside the
+`sick` container, and its file system is read-only apart from
+`/var/lib/sick`. [`contrib/devices/files-nginx/`](../../contrib/devices/files-nginx/)
+is a complete first device for it: an nginx beside the CA that loads the
+certificate at every handshake from SICK's state volume – so it starts
+before the first certificate exists and needs no reload – with the matching
+device entry (`mode_key: 0640`, because nginx reads the key as an
+unprivileged worker):
+
+```bash
+cd sick/docker
+# put the web: entry of ../contrib/devices/files-nginx/sick.yml under devices: in sick.yml
+docker compose -f compose.yml -f ../contrib/devices/files-nginx/compose.yml up -d web
+docker compose run --rm sick sick check web
+docker compose run --rm sick sick run web
+curl --cacert root_ca.crt --resolve web.example.internal:8443:127.0.0.1 \
+  https://web.example.internal:8443/                        # hello from web
+```
+
+(`root_ca.crt` from the trust page, checked against the ceremony's
+fingerprint; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). A TLS service that cannot start without a certificate would be
+`unreachable` instead of `missing`, and SICK does not issue for an
+unreachable device.
+
+A first run that failed for a configuration mistake puts the device into
+back-off (chapter 6); after fixing it, `sick run --force <device>`.
+
+(`t/e2e/run-local.sh` runs the same in Docker against the lab CA.)
 
 ## Cisco Small Business switches
 

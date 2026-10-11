@@ -24,22 +24,44 @@ The root key never enters the CA.
 
 What you need on the table:
 
-- a machine without network (a laptop with Wi-Fi off, or a container with
-  `--network none`) that has `step` and `openssl` – the `sick` image has
-  both, and `t/e2e/install-tools.sh` installs pinned versions;
-- the removable medium for the root key, and a second one for its copy;
-- a password for the root key in a file, kept apart from the key (a
-  password manager, a sealed envelope);
+- the `sick` image, built once on a machine with network from the three
+  checkouts side by side (`sick`, `sick-target-ciscosb`,
+  `sick-target-proxmox`; `docker/README.md`, "Quick start"):
+
+  ```bash
+  cd sick/docker && docker compose build sick && cd ../..
+  ```
+
+  It has `step` and `openssl`; `t/e2e/install-tools.sh` installs pinned
+  versions instead, if you prefer a laptop without Docker;
+- a machine without network for the ceremony itself (a laptop with Wi-Fi
+  off, or a container with `--network none` as below);
+- the removable medium for the root key (`/media/offline` below), and a
+  second one for its copy;
+- a password for the root key in a file **on a different medium** than the
+  key (`/media/pwstick` below), later kept apart from the key (a password
+  manager, a sealed envelope);
 - `docker/ceremony.sh` from this repository.
+
+Make the directories and the password first; the ceremony refuses to start
+without them (`ceremony: …/root.pw: no password in it, or not readable`):
+
+```bash
+mkdir -m 700 -p /media/offline/root /media/pwstick
+(umask 077; openssl rand -base64 32 > /media/pwstick/root.pw)
+```
+
+From the directory that holds the `sick` checkout:
 
 ```bash
 docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v "$PWD/docker/ceremony.sh:/ceremony.sh:ro" -v /media/offline:/work \
+  -v "$PWD/sick/docker/ceremony.sh:/ceremony.sh:ro" \
+  -v /media/offline:/work -v /media/pwstick:/pw:ro \
   --entrypoint bash sick:local /ceremony.sh \
   --operator 'A. Operator' \
   --out /work/for-the-ca \
   --root-key /work/root/root_ca_key \
-  --root-password-file /work/root/root.pw \
+  --root-password-file /pw/root.pw \
   --root-name 'Example Root CA' --intermediate-name 'Example Intermediate CA' \
   --dns example.internal --ip 192.0.2.0/24
 ```
@@ -51,7 +73,7 @@ ceremony: making the root 'Example Root CA' (EC P-256, 175320h)
 ceremony: making the intermediate 'Example Intermediate CA' (EC P-256, 43830h)
 ceremony: root fingerprint (SHA-256): 9c3289606dff96f99812f9cf9f90a499b4d32b674234de2212218ecb47d74a4c
 ceremony: root key: /work/root/root_ca_key - take it off this machine and keep it with its password, apart from the CA
-ceremony: for the CA (SICK_CA_IMPORT_DIR): /work/for-the-ca - the record is /work/for-the-ca/ceremony.txt
+ceremony: for the CA (SICK_CA_IMPORT): /work/for-the-ca - the record is /work/for-the-ca/ceremony.txt
 ```
 
 and leaves:
@@ -100,9 +122,18 @@ when you give DNS domains without IP ranges (see
 machine: it is what clients check the root against in chapter 3, over a
 channel an attacker on your network does not control.
 
-Afterwards: move `root/` to the media, check that the copy reads back (`step
-crypto key inspect` asks for the password and shows the public key), and
-wipe the working copy.
+**Afterwards:** copy `root/root_ca_key` to the second medium and check that
+each copy belongs to the root certificate – compare the public keys, never
+print the private one (`step crypto key inspect` would show it):
+
+```bash
+step crypto key public /media/offline/root/root_ca_key --password-file /media/pwstick/root.pw | sha256sum
+openssl x509 -in /media/offline/for-the-ca/root_ca.crt -noout -pubkey | sha256sum
+```
+
+Both lines must print the same sum (and the same again for the copy). Then
+store the two key media and the password medium in three places, and wipe
+any working copy.
 
 ### On a YubiKey or an HSM instead of a file
 
@@ -118,28 +149,58 @@ ceremony.
 
 ## Starting the CA on the result
 
+Put the settings into `docker/.env`, so that every later `docker compose`
+command uses the same ones – a variable given only on one command line is
+gone at the next, and Compose then recreates the CA with defaults:
+
 ```bash
-cd docker
-cp sick.example.yml sick.yml          # the ca section: url https://ca.example.internal:9000
-SICK_CA_IMPORT=/media/offline/for-the-ca \
-SICK_CA_DNS=ca.example.internal \
-SICK_CA_ALLOW_DNS='*.example.internal' SICK_CA_ALLOW_IP=192.0.2.0/24 \
-  docker compose -f compose.yml -f compose.import.yml up -d --build
-docker compose logs ca | grep init-ca
+cd sick/docker
+cp sick.example.yml sick.yml        # then set ca.url to https://ca.example.internal:9000;
+                                    # the device examples are commented out until you add yours
+mkdir -m 700 secrets                # the credential files your devices need
+cat > .env <<'END'
+SICK_CA_IMPORT=/media/offline/for-the-ca
+SICK_CA_DNS=ca.example.internal
+SICK_CA_ALIAS=ca.example.internal
+SICK_CA_ALLOW_DNS=*.example.internal
+SICK_CA_ALLOW_IP=192.0.2.0/24
+END
+docker compose -f compose.yml -f compose.import.yml up -d
+docker compose -f compose.yml -f compose.import.yml logs ca | grep init-ca
 ```
 
-The log starts with `init-ca: import mode:` – in lab mode it would say
-`init-ca: lab mode:`. Import mode checks that the root signed the
+The log, abridged:
+
+```text
+init-ca: staged root_ca.crt intermediate_ca.crt intermediate_ca_key password from /import for the import
+init-ca: import mode: no CA in /home/step yet: building it on the hierarchy in /home/step/import (no root key)
+init-ca: made the CA on the imported hierarchy: JWK provisioner 'sick', ACME provisioner 'acme'; no root key in /home/step
+init-ca: configuration updated: 'sick' grants up to 19800h, serverAuth only, names allowed: *.example.internal, 192.0.2.0/24; …
+init-ca: root fingerprint (SHA-256): 9c3289606dff96f99812f9cf9f90a499b4d32b674234de2212218ecb47d74a4c
+```
+
+The root fingerprint must be the one of the ceremony. In lab mode the log
+would say `init-ca: lab mode:`. Import mode checks that the root signed the
 intermediate and that the key belongs to the intermediate, refuses an
 import directory that holds any other private key (a root key put there by
 mistake), and builds the CA without its own throwaway keys ever touching
-the volume. After the first start the import directory is not read again.
+the volume. After the first start the import directory is not read again,
+and later commands may leave out `-f compose.import.yml` – keeping it does
+no harm.
 
 **The CA's own names** (`SICK_CA_DNS`) have to lie inside the constraints:
 `ca` and `localhost` do not, and a client refuses the CA's TLS certificate
 if it names them. So in import mode SICK reaches the CA as
-`https://ca.example.internal:9000`, and that name has to resolve – in
-Compose through a network alias, on your network through DNS.
+`https://ca.example.internal:9000`. Inside Compose that name resolves
+through the network alias `SICK_CA_ALIAS` (default `ca.example.internal`)
+that `compose.yml` gives the `ca` service – in `compose.yml`, not in
+`compose.import.yml`, so it stays after the first start; on your network the
+name needs an entry in your DNS.
+
+**Names in the policy:** `*.example.internal` allows exactly one label below
+`example.internal` – `www.example.internal`, not `a.b.example.internal`,
+and not `example.internal` itself. List every level you use, comma
+separated (`*.example.internal,*.machines.example.internal`).
 
 ## What the CA will and will not issue
 
@@ -156,6 +217,21 @@ Two lines of defence, both active in the setup above:
    `SICK_CA_ALLOW_IP`): refuses with `dns name "..." not allowed`. It can be
    narrower than the constraints and changed without a ceremony; it does
    nothing against someone who has the CA keys.
+
+**Try it** – one name inside, one outside, from the `sick` container with
+the provisioner password the CA handed over (in `sick/docker`):
+
+```bash
+docker compose run --rm --entrypoint sh sick -c 'cd /tmp && step ca certificate \
+  www.example.internal c.crt c.key --ca-url https://ca.example.internal:9000 \
+  --root /etc/sick/ca/root_ca.crt --provisioner sick --password-file /etc/sick/ca/provisioner.pw'
+```
+
+prints `✔ Certificate: c.crt`; with `outside.example.org` instead it ends in
+`DNS name "outside.example.org" is not permitted by any constraint`, with
+`198.51.100.7` in `IP address "198.51.100.7" is not permitted by any
+constraint`, with `a.b.example.internal` in `dns name "a.b.example.internal"
+not allowed` (the policy).
 
 What the provisioner `sick` gives out:
 
@@ -190,10 +266,19 @@ clients that matter to you before relying on it. What replaces it here:
 
 ## Backup and a restore drill
 
+In `sick/docker`; the CA's volume is called `<project>_ca` – `sick_ca` for
+the default project `sick` (`docker volume ls` shows it):
+
 ```bash
-docker/ca-backup.sh backup  --volume sick_ca --to /safe/ca-2026-10-10.tar
-docker/ca-backup.sh restore --from /safe/ca-2026-10-10.tar --volume sick_ca_drill
+./ca-backup.sh backup  --volume sick_ca --to /safe/ca-2026-10-10.tar
+./ca-backup.sh restore --from /safe/ca-2026-10-10.tar --volume sick_ca_drill
 ```
+
+`backup` prints, among others, `ca-backup: the CA was stopped for 2s` and
+`ca-backup: wrote /safe/ca-2026-10-10.tar (… bytes, mode 0600) and
+/safe/ca-2026-10-10.tar.manifest`; `restore` prints `the archive matches its
+manifest`, `restored into sick_ca_drill: 11 files, each as in the manifest`
+and how long the intermediate is still valid.
 
 `backup` stops the CA for the copy (step-ca keeps its Badger database open
 and Smallstep documents no online backup; the lab CA was down for 1–2
@@ -210,7 +295,24 @@ both fingerprints after unpacking. It starts nothing.
 
 **A drill** runs the restored CA on a network of its own with no published
 port, never beside the live one: two CAs with the same key and two
-databases drift apart. The drill in `t/e2e/ca-recovery.sh` checks that the
+databases drift apart.
+
+```bash
+docker network create --internal sick-drill
+docker run -d --rm --name sick-drill-ca --network sick-drill \
+  --network-alias ca.example.internal -v sick_ca_drill:/home/step smallstep/step-ca:0.30.2
+docker run --rm --network sick-drill -v sick_ca_drill:/ca:ro --entrypoint sh sick:local -c \
+  'cd /tmp && step ca certificate drill.example.internal c.crt c.key \
+     --ca-url https://ca.example.internal:9000 --root /ca/certs/root_ca.crt \
+     --provisioner sick --password-file /ca/secrets/provisioner_password \
+   && openssl verify -CAfile /ca/certs/root_ca.crt -untrusted /ca/certs/intermediate_ca.crt c.crt'
+docker stop sick-drill-ca && docker network rm sick-drill && docker volume rm sick_ca_drill
+```
+
+The last line of the second command is `c.crt: OK`: the restored CA issues
+under the same root. (The container test also checks that the restored
+database holds a certificate issued before the backup and not one issued
+after; that needs a look into its Badger files and is left to the test.) The drill in `t/e2e/ca-recovery.sh` checks that the
 restored CA issues leaves under the same root, that its intermediate is
 still valid, that its database holds a certificate issued before the backup
 and not one issued after, and that the live CA stayed the only one serving.
@@ -240,6 +342,11 @@ have the key itself; a new password on the same key would not lock them
 out. The new password reaches the `sick` service through the handover
 volume, step-ca reloads, and SICK issues with it at once. A token signed
 with the old key is refused (HTTP 401).
+
+Check it with the issuing command of "What the CA will and will not issue"
+above: it issues with the new password the `sick` container now has; with a
+copy of the old password the CA answers `failed to decrypt JWE: invalid
+password`.
 
 Rotate after anyone who had access to the CA volume or the `sick` container
 leaves, and whenever the password may have been seen.

@@ -28,8 +28,8 @@ fingerprint, names, until, issuer), the last deployment, failures in a row,
 the next attempt. Never a key. `sick check`, `sick inventory`, `sick run
 --dry-run` and `sick trust` take no lock and write no record.
 
-**Back-off.** A device whose deployment or check after deployment failed is
-not given a new certificate on every run: it is deferred for 1, 2, 4 … at
+**Back-off.** A device whose issuing, deployment or check after deployment
+failed is not tried again on every run: it is deferred for 1, 2, 4 … at
 most 24 hours (less a grace of 15 minutes, so a daily timer does not skip a
 day), shown as `deferred`, and counts as failed for the exit code. `sick
 run --force <device>` tries at once. The certificate of the failed attempt
@@ -47,11 +47,18 @@ single files.
 
 Pick one.
 
-**systemd** (recommended on a host): copy the three units from
-[`contrib/systemd/`](../../contrib/systemd/) to `/etc/systemd/system/` and
-`contrib/notify/sick-notify` to `/usr/local/bin/`, then
+**systemd** (recommended on a host): SICK installed on the host
+(`cpanm SICK SICK::Target::CiscoSB SICK::Target::ProxmoxVE` once they are on
+CPAN; until then `dzil build` in each checkout and `cpanm` the tarballs,
+core first), the device list in
+`/etc/sick/sick.yml`, then:
 
 ```bash
+sudo install -m 0644 contrib/systemd/sick.service contrib/systemd/sick.timer \
+  'contrib/systemd/sick-notify@.service' /etc/systemd/system/
+sudo install -m 0755 contrib/notify/sick-notify /usr/local/bin/
+sudo install -m 0644 contrib/notify/notify.conf.example /etc/sick/notify.conf   # then edit
+sudo mkdir -p /srv/trust /var/lib/prometheus/node-exporter
 systemctl daemon-reload
 systemctl enable --now sick.timer
 systemctl list-timers sick.timer
@@ -101,7 +108,11 @@ The configuration is parsed, never executed; an unknown key is an error.
 The URL reaches curl on its standard input, never as an argument, and
 neither the URL nor curl's error text appears in any output. Exit 0 when the
 message was delivered somewhere, 1 when nowhere, 2 for a wrong configuration
-or command line. **Test it once:** `echo test | sick-notify "sick test"`.
+or command line. **Test it once:** `echo test | sick-notify "sick test"`
+(`-c <file>` names another configuration, e.g. to test before you install
+it; `sick-notify --help` lists the options). The webhook receives JSON
+`{"text": "<subject>\n\n<message>", "subject": …, "host": …}` – the `text`
+field is what Slack- and Mattermost-style incoming webhooks show.
 
 ## Monitoring with Prometheus
 
@@ -109,7 +120,9 @@ or command line. **Test it once:** `echo test | sick-notify "sick test"`.
 sick check --format prometheus --output /var/lib/prometheus/node-exporter/sick.prom
 ```
 
-(the systemd service and the cron line do this after every run). The file
+(the systemd service and the cron line do this after every run). Like `sick
+check` itself it exits 1 when a device is not `ok` – the file is written
+anyway. The file
 is replaced in one step, for node_exporter's textfile collector. It
 contains, per device, the live certificate (end, remaining and total
 lifetime), the device's `renew_before`, the earliest end along its chain
@@ -131,7 +144,13 @@ The alert rules in
 | `SickCAUnreachable` | for 30 min | nothing renews while the CA is down |
 | `SickIntermediateExpiring` | < 365 days left | time to renew it (chapter 2) |
 | `SickRootExpiring` | < 730 days left | a root replacement takes long (chapter 2) |
+| `SickDeviceError` | a device SICK cannot even judge (status `error`: unreadable credentials, a missing module), for 1 h | it never gets a certificate and its failure count stays 0 – without this rule only the run's exit code would tell |
 | `SickCheckStale` | the file is older than 2 days | the schedule itself stopped |
+
+Check the rules before you load them, with promtool from the Prometheus
+image: `promtool check rules sick-alerts.yml` and `promtool test rules
+sick-alerts.test.yml` (synthetic series for every rule, in the same
+directory) – both print `SUCCESS`.
 
 The thresholds are relative to each device's `renew_before`, not a fixed
 number of days: a fixed 30 days means nothing for a certificate that lives
@@ -156,8 +175,9 @@ sick inventory --format json
 ```
 
 Per device: the names, issuer, serial and fingerprint of the certificate
-issued last, until when, when it was deployed and when a run last saw the
-device present it; with `--live`, whether the device presents it right now.
+issued last, the `owner` if the device list names one, until when, when it was deployed and when a run last saw the
+device present it; with `--live`, whether the device presents it right now
+(and then, like `sick check`, exit 1 when a device is not `ok`).
 This is the list to go through when an intermediate or the root is
 replaced, or a device is retired (remove it from the device list – SICK then
 stops renewing it, and its certificate expires).

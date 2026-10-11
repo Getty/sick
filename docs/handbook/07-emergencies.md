@@ -68,13 +68,25 @@ budget of chapter 1:
 
 Watch `SickCAUnreachable` (chapter 6): it fires after half an hour.
 
-1. `docker compose ps`, `docker compose logs ca` – a full disk or a lost
-   volume?
-2. Volume lost or damaged: restore the last backup (chapter 2, "Backup and
-   a restore drill"): `docker compose create ca`, `ca-backup.sh restore`
-   into its volume, `docker compose up -d`. Certificates issued after that
-   backup are missing from the database and stay valid.
-3. Never run a second CA from a copy *beside* a live one.
+1. `docker compose ps`, `docker compose logs ca`, `docker volume inspect
+   sick_ca` (the volume is `<project>_ca`) – a full disk, or is the volume
+   gone?
+2. **Do not run `docker compose up` on an empty volume**: the CA would start
+   in lab mode and make a *new* CA with a new root.
+3. Volume lost or damaged: restore the last backup (chapter 2, "Backup and
+   a restore drill"), in `sick/docker`:
+
+   ```bash
+   docker compose create ca
+   ./ca-backup.sh restore --from /safe/ca-<date>.tar --volume sick_ca
+   docker compose up -d
+   docker compose logs ca | grep 'root fingerprint'     # = the one you wrote down
+   docker compose run --rm sick sick check
+   ```
+
+   Certificates issued after that backup are missing from the database and
+   stay valid.
+4. Never run a second CA from a copy *beside* a live one.
 
 Tested: the restore drill (`t/e2e/ca-recovery.sh`); observed 3–4 seconds
 from restore to the first certificate in the lab.
@@ -107,24 +119,77 @@ backup manifest and the ceremony record; P5 monitors it.
 
 ## The intermediate key is compromised
 
-At stake: anyone with it can sign certificates for any name **inside the
-name constraints** – and clients accept them. Outside the constraints they
-refuse them (tested, chapter 2). No rollback: the old intermediate must go.
+At stake: anyone with the key can sign certificates for any name **inside
+the name constraints**, and every client that trusts your root accepts them
+– **until the old intermediate's end date**, whatever you do on the CA.
+Outside the constraints clients refuse them (tested, chapter 2).
 
-1. Stop the CA (`docker compose stop ca`).
-2. With the offline root, make a new intermediate with a **new key**
-   (`ceremony.sh --renew-intermediate`), switch to it
-   (`init-ca.sh --switch-intermediate`) and retire the old one right away
-   (`--retire-intermediate`) – no overlap ([chapter 2](02-the-ca.md#renewing-the-intermediate)).
-3. `sick run --force` for every device; make every ACME client renew.
-4. Take the old intermediate off the trust page and out of
-   `ca.intermediates`, and out of every program's `ca_bundle.pem` and every
-   NSS database where it was imported (chapter 3). Where clients hold the
-   intermediate *without* trust, removing the root is not needed; where an
-   old setup put it into a store of anchors, it has to go from there
-   explicitly – that is why the trust page no longer tells anyone to do so.
-5. Rotate the provisioner (it was in the same volume) and restore nothing
-   from a backup taken after the compromise began.
+Read this before you start: **replacing the intermediate does not protect
+clients.** The old intermediate certificate stays valid and signed by your
+root; an attacker simply sends it along with the forged certificate. A
+newcomer's drill showed it: a certificate signed with the old key was
+accepted by `openssl` with the new `ca_bundle.pem`, and by a client with the
+root alone, as soon as the old intermediate came with it. Removing the old
+intermediate from the trust page and from bundles only stops forged
+certificates that are sent *without* it. What really protects clients:
+
+- **a root replacement** – the compromise variant of [chapter 2, "Replacing
+  the root"](02-the-ca.md#replacing-the-root): a new root, clients drop the
+  old one. That is the only measure every client follows; do it when the
+  names inside the constraints matter (they usually do).
+- *a CRL signed by the root* that lists the old intermediate, for the few
+  clients you configure to load it (nginx `ssl_crl`, `curl --crlfile`).
+  Nothing here makes one, and clients do not fetch it by themselves (the
+  certificates carry no CRL address). *Not tried*; mentioned so that you know
+  why it is not the answer.
+
+The steps below stop the CA from issuing under the stolen key and give
+everything new certificates; the root replacement then cuts the stolen key
+off for clients. Keep the order.
+
+1. **Stop the CA**: `docker compose stop ca`. It stays stopped until step 4.
+2. **Offline, a new intermediate with a new key** under the root
+   (`ceremony.sh --renew-intermediate`, [chapter 2](02-the-ca.md#renewing-the-intermediate)),
+   and copy it into the stopped CA:
+   `docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch`.
+3. **With the CA still stopped**, switch, retire the old one at once (no
+   overlap) and rotate the provisioner – it was in the same volume, and a
+   stolen provisioner key could otherwise get certificates from the *new*
+   intermediate:
+
+   ```bash
+   for step in --switch-intermediate --retire-intermediate --rotate-provisioner; do
+     docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh $step
+   done
+   ```
+
+4. **Start the CA** (`docker compose up -d`), and check that it signs under
+   the new intermediate: `docker compose logs ca | grep init-ca`.
+5. **Re-issue everything:** `sick run --force` (without a device name it
+   forces every device); make every ACME client renew (Traefik and Caddy:
+   delete their stored certificate and restart; acme.sh: `acme.sh --renew
+   --force -d <name>`; cert-manager: `cmctl renew --all` or delete the
+   Secrets).
+6. **Publish:** `docker compose run --rm sick sick trust /srv/trust` – otherwise
+   the page keeps the old intermediate until the next scheduled run. Replace
+   `ca_bundle.pem` wherever a program uses it. In NSS databases the new
+   page's `trust-nss.sh remove` would remove the *root*; take the old
+   intermediate out by its nickname instead:
+   `certutil -D -d sql:<db> -n 'sick intermediate <first 16 hex digits of its SHA-256>'`.
+   Keep a copy of the old page before you regenerate it.
+7. **Backups:** take a new one now (chapter 2). **Every backup from before
+   step 3 holds the stolen key and the old provisioner – never restore one.**
+   Wipe the old `for-the-ca/intermediate_ca_key` and `password` on the
+   offline media, and `new-intermediate/` once it is in the CA.
+8. **Root replacement** (compromise variant, chapter 2), unless you accept
+   the window until the old intermediate expires.
+
+How long that window is: the intermediate's lifetime (5 years by default,
+chapter 1). A shorter intermediate shortens it, at the cost of more frequent
+renewals with the offline root – a decision in [decisions](decisions.md).
+
+Tested: the drill above from this text's previous version (it led to this
+version); the stopped-CA switch, retire and rotate in `t/e2e/ca-rollover.sh`.
 
 ## The root key is lost
 

@@ -52,7 +52,21 @@ domain. If the endpoint has to be reachable more widely, require external
 account binding (`requireEAB` in step-ca; card k51, *not tried*), so that
 only clients you gave a key can open accounts.
 
-**In the lab it is different**, and the recipes' tests say so: the CA and
+**Trying a recipe beside the Docker setup of chapter 2:** each recipe is a
+Compose project of its own. Start it with its lab override, which joins the
+CA's network under the service's name and publishes its ports on 127.0.0.1
+only, and fetch the root from the trust page, compared with the ceremony's
+fingerprint:
+
+```bash
+cd sick/contrib/acme/caddy
+curl -fsS -o root_ca.crt http://127.0.0.1:8080/root_ca.pem
+openssl x509 -in root_ca.crt -noout -fingerprint -sha256     # = the ceremony's
+docker compose -f compose.yml -f compose.lab.yml up -d
+```
+
+(the recipe READMEs say the same for each service). **In the lab it is
+different**, and the recipes' tests say so: the CA and
 the services share one Docker network on one host; Compose's built-in
 resolver (or a `coredns-custom` entry in k3d) is the "DNS", there is no
 public resolver and no firewall between CA and service. In a real network

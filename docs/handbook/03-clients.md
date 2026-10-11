@@ -86,7 +86,9 @@ from the operating system store on Windows, macOS and Android by default
 
 On Windows and macOS Chrome uses the operating system store. On Linux it
 uses the NSS database in `~/.pki/nssdb`: `trust-nss.sh install
---fingerprint … sql:$HOME/.pki/nssdb` (*not tried*), or
+--fingerprint … $HOME/.pki/nssdb` (the directory, without `sql:`; create
+the database first if Chrome has not, `certutil -N -d sql:$HOME/.pki/nssdb
+--empty-password`; *not tried* with Chrome itself), or
 `chrome://certificate-manager` (Chrome 134 and later).
 
 ### macOS
@@ -137,7 +139,7 @@ trust it. Observed in containers ([evidence](../findings/trust-runtimes.md),
 | git (GnuTLS in Debian) | system store; `http.sslCAInfo` replaces it | new process per command | system store, or `git config http.sslCAInfo /path/root_ca.pem` | unset it |
 | Python `ssl`, `urllib` | system store, loaded once per context | no – restart | system store, or `SSL_CERT_FILE` | restart after removal |
 | Python `requests` | **certifi only**; ignores the system store and `SSL_CERT_FILE` | no – restart | `REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` (or the root file), or `truststore.inject_into_ssl()` | unset, restart |
-| Java (Temurin) | its own `cacerts`; did **not** read the Debian store | no – restart | `keytool -importcert -cacerts -alias example-root -file root_ca.pem`, or `-Djavax.net.ssl.trustStore=` | `keytool -delete -cacerts -alias example-root`, restart |
+| Java (Temurin) | its own `cacerts`; did **not** read the Debian store | no – restart | `keytool -importcert -cacerts -alias example-root -file root_ca.pem` – it shows the SHA-256 and asks `Trust this certificate?`: compare it with the fingerprint from the second channel; in a script `-noprompt` (the default store password is `changeit`); or `-Djavax.net.ssl.trustStore=` | `keytool -delete -cacerts -alias example-root`, restart |
 | Node | its bundled list | no – restart | `NODE_EXTRA_CA_CERTS=/path/root_ca.pem` (read at start), or `--use-system-ca` (Node 23.8+, on Linux 23.9+) | unset, restart |
 | Go | system store or `SSL_CERT_FILE`, loaded once | no – restart | system store | restart after removal |
 | container images | what was baked at build time | – | `COPY root_ca.pem /usr/local/share/ca-certificates/example-root.crt` + `RUN update-ca-certificates` (tested on Debian) | rebuild and redeploy |
@@ -154,9 +156,11 @@ older versions and other stacks (.NET, Rust, Ruby, PHP) were not tried.
 it a file for that program (`--cacert`, `http.sslCAInfo`,
 `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, a Java trust store, a
 ConfigMap) instead of the whole machine. The trust stays inside that
-program, and removing it is removing one file. Note that every file-based
-route except `NODE_EXTRA_CA_CERTS` *replaces* the default list: such a
-program no longer trusts public CAs.
+program, and removing it is removing one file. Note that most file-based
+routes *replace* the default list, so such a program no longer trusts
+public CAs – except `NODE_EXTRA_CA_CERTS`, which adds, and Debian's curl,
+which keeps reading `/etc/ssl/certs` beside `--cacert` (Fedora's does not;
+tested 2026-10-11).
 
 ## Devices that present their certificate alone
 

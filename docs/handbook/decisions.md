@@ -42,7 +42,10 @@ made them.
   for – of the CA, of the network to a device, of the person who fixes it.
   30-day ACME certificates leave about ten days for a CA outage; device
   certificates are renewed by SICK with a month to spare; Apple refuses TLS
-  server certificates longer than 825 days.
+  server certificates longer than 825 days. The intermediate's lifetime is
+  also the window in which a stolen intermediate key works for clients
+  (chapter 7): 5 years balances that against renewing with the offline root;
+  choose 2–3 years if the root is easy to bring out.
 - **Set in:** `ceremony.sh --root-lifetime --intermediate-lifetime`;
   `defaults:` in the device list; `SICK_CA_MAX_LIFETIME`,
   `SICK_CA_ACME_LIFETIME`, `SICK_CA_ACME_MAX_LIFETIME`; `provisioners.json`
