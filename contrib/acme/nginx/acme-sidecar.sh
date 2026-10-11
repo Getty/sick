@@ -33,10 +33,10 @@
 # days after issuing (capped at one day before expiry); its default of 30
 # would renew a 30-day certificate one day before it expires. A negative
 # value counts from the expiry instead: -10 renews 10 days before the end,
-# whatever the lifetime - two thirds of a 30-day certificate, the share the
-# CA's lifetimes are chosen for. Keep it below the lifetime of the CA
-# (SICK_CA_ACME_LIFETIME); a lifetime of 10 days or less would mean a
-# renewal at every check.
+# whatever the lifetime - with a third of the lifetime of a 30-day
+# certificate left, the share the CA's lifetimes are chosen for. Keep it
+# below the lifetime of the CA (SICK_CA_ACME_LIFETIME); a lifetime of 10
+# days or less would mean a renewal at every check.
 
 set -eu
 umask 077

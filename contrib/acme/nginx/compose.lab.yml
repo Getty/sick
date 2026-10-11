@@ -1,0 +1,40 @@
+# For a lab: nginx beside the CA of docker/ on one Docker host, without
+# internal DNS. Added on top of compose.yml:
+#
+#   docker compose -f contrib/acme/nginx/compose.yml \
+#     -f contrib/acme/nginx/compose.lab.yml up -d
+#
+# Each compose.yml is a Compose project of its own, so nginx cannot resolve
+# ca.example.internal and the CA cannot resolve nginx.example.internal for
+# the challenge. This file joins nginx to the CA's network (an external
+# network: the CA's project made it) under the alias nginx.example.internal;
+# the CA has ca.example.internal there (SICK_CA_ALIAS in
+# docker/compose.yml). In a real network internal DNS does both and
+# this file is not needed.
+#
+# Only nginx joins: acme.sh lives in its network namespace (network_mode:
+# service:nginx) and reaches the CA through it.
+#
+#   SICK_LAB_NETWORK     the CA's Compose network        (sick_default:
+#                        project "sick" of docker/compose.yml)
+#   SICK_LAB_HTTP_PORT   port 80 of nginx on 127.0.0.1 of the host  (80)
+#   SICK_LAB_HTTPS_PORT  port 443 of nginx on 127.0.0.1 of the host (443)
+#
+# The ports replace those of compose.yml (!override, Compose 2.24 or
+# later): published on 127.0.0.1 only. The CA reaches nginx over the
+# network, not through them.
+
+services:
+  nginx:
+    ports: !override
+      - "127.0.0.1:${SICK_LAB_HTTP_PORT:-80}:80"
+      - "127.0.0.1:${SICK_LAB_HTTPS_PORT:-443}:443"
+    networks:
+      default: {}
+      ca:
+        aliases: [nginx.example.internal]
+
+networks:
+  ca:
+    name: ${SICK_LAB_NETWORK:-sick_default}
+    external: true

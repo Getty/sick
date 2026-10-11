@@ -9,12 +9,38 @@ for services that speak ACME, not for devices that cannot.
 | `traefik.yml` | static configuration: entry points, the resolver `stepca` |
 | `dynamic/app.yml` | a router for `traefik.example.internal` with its certificate from `stepca` |
 | `compose.yml` | Traefik and a stand-in backend `app` |
+| `compose.lab.yml` | for a lab without internal DNS: joins the CA's network, ports on 127.0.0.1 only |
 
 ```bash
-# the root of your CA, compared with the fingerprint init-ca.sh logged
+# the root of your CA from the trust page of docker/, compared with the
+# root fingerprint in ceremony.txt (or the one init-ca.sh logged, lab mode)
 curl -fsS -o contrib/acme/traefik/root_ca.crt http://trust.example.internal:8080/root_ca.pem
 openssl x509 -in contrib/acme/traefik/root_ca.crt -noout -fingerprint -sha256
 docker compose -f contrib/acme/traefik/compose.yml up -d
+```
+
+The trust page is `http://<host>:${SICK_TRUST_PORT:-8080}/root_ca.pem` on
+the host of the CA setup. In a real network internal DNS resolves
+`ca.example.internal` for Traefik and `traefik.example.internal` for the CA.
+
+### In a lab
+
+With the CA of `docker/` on the same Docker host and no internal DNS,
+neither name resolves: this recipe is a Compose project of its own.
+`compose.lab.yml` joins `traefik` to the CA's network
+(`SICK_LAB_NETWORK`, default `sick_default`) under the alias
+`traefik.example.internal`, and publishes its ports on 127.0.0.1 only
+(`SICK_LAB_HTTP_PORT`, `SICK_LAB_HTTPS_PORT`, default 80 and 443; Compose
+2.24 or later for `!override`). There the CA has the alias
+`ca.example.internal` (`SICK_CA_ALIAS` in `docker/compose.yml`); it has to
+be one of the CA's names (`SICK_CA_DNS=ca.example.internal`, in lab mode
+as in import mode), and the CA has to allow the service's name
+(`SICK_CA_ALLOW_DNS`).
+
+```bash
+docker compose -f contrib/acme/traefik/compose.yml -f contrib/acme/traefik/compose.lab.yml up -d
+curl --cacert contrib/acme/traefik/root_ca.crt \
+  --resolve traefik.example.internal:443:127.0.0.1 https://traefik.example.internal/
 ```
 
 Replace `example.internal` by your names, `app` by your backend.
