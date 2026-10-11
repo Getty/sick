@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-10-11T03:35:19Z
+created: 2026-10-10T15:41:30Z
+id: 23
+priority: low
+started: 2026-10-11T03:04:01Z
+status: done
+tags:
+- pki
+- finding
+title: 'SelfSigned: make creating the test CA atomic and refuse a half CA'
+updated: 2026-10-11T03:35:30Z
+---
+
+Finding from k5. _ensure_ca renames ca.key and ca.crt one after the other without a lock: two runs at once or a crash in between can leave a key that does not match the certificate (the -s check passes, every signing fails); a missing ca.key alone silently replaces the root and every device turns foreign-ca. Test CA only, so low. Done when: a lock around creation, key/cert pair checked on load, a lone file is an error instead of a new CA; tests.
+
+2026-10-11 02:55 Plan: flock on ca.lock in the CA dir around creation; state re-read under the lock; key renamed first, certificate last; on load both present -> Bundle key_matches once per object; one file alone -> error naming the missing path. Tests in t/20 first (red).
+
+2026-10-11 02:57 Done in tree: SelfSigned _ensure_ca now: both files -> key_matches once per object; otherwise mkdir, flock ca.lock (0600, stays), re-read; neither -> _create_ca (key renamed first, cert last); one alone -> 'the CA in <dir> is incomplete: <path> is missing beside <path> (...)'. Mismatch -> 'is broken: <key> is not the key of <cert>'. Unreadable -> 'cannot use the CA in <dir>: <reason>'. t/20: race (slow openssl wrapper, two forks) red before (different roots), lone/mismatch/garbage red before; all green after.
+
+2026-10-11 03:04 Done: lib/SICK/Issuer/SelfSigned.pm creates the CA under flock on ca.lock (0600, stays), key renamed first and cert last, pair checked with SICK::Bundle key_matches once per object; lone file / mismatch / unreadable are errors with path. t/20: race of two forks with a slow openssl wrapper (red before: two roots), lone crt, lone key, mismatch, garbage key (red before), green after. prove -lr t green except t/60-k8s.t (docker/init-ca.sh of the parallel docker worker not yet copied to k8s/test).
+
+Committed as da50dcf
