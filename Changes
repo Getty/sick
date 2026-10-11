@@ -229,3 +229,8 @@ Revision history for SICK
     - MikroTik RouterOS: recipe in contrib/devices/routeros (device entry, a
       group with ssh,ftp,read,write), proven by t/e2e/device-routeros.sh
       against a recording stand-in and a real RouterOS CHR 7.24.5 in qemu.
+    - Proxmox VE and Backup Server: recipe in contrib/devices/proxmox (native
+      ACME vs. the acme.sh hooks proxmoxve/proxmoxbs, minimal API token
+      rights, how to get back) and t/e2e/device-proxmox.sh, which proves the
+      hooks end to end against a stand-in API; the hooks do not verify the
+      API's TLS certificate.
