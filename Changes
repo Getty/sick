@@ -258,3 +258,9 @@ Revision history for SICK
       jane@example.internal) and SICK_CA_ALLOW_URI (example.internal,
       *.example.internal) besides DNS names and addresses; with any policy
       set, client certificates with email or URI SANs need them listed.
+    - contrib/mtls: client certificates for people and machines from the
+      provisioner "clients" (enroll.sh, PKCS#12, renewal timer), nginx that
+      maps the certificate's subject to an allowed principal and answers 403
+      otherwise, and a terminating proxy that sets X-Client-Identity for a
+      backend that trusts only the proxy's certificate; proven by
+      t/e2e/mtls.sh.

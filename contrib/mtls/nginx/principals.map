@@ -1,0 +1,8 @@
+# Subject DN of the client certificate -> principal. Everything not listed
+# gets no principal and a 403. One line per holder; a key per holder, so a
+# fleet of machines is a line per machine.
+#
+# "CN=<identity>"                           principal;
+
+"CN=person@example.internal"                person;
+"CN=backup1.machines.example.internal"      backup1;

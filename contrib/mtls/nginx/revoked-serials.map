@@ -1,0 +1,9 @@
+# Serial numbers of certificates refused before they expire (a lost
+# device): the hexadecimal serial from
+#
+#   openssl x509 -in lost.crt -noout -serial
+#
+# without "serial=", then "nginx -s reload". Remove a line once the
+# certificate has expired.
+#
+# 6F1E...C2                                 1;

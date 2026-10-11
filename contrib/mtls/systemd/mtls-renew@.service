@@ -1,0 +1,29 @@
+# Renews the client certificate of a machine when less than 10 days are
+# left: /etc/mtls/<instance>.crt and .key, the certificate itself
+# authenticating the renewal (mTLS to the CA). Started by mtls-renew@.timer.
+#
+#   install -m 0644 mtls-renew@.service mtls-renew@.timer /etc/systemd/system/
+#   systemctl enable --now mtls-renew@backup1.machines.example.internal.timer
+#
+# 240h is a third of the 720h the provisioner "clients" issues: a daily
+# timer has ten tries before the certificate expires. Not due yet, step
+# says so and exits 0 without touching the files. Once expired, the CA
+# refuses the renewal and the machine has to be enrolled again
+# (enroll.sh). --exec names what has to read the new certificate.
+
+[Unit]
+Description=Renew the client certificate %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=STEP_CA_URL=https://ca.example.internal:9000
+Environment=STEP_ROOT=/etc/mtls/root_ca.crt
+Environment=STEPPATH=/var/lib/mtls-renew
+StateDirectory=mtls-renew
+UMask=0077
+ExecStart=/usr/bin/step ca renew --force --expires-in 240h \
+    --ca-url ${STEP_CA_URL} --root ${STEP_ROOT} \
+    /etc/mtls/%i.crt /etc/mtls/%i.key
+# ExecStart=... --exec "systemctl reload backup-agent.service"

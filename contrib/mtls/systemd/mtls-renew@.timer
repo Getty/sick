@@ -1,0 +1,15 @@
+# Starts mtls-renew@<identity>.service once a day; the service renews when
+# less than 10 days are left. The delay is random per machine but the same
+# every day, so that a fleet does not ask the CA in the same minute.
+
+[Unit]
+Description=Renew the client certificate %i daily
+
+[Timer]
+OnCalendar=*-*-* 03:41:00
+RandomizedDelaySec=1h
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,49 @@
+# nginx with client certificates of the internal CA: "mtls" decides itself
+# (mtls.conf), "proxy" decides and forwards the identity to "backend" over
+# a hop of its own with TLS and the proxy's client certificate (proxy.conf,
+# backend.conf). See README.md.
+#
+#   MTLS_CERTS=/srv/mtls/certs docker compose -f contrib/mtls/compose.yml up -d
+#
+# MTLS_CERTS holds one directory per service (mtls/, proxy/, backend/) with
+# the files the conf names; README.md says where each comes from. Keys
+# readable by root alone: the nginx master reads them before it drops to
+# its worker user.
+
+services:
+
+  mtls:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/mtls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/maps.conf:/etc/nginx/conf.d/00-maps.conf:ro
+      - ./nginx/principals.map:/etc/nginx/mtls/principals.map:ro
+      - ./nginx/revoked-serials.map:/etc/nginx/mtls/revoked-serials.map:ro
+      - ${MTLS_CERTS:?MTLS_CERTS names the directory of the certificates}/mtls:/etc/nginx/certs:ro
+
+  proxy:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    ports:
+      - "8443:443"
+    volumes:
+      - ./nginx/proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/maps.conf:/etc/nginx/conf.d/00-maps.conf:ro
+      - ./nginx/principals.map:/etc/nginx/mtls/principals.map:ro
+      - ./nginx/revoked-serials.map:/etc/nginx/mtls/revoked-serials.map:ro
+      - ${MTLS_CERTS:?MTLS_CERTS names the directory of the certificates}/proxy:/etc/nginx/certs:ro
+
+  # no published port: reached by the proxy as backend.example.internal
+  # (a network alias here, DNS in a real network)
+  backend:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [backend.example.internal]
+    volumes:
+      - ./nginx/backend.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${MTLS_CERTS:?MTLS_CERTS names the directory of the certificates}/backend:/etc/nginx/certs:ro
