@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-11T03:36:27Z
+created: 2026-10-11T00:44:39Z
+id: 50
+priority: low
+started: 2026-10-11T02:53:18Z
+status: done
+tags:
+- ca
+- acme
+- finding
+title: 'init-ca: manage the cert-manager provisioner and limit ACME challenge types'
+updated: 2026-10-11T03:36:38Z
+---
+
+Findings from k48 (2026-10-11). (1) The JWK provisioner 'cert-manager' for step-issuer is added by hand on the running CA; init-ca.sh does not own it, so its template and lifetimes are not re-applied at start. Teach init-ca.sh an optional second JWK provisioner. (2) The ACME provisioner offers dns-01, http-01 and tls-alpn-01 on every order; allow limiting it (e.g. SICK_CA_ACME_CHALLENGES=http-01). Done when: both settable, applied at every start, tested in the ceremony e2e.
+
+2026-10-11 03:13 Both done via k58: cert-manager declared in provisioners file (k8s/cert-manager/ca/provisioners.json), SICK_CA_ACME_CHALLENGES; tested in t/e2e/ca-ceremony.sh part 8.
+
+2026-10-11 03:30 Done via k58: cert-manager declared (k8s/cert-manager/ca/provisioners.json, docker/provisioners.example.json), SICK_CA_ACME_CHALLENGES for 'acme'; both applied at every start, tested in t/e2e/ca-ceremony.sh part 8 and acme-k8s.sh up.
+
+Committed as ea2f8d2
