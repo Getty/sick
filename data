@@ -1,0 +1,18 @@
+---
+class: standard
+completed: 2026-10-11T08:51:14Z
+created: 2026-10-11T08:18:47Z
+id: 71
+priority: high
+started: 2026-10-11T08:49:58Z
+status: done
+tags:
+- release
+- blocker
+title: 'Release blocker: rewrite Changes {{$NEXT}} as the state of 0.001'
+updated: 2026-10-11T08:51:25Z
+---
+
+From the release audit 2026-10-11 (sick-release-manager). {{$NEXT}} is ~300 lines of work history: Moo conversion bullets, fixes to never-released code, removals of unreleased files, several bullets per topic, journey wording, 4-space indent vs the style skill's 2+dash. Done when: {{$NEXT}} describes what 0.001 is (one topic, one entry), in the commit-style format, and release-changes_has_content passes with RELEASE_TESTING=1.
+
+Committed as 9d061f5
