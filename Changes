@@ -254,3 +254,7 @@ Revision history for SICK
       SICK_CA_ACME_CHALLENGES limits the challenge types of "acme". The
       cert-manager setup declares its provisioner instead of adding it by
       hand.
+    - The CA policy takes SICK_CA_ALLOW_EMAIL (@example.internal,
+      jane@example.internal) and SICK_CA_ALLOW_URI (example.internal,
+      *.example.internal) besides DNS names and addresses; with any policy
+      set, client certificates with email or URI SANs need them listed.

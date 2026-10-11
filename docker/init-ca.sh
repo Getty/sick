@@ -141,9 +141,22 @@
 #                         "*.example.internal" style
 #   SICK_CA_ALLOW_IP      comma separated addresses and networks the CA may
 #                         issue for, "192.0.2.0/24" style
-#                         Both empty: the policy of the CA is left as it is
-#                         (none, for a new CA). One of them set: step-ca
-#                         refuses every name and address that is not listed.
+#   SICK_CA_ALLOW_EMAIL   comma separated email addresses the CA may issue
+#                         for: "@example.internal" (every mailbox of that
+#                         domain, not of its subdomains) or
+#                         "person@example.internal" (that one)
+#   SICK_CA_ALLOW_URI     comma separated hosts of the URIs the CA may issue
+#                         for: "example.internal" (that host),
+#                         "*.example.internal" (one label below it); no
+#                         scheme, no port. A URI without a host is refused.
+#                         All four empty: the policy of the CA is left as it
+#                         is (none, for a new CA). Any of them set: the
+#                         allow list becomes exactly what is set, and
+#                         step-ca refuses every name of a form that is not
+#                         listed - also the subject CN, judged by its form.
+#                         Taking one away never lifts the restriction: the
+#                         form is refused, or, with all four gone, the
+#                         policy stays as it is.
 #   SICK_HANDOVER_DIR     where the files for the sick service go
 #                         (default /handover)
 #
@@ -466,14 +479,16 @@ initialise() {
 # step-ca reads them at start. <file> is changed in place, and only when
 # something differs.
 apply_settings() {
-  local file=$1 allow_dns allow_ip wanted
+  local file=$1 allow_dns allow_ip allow_email allow_uri wanted
   allow_dns=$(json_list "${SICK_CA_ALLOW_DNS:-}")
   allow_ip=$(json_list "${SICK_CA_ALLOW_IP:-}")
+  allow_email=$(json_list "${SICK_CA_ALLOW_EMAIL:-}")
+  allow_uri=$(json_list "${SICK_CA_ALLOW_URI:-}")
   wanted=$(jq --arg name "$provisioner" --arg max "$max_lifetime" --arg template "$leaf_template" \
       --arg acme "$acme" --arg amin "$acme_min" --arg adef "$acme_lifetime" --arg amax "$acme_max" \
       --argjson achallenges "$acme_challenge_list" \
       --argjson declared "$declared" --arg client "$client_template" \
-      --argjson dns "$allow_dns" --argjson ip "$allow_ip" '
+      --argjson dns "$allow_dns" --argjson ip "$allow_ip" --argjson email "$allow_email" --argjson uri "$allow_uri" '
       def challenges($list): if $list == null then del(.challenges) else .challenges = $list end;
       ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .claims.maxTLSCertDuration ) = $max
       | ( .authority.provisioners[] | select(.type == "JWK" and .name == $name) | .options.x509.template ) = $template
@@ -491,12 +506,8 @@ apply_settings() {
             | .claims.maxTLSCertDuration = $d.max
             | .options.x509.template = (if $d.profile == "client" then $client else $template end)
             | if $d.type == "ACME" then challenges($d.challenges) else . end ) )
-      | if ($dns | length) + ($ip | length) > 0
-        then .authority.policy.x509.allow =
-          ( ( if ($dns | length) > 0 then { dns: $dns } else {} end )
-          + ( if ($ip  | length) > 0 then { ip:  $ip  } else {} end ) )
-        else .
-        end
+      | ( { dns: $dns, ip: $ip, email: $email, uri: $uri } | with_entries(select(.value | length > 0)) ) as $allow
+      | if ($allow | length) > 0 then .authority.policy.x509.allow = $allow else . end
     ' "$file")
   if [ "$wanted" = "$(jq . "$file")" ]; then
     log "configuration unchanged: '$provisioner' grants up to $max_lifetime, serverAuth only$(describe_policy "$file")$(describe_acme "$file")"
@@ -752,7 +763,7 @@ stage_import() {
 
 describe_policy() {
   local policy
-  policy=$(jq -r '.authority.policy.x509.allow // empty | [ (.dns // [])[], (.ip // [])[] ] | join(", ")' "${1:-$config}")
+  policy=$(jq -r '.authority.policy.x509.allow // empty | [ (.dns // [])[], (.ip // [])[], (.email // [])[], (.uri // [])[] ] | join(", ")' "${1:-$config}")
   if [ -n "$policy" ]; then printf ', names allowed: %s' "$policy"; else printf ', names not restricted'; fi
 }
 

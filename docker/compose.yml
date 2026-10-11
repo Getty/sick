@@ -31,6 +31,8 @@ services:
       SICK_CA_ACME_CHALLENGES: ${SICK_CA_ACME_CHALLENGES:-}
       SICK_CA_ALLOW_DNS: ${SICK_CA_ALLOW_DNS:-}
       SICK_CA_ALLOW_IP: ${SICK_CA_ALLOW_IP:-}
+      SICK_CA_ALLOW_EMAIL: ${SICK_CA_ALLOW_EMAIL:-}
+      SICK_CA_ALLOW_URI: ${SICK_CA_ALLOW_URI:-}
     volumes:
       - ca:/home/step
       - handover:/handover

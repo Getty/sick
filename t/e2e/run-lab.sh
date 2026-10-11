@@ -197,7 +197,7 @@ EOF
 # Only what this script sets may reach the compose file: the environment
 # wins over the env file.
 unset SICK_BUILD_CONTEXT SICK_CONFIG_FILE SICK_SECRETS_DIR SICK_CA_NAME SICK_CA_DNS SICK_CA_PORT \
-  SICK_CA_MAX_LIFETIME SICK_CA_ALLOW_DNS SICK_CA_ALLOW_IP SICK_TRUST_PORT SICK_INTERVAL \
+  SICK_CA_MAX_LIFETIME SICK_CA_ALLOW_DNS SICK_CA_ALLOW_IP SICK_CA_ALLOW_EMAIL SICK_CA_ALLOW_URI SICK_TRUST_PORT SICK_INTERVAL \
   SICK_RUN_OPTIONS SICK_IMAGE SICK_FROM STEP_VERSION BUSYBOX_VERSION
 
 compose() { docker compose --env-file "$work/compose.env" -p "$project" -f "$repo/docker/compose.yml" "$@"; }

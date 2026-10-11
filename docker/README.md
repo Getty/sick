@@ -96,7 +96,9 @@ All of them are optional.
 | `SICK_CA_ACME_CHALLENGES` | | the challenge types `acme` offers, comma separated, out of `http-01`, `tls-alpn-01`, `dns-01`. Empty: all three (step-ca's default) |
 | `SICK_CA_PROVISIONERS` | | further provisioners, with `compose.provisioners.yml`: a JSON file on the host (see "Further provisioners") |
 | `SICK_CA_ALLOW_DNS` | | names the CA may issue for, comma separated: `*.example.internal`, `host.example.org` |
-| `SICK_CA_ALLOW_IP` | | addresses and networks the CA may issue for: `192.0.2.0/24`. Both empty: no restriction. One of them set: nothing but what is listed |
+| `SICK_CA_ALLOW_IP` | | addresses and networks the CA may issue for: `192.0.2.0/24` |
+| `SICK_CA_ALLOW_EMAIL` | | email addresses the CA may issue for: `@example.internal` (any mailbox of that domain), `jane@example.internal` |
+| `SICK_CA_ALLOW_URI` | | hosts of the URIs the CA may issue for: `example.internal`, `*.example.internal` (one label below). All four `SICK_CA_ALLOW_*` empty: no restriction. Any of them set: nothing but what is listed (see "Restricting the names") |
 | `SICK_CA_PORT` | `9000` | published port of the CA |
 | `SICK_TRUST_PORT` | `8080` | published port of the trust page |
 | `SICK_BUILD_CONTEXT` | `../..` | the directory that holds both checkouts |
@@ -177,8 +179,9 @@ At **every start** it
   `SICK_CA_ACME_CHALLENGES`,
 - makes the provisioners declared in `SICK_CA_PROVISIONERS` that are missing
   and gives each its template, lifetimes and challenge types (below),
-- sets the names the CA may issue for from `SICK_CA_ALLOW_DNS` and
-  `SICK_CA_ALLOW_IP`, when at least one of them is given,
+- sets the names the CA may issue for from `SICK_CA_ALLOW_DNS`,
+  `SICK_CA_ALLOW_IP`, `SICK_CA_ALLOW_EMAIL` and `SICK_CA_ALLOW_URI`, when at
+  least one of them is given,
 - copies root certificate, intermediate certificate and provisioner password
   into the `handover` volume,
 
@@ -193,8 +196,9 @@ init-ca: root fingerprint (SHA-256): af22556f14379ec5a8db1ec01db94434c7a25282331
 
 A changed setting takes effect with `docker compose up -d` (which restarts the
 CA). Taking `SICK_CA_ALLOW_*` away again does *not* lift the restriction:
-`init-ca.sh` never removes what it finds. Edit `authority.policy` in
-`config/ca.json` for that.
+with all four gone, `init-ca.sh` leaves the policy as it finds it; with some
+left, the allow list becomes exactly those, and a name form taken away is
+refused from then on. Edit `authority.policy` in `config/ca.json` to lift it.
 
 Why 30 days for ACME: an ACME client renews at about two thirds of the
 lifetime, so a 30-day certificate is renewed with about 10 days left. That
@@ -287,9 +291,11 @@ why:
   jane@example.internal`), a machine's a URI (`--san
   spiffe://example.internal/machine/backup1`). Two things decide whether
   that works, both in [docs/findings/client-san.md](../docs/findings/client-san.md):
-  the CA policy (`SICK_CA_ALLOW_DNS`/`_IP`) refuses email and URI SANs
-  altogether, and Java takes a single-label subject such as `backup1` for a
-  DNS name and checks it against the DNS constraints.
+  with a CA policy, email and URI SANs need `SICK_CA_ALLOW_EMAIL` and
+  `SICK_CA_ALLOW_URI` (see "Restricting the names"), and Java takes a
+  single-label subject such as `backup1` for a DNS name and checks it
+  against the DNS constraints – so does the CA policy. Give a machine a
+  subject inside your DNS names (`backup1.example.internal`).
 - **`cert-manager`** – for step-issuer in Kubernetes
   ([k8s/cert-manager](../k8s/cert-manager/)): `serverAuth`, 30 days, at most
   90, a password of its own, so that the cluster never holds `sick`'s.
@@ -361,9 +367,26 @@ address  failed   missing  issuing failed: step failed (exit 1): The request was
 ```
 
 `*.example.internal` covers the hosts below `example.internal`, not
-`example.internal` itself. As soon as one of the two variables is set,
-everything that is not listed is refused: with names only, no certificate
-gets an address; with networks only, none gets a host name.
+`example.internal` itself.
+
+The policy restricts every name form that is listed, and as soon as any of
+the four variables is set, a form that is not listed is refused altogether:
+with names only, no certificate gets an address; with networks only, none
+gets a host name; and without `SICK_CA_ALLOW_EMAIL` and `SICK_CA_ALLOW_URI`,
+no client certificate gets an email address or a URI (`email name
+"jane@example.internal" not allowed`). For client certificates, list those
+forms as well:
+
+```bash
+SICK_CA_ALLOW_EMAIL=@example.internal   # every mailbox of example.internal; jane@example.internal: that one
+SICK_CA_ALLOW_URI=example.internal      # URIs with that host: spiffe://example.internal/...
+```
+
+`@example.internal` takes the domain itself, not its subdomains; a URI entry
+is a host without scheme or port, `*.example.internal` one label below it,
+and a URI without a host (`urn:…`) is refused. The subject CN is checked
+too, by its form: a single label such as `backup1` counts as a DNS name and
+is refused under `*.example.internal`.
 
 Know what this is: a *policy of the running CA*
 (`authority.policy.x509.allow` in `ca.json`). It keeps mistakes and a stolen
