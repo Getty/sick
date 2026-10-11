@@ -51,14 +51,44 @@ usage() {
   exit 2
 }
 
+help() {
+  cat <<EOF
+usage: $me [-c <config>] [-u <unit>] <subject>
+
+Sends <subject> and a message to the webhook and/or mail address of the
+configuration. The message is standard input, or with -u the journal of
+the systemd unit <unit>.
+
+  -c <config>  the configuration (default: \$SICK_NOTIFY_CONFIG, else
+               /etc/sick/notify.conf); see contrib/notify/notify.conf.example
+  -u <unit>    read the message from the journal of this unit
+  -h, --help   this text
+
+Exit codes: 0 delivered on at least one way, 1 nothing delivered or
+nothing configured, 2 the command line or the configuration is wrong.
+EOF
+  exit 0
+}
+
 config=${SICK_NOTIFY_CONFIG:-/etc/sick/notify.conf}
 unit=
-while getopts c:u:h option; do
+# getopts knows no long options: it would read "--help" as "-", "-", "h" ...
+for arg in "$@"; do
+  case $arg in
+    --) break ;;
+    --help) help ;;
+    --?*) usage "unknown option $arg" ;;
+    -*) ;;
+    *) break ;;    # the subject: options end here
+  esac
+done
+while getopts :c:u:h option; do
   case $option in
     c) config=$OPTARG ;;
     u) unit=$OPTARG ;;
-    h) printf 'usage: %s [-c <config>] [-u <unit>] <subject>\n' "$me"; exit 0 ;;
-    *) usage 'unknown option' ;;
+    h) help ;;
+    :) usage "-$OPTARG needs a value" ;;
+    *) usage "unknown option -$OPTARG" ;;
   esac
 done
 shift $((OPTIND - 1))

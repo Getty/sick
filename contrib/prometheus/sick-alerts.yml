@@ -64,6 +64,20 @@ groups:
         annotations:
           summary: "{{ $labels.device }}: has not answered for a day"
 
+      # SICK cannot even check the device: its credentials cannot be read,
+      # the module of its type is missing, its entry in the list is wrong.
+      # Nothing is renewed, and none of the alerts above sees it - no
+      # certificate metrics, no sick_device_reachable, and
+      # consecutive_failures stays 0, because no attempt to renew was made.
+      # An hour, so that a fix in progress does not alert.
+      - alert: SickDeviceError
+        expr: sick_device_info{status="error"} == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }}: sick cannot check it (status error)"
+
       # Attempts to renew failed three times in a row. The back-off of sick
       # run waits 1, 2, 4 ... at most 24 hours, so the third failure comes
       # after about three hours of trying, or on the third day with a daily

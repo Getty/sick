@@ -228,6 +228,10 @@ if want units; then
   sh -n -c "$line" || fail 'the command of contrib/cron/sick is no valid sh'
   sh -n "$repo/contrib/notify/sick-notify" || fail 'contrib/notify/sick-notify is no valid sh'
   pass 'the cron line and sick-notify parse as POSIX sh'
+  for opt in --help -h; do
+    help=$(sh "$repo/contrib/notify/sick-notify" "$opt" 2>&1) || fail "sick-notify $opt does not exit 0"
+    expect "sick-notify $opt prints the usage with -c" 'usage: sick-notify \[-c <config>\]' "$help"
+  done
 fi
 
 #### the Compose project for notify and alerts

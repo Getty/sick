@@ -296,3 +296,5 @@ Revision history for SICK
       first device of the Docker setup.
     - contrib/acme/*/compose.lab.yml joins a recipe to the CA's network and
       publishes its ports on 127.0.0.1 only, for a lab without internal DNS.
+    - New alert SickDeviceError for devices in status error; sick-notify
+      --help prints its usage.

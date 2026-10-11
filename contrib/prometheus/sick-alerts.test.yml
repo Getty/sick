@@ -38,6 +38,12 @@ tests:
         values: '3x120'
       - series: 'sick_ca_up'
         values: '0x120'
+      - series: 'sick_device_info{device="fine",type="files",status="ok"}'
+        values: '1x120'
+      - series: 'sick_device_info{device="unreachable",type="files",status="unreachable"}'
+        values: '1x120'
+      - series: 'sick_device_info{device="broken",type="files",status="error"}'
+        values: '1x120'
       - series: 'sick_ca_certificate_not_after_seconds{role="intermediate",subject="CN=Example Intermediate CA"}'
         values: '31535000x120'
       - series: 'sick_ca_certificate_not_after_seconds{role="intermediate",subject="CN=Example Next Intermediate CA"}'
@@ -77,6 +83,15 @@ tests:
           - exp_labels: { severity: warning, device: failing }
             exp_annotations:
               summary: "failing: 3 attempts to renew failed in a row"
+      - eval_time: 30m
+        alertname: SickDeviceError
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: SickDeviceError
+        exp_alerts:
+          - exp_labels: { severity: warning, device: broken, type: files, status: error }
+            exp_annotations:
+              summary: "broken: sick cannot check it (status error)"
       - eval_time: 20m
         alertname: SickCAUnreachable
         exp_alerts: []
