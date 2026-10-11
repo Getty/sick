@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-11T06:56:45Z
+created: 2026-10-11T05:49:30Z
+id: 65
+priority: low
+started: 2026-10-11T06:41:02Z
+status: done
+tags:
+- core
+- target
+- proxmox
+title: Hand the issuer's root (and the additional roots) to targets
+updated: 2026-10-11T06:56:56Z
+---
+
+A target that has to verify the device's TLS before it sends a secret needs our root as a trust anchor. deploy() gets the bundle only; SICK-Target-Proxmox asks the operator to repeat the root in the device option 'ca'. Wish: the target can read the run's root and additional roots (e.g. an attribute trust_roots set by the Runner, or deploy($bundle, root => ...)). Decision: ../sick-target-proxmox docs/decisions/0001-trust-in-the-node.md. From SICK-Target-Proxmox (../sick-target-proxmox, card #6 there).
+
+Done: SICK::Target attribute trust_roots (arrayref of PEM, root first then additional roots; default []), passed by Runner::_target for run and check; no trust_intermediates (deploy has $bundle->chain). Unreadable additional root now fails every device (like intermediates). Tests t/30, t/40. prove -lr t green, no skips; ciscosb + proxmox suites green unchanged (only their 90-live skipped). Follow-up for ../sick-target-proxmox: use trust_roots as implicit anchor (Client takes CA files: write them to a SICK::Temp file or use SSL_ca).
+
+Committed as b1b04cb
