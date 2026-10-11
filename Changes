@@ -210,3 +210,12 @@ Revision history for SICK
       written down; t/e2e/acme-services.sh shows each obtains, renews with
       the fingerprint on the port changing, is refused a name outside the CA
       policy and fails a challenge for a name it does not control.
+    - k8s/cert-manager: cert-manager (v1.21.2) gets certificates from the lab
+      CA in two ways, through an ACME ClusterIssuer (http-01 via the k3s
+      Traefik) and through step-issuer with a provisioner of its own; each
+      comes with a Certificate (30 days, renewed 10 days before the end) and
+      an nginx Deployment that reloads on renewal; pods trust the root
+      through a ConfigMap. t/e2e/acme-k8s.sh proves it in a k3d cluster:
+      issuance and renewal seen on the Service from a pod, a name outside the
+      policy refused, and a challenge for a name the client does not control
+      failing.

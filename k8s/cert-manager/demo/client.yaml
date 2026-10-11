@@ -1,0 +1,29 @@
+# A client in the cluster that trusts the CA through the ConfigMap sick-root
+# (key root_ca.crt): the root alone, mounted as a file and given to curl as
+# its only trust anchor. Make the ConfigMap from the root you verified:
+#
+#   kubectl -n acme-demo create configmap sick-root --from-file=root_ca.crt
+#
+# Any Pod that is to trust the CA mounts it the same way.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  labels: { app: client }
+spec:
+  containers:
+    - name: curl
+      image: curlimages/curl:8.22.0
+      command: [sleep, infinity]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: { drop: [ALL] }
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 200m, memory: 64Mi }
+      volumeMounts:
+        - { name: root, mountPath: /etc/sick-root, readOnly: true }
+  terminationGracePeriodSeconds: 1
+  volumes:
+    - name: root
+      configMap: { name: sick-root }

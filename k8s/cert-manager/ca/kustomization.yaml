@@ -1,0 +1,64 @@
+# The CA of k8s/test alone, for cert-manager: step-ca with its ACME
+# provisioner "acme", reachable as ca.dev-sick.svc inside the cluster, issuing
+# for *.example.internal and nothing else. No sick, no trust page.
+#
+#   kubectl apply -k k8s/cert-manager/ca
+#
+# A lab: the root key lies in the volume sick-ca, as in k8s/test. See
+# k8s/cert-manager/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-sick
+resources:
+  - namespace.yaml
+  - ../../daten
+  - ../../test
+  - networkpolicy.yaml
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: sick
+      spec:
+        template:
+          spec:
+            containers:
+              - name: sick
+                $patch: delete
+              - name: trust
+                $patch: delete
+              - name: ca
+                env:
+                  # the names cert-manager and step-issuer reach the CA by;
+                  # used at the first start (init-ca.sh adds ca, localhost)
+                  - name: SICK_CA_DNS
+                    value: "ca.dev-sick.svc,ca.dev-sick.svc.cluster.local"
+                  # the policy: every other name is refused by the CA,
+                  # whoever asks and whatever the provisioner
+                  - name: SICK_CA_ALLOW_DNS
+                    value: "*.example.internal"
+                  # the ACME lifetimes stay init-ca.sh's: 720h, 5m to 2160h
+            volumes:
+              - name: state
+                $patch: delete
+              - name: trust
+                $patch: delete
+              - name: tmp
+                $patch: delete
+              - name: config
+                $patch: delete
+              - name: secrets
+                $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: sick-state
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: trust
+      $patch: delete

@@ -1,0 +1,19 @@
+# Who reaches the CA: cert-manager (ACME: account, orders, finalize) and
+# step-issuer (JWK provisioner: sign). No other Pod of the cluster gets to
+# port 9000; the CA itself may reach out (http-01 validation) unhindered.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ca-clients
+spec:
+  podSelector:
+    matchLabels: { app: sick }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cert-manager }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: step-issuer }
+      ports:
+        - { protocol: TCP, port: 9000 }

@@ -1,0 +1,91 @@
+# Two services that serve what cert-manager issued, one per issuer:
+# web-acme (Secret web-acme-tls) and web-step (Secret web-step-tls). The Pod
+# waits in ContainerCreating until its Secret exists.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-acme
+  labels: { app: web-acme }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web-acme }
+  template:
+    metadata:
+      labels: { app: web-acme }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.30.5-alpine
+          command: [/bin/sh, /serve/serve.sh]
+          ports:
+            - { name: https, containerPort: 8443 }
+          readinessProbe:
+            tcpSocket: { port: https }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          volumeMounts:
+            # the whole Secret as a directory: a subPath mount is never updated
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: serve, mountPath: /serve, readOnly: true }
+            - { name: serve, mountPath: /etc/nginx/conf.d/default.conf, subPath: nginx.conf, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: web-acme-tls }
+        - name: serve
+          configMap: { name: web-serve }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-acme
+spec:
+  selector: { app: web-acme }
+  ports:
+    - { name: https, port: 443, targetPort: https }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-step
+  labels: { app: web-step }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web-step }
+  template:
+    metadata:
+      labels: { app: web-step }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.30.5-alpine
+          command: [/bin/sh, /serve/serve.sh]
+          ports:
+            - { name: https, containerPort: 8443 }
+          readinessProbe:
+            tcpSocket: { port: https }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: serve, mountPath: /serve, readOnly: true }
+            - { name: serve, mountPath: /etc/nginx/conf.d/default.conf, subPath: nginx.conf, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: web-step-tls }
+        - name: serve
+          configMap: { name: web-serve }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-step
+spec:
+  selector: { app: web-step }
+  ports:
+    - { name: https, port: 443, targetPort: https }

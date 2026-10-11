@@ -1,0 +1,8 @@
+# The two issuers: ACME (cert-manager's own client) and step-issuer. Both
+# need the root of the CA, step-issuer also the key id of its provisioner -
+# set them in an overlay that names this directory. See README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - acme.yaml
+  - step.yaml

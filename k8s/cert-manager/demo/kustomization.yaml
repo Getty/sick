@@ -1,0 +1,19 @@
+# Two services in example.internal with certificates from cert-manager, one
+# per issuer, and a client Pod that trusts the CA through a ConfigMap.
+#
+#   kubectl apply -k k8s/cert-manager/demo
+#
+# Needs the issuers of ../issuers and the ConfigMap sick-root (client.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: acme-demo
+resources:
+  - namespace.yaml
+  - certificates.yaml
+  - web.yaml
+  - client.yaml
+configMapGenerator:
+  - name: web-serve
+    files:
+      - serve.sh
+      - nginx.conf

@@ -1,0 +1,26 @@
+# step-issuer against a JWK provisioner of its own, "cert-manager" - not
+# SICK's provisioner "sick" (see README.md, "step-issuer: which provisioner").
+#
+# caBundle holds the root (base64 of root_ca.crt) and kid the key id of the
+# provisioner; your overlay sets both, they exist once the CA does. The
+# password that opens the provisioner key is the Secret
+# step-issuer/sick-step-provisioner (key "password"), made by hand:
+#
+#   kubectl -n step-issuer create secret generic sick-step-provisioner \
+#     --from-file=password=<file>
+#
+# Whoever reads that Secret may have the CA sign any name its policy allows.
+apiVersion: certmanager.step.sm/v1beta1
+kind: StepClusterIssuer
+metadata:
+  name: sick-step
+spec:
+  url: https://ca.dev-sick.svc.cluster.local:9000
+  caBundle: ""                        # base64 of root_ca.crt, set by an overlay
+  provisioner:
+    name: cert-manager
+    kid: ""                           # key id of "cert-manager", set by an overlay
+    passwordRef:
+      name: sick-step-provisioner
+      namespace: step-issuer
+      key: password

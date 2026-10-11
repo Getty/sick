@@ -1,0 +1,28 @@
+# cert-manager's ACME client against the ACME provisioner "acme" of the CA.
+#
+# Trust: caBundle holds the root of the CA (base64 of root_ca.crt, one PEM
+# block); cert-manager verifies the directory URL against it and nothing
+# else. Your overlay sets it - the root is made at the first start of the
+# CA and is no part of this repository.
+#
+# Enrollment: anyone who reaches the directory may open an account (no
+# external account binding). What makes an order succeed is the http-01
+# challenge: the CA fetches http://<name>/.well-known/acme-challenge/<token>
+# on port 80, resolving <name> through the cluster DNS, and cert-manager has
+# its solver answer through an Ingress of the k3s Traefik. The policy of the
+# CA (*.example.internal) bounds the names before any challenge is made.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: sick-acme
+spec:
+  acme:
+    server: https://ca.dev-sick.svc.cluster.local:9000/acme/acme/directory
+    caBundle: ""                      # base64 of root_ca.crt, set by an overlay
+    # the account key; made by cert-manager in its own namespace
+    privateKeySecretRef:
+      name: sick-acme-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

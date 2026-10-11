@@ -1,0 +1,51 @@
+# One certificate per issuer, each for a service in example.internal.
+#
+# renewBefore 240h: both issuers give 30-day certificates (the ACME
+# provisioner's lifetime, set by init-ca.sh; step-issuer asks for the
+# duration below). Renewing ten days before the end is cert-manager's own
+# default of two thirds, written out so that it does not move with
+# cert-manager, and it is the budget init-ca.sh names: ten days in which the
+# CA may be down before a service holds an expired certificate. A
+# certificate shorter than renewBefore (a test lifetime) is renewed at two
+# thirds of its actual lifetime: cert-manager falls back to that.
+#
+# rotationPolicy Always: a renewal comes with a new key, chosen here instead
+# of cert-manager's version-dependent default.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-acme
+spec:
+  secretName: web-acme-tls
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: sick-acme
+  dnsNames: [web-acme.example.internal]
+  # no duration: the ACME issuer does not send one, the CA's provisioner
+  # decides (720h)
+  renewBefore: 240h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-step
+spec:
+  secretName: web-step-tls
+  issuerRef:
+    group: certmanager.step.sm
+    kind: StepClusterIssuer
+    name: sick-step
+  dnsNames: [web-step.example.internal]
+  # step-issuer passes the duration on to the CA; "cert-manager" grants up
+  # to 2160h
+  duration: 720h
+  renewBefore: 240h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

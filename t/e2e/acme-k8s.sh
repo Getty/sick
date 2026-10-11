@@ -1,0 +1,753 @@
+#!/bin/bash
+#
+# cert-manager against the lab CA, in a throw-away k3d cluster: an ACME
+# ClusterIssuer (http-01 through the k3s Traefik) and step-issuer (a JWK
+# provisioner of its own), each issuing for a service in example.internal.
+# The manifests are those of k8s/cert-manager; see its README.md.
+#
+#   t/e2e/acme-k8s.sh                          all parts, in one call
+#   t/e2e/acme-k8s.sh up issue                 the parts named, in this order
+#
+# Parts, each with PASS/FAIL lines; the first FAIL tears the cluster down and
+# ends the script with 1. The cluster lives from "up" to "down", so the parts
+# may be run in separate calls (none takes more than about eight minutes):
+#
+#   up      removes a cluster of the same name and the working directory left
+#           by an interrupted run, then: k3d cluster sick-p6-acme with its own
+#           kubeconfig, cert-manager and step-issuer (pinned, checksums
+#           verified), the CA of k8s/cert-manager/ca with a short ACME
+#           lifetime, the provisioner "cert-manager" with a password made
+#           now, both issuers Ready
+#   issue   k8s/cert-manager/demo: each Certificate becomes Ready, and the
+#           client Pod - curl with the root alone - sees on the Service the
+#           certificate that is in the Secret; without the root it is
+#           refused; extended key usage serverAuth alone; no Pod outside
+#           cert-manager and step-issuer reaches the CA
+#   renew   without anything done here, the client sees a new certificate
+#           on each Service within the deadline: issued anew by the same
+#           issuer, serverAuth alone
+#   refuse  a Certificate for a name outside the policy of the CA, per
+#           issuer: refused by the CA, the message recorded. ACME only, three
+#           names that lead cert-manager to its solver but not the CA:
+#           elsewhere.example.internal (the CA reaches another web server:
+#           the challenge is invalid), unreachable.example.internal (the CA
+#           reaches nothing: connection error, the challenge stays pending),
+#           noroute.example.internal (nobody resolves it: cert-manager's
+#           self check holds the challenge back, the CA is never asked)
+#   down    deletes the cluster by its exact name, checks that nothing of it
+#           is left, removes the working directory
+#
+# Test lifetimes: the ACME provisioner issues for 8 minutes (cert-manager
+# renews at two thirds, the 240h renewBefore of the Certificate being longer
+# than that); the step Certificate is given duration 1h (cert-manager's
+# shortest) and renewBefore 55m. Both renew about 5 minutes after issuance.
+#
+# Everything this script makes in Docker carries the label sick=1 or the
+# cluster's exact name: the node container (label), the network sick-p6-acme
+# (label; k3d uses it and leaves it), the volume k3d-sick-p6-acme-images
+# (made by k3d, named after the cluster). The k3d API listens on 127.0.0.1;
+# nothing else is published. The images stay as a cache. It touches no
+# other cluster, no prune, never the default kubeconfig: KUBECONFIG points
+# into the working directory for every k3d, kubectl and helm call.
+#
+# Prerequisites: Docker, k3d, kubectl, helm, openssl, curl, jq; network
+# access for the pinned downloads and images.
+#
+# Parameters, all from the environment:
+#
+#   SICK_ACME_K8S_DIR      private working directory, mode 0700, removed by
+#                          "down" ($HOME/.local/share/sick-lab/acme-k8s)
+#   SICK_ACME_K8S_CLUSTER  k3d cluster name, sick-p6-*       (sick-p6-acme)
+#   SICK_ACME_K8S_KEEP     "yes": no teardown after a FAIL            (no)
+#
+# The provisioner password is made at run time (openssl rand), lives in the
+# working directory, the CA's container for a moment and the Secret; it is
+# never printed.
+
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/../.." && pwd)
+context=$(cd "$repo/.." && pwd)
+
+work=${SICK_ACME_K8S_DIR:-$HOME/.local/share/sick-lab/acme-k8s}
+cluster=${SICK_ACME_K8S_CLUSTER:-sick-p6-acme}
+keep=${SICK_ACME_K8S_KEEP:-no}
+
+# pinned versions; the checksums were taken at the first download
+cm_version=v1.21.2
+cm_url=https://github.com/cert-manager/cert-manager/releases/download/$cm_version/cert-manager.yaml
+cm_sha256=e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
+si_chart=1.11.0
+si_image=cr.step.sm/smallstep/step-issuer:0.11.0
+si_url=https://smallstep.github.io/helm-charts/step-issuer-$si_chart.tgz
+si_sha256=ab8e85f3877a2153ffe187b05ff90ac07d06ed314cbe4244e4499c6ecef697ef   # = digest in the chart index
+images=(
+  smallstep/step-ca:0.30.2
+  quay.io/jetstack/cert-manager-controller:$cm_version
+  quay.io/jetstack/cert-manager-webhook:$cm_version
+  quay.io/jetstack/cert-manager-cainjector:$cm_version
+  quay.io/jetstack/cert-manager-acmesolver:$cm_version
+  "$si_image"
+  nginx:1.30.5-alpine
+  curlimages/curl:8.22.0
+)
+acme_lifetime=8m
+
+parts=("$@")
+[ "${#parts[@]}" -gt 0 ] || parts=(up issue renew refuse down)
+want() { local p; for p in "${parts[@]}"; do [ "$p" = "$1" ] && return 0; done; return 1; }
+
+step_no=0
+step() { step_no=$((step_no + 1)); printf '\n=== %s. %s\n' "$step_no" "$*"; }
+note() { printf -- '--- %s\n' "$*"; }
+pass() { printf 'PASS  %s\n' "$*"; }
+fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
+show() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g; s/^/    /'; }
+# expect <what> <extended regular expression> <text>
+expect() {
+  if grep -Eq -- "$2" <<<"$3"; then pass "$1"; else
+    printf '%s\n' "$3" | sed 's/^/      | /' >&2
+    fail "$1 (expected /$2/)"
+  fi
+}
+# wait_for <seconds> <what> <command ...>
+wait_for() {
+  local seconds=$1 what=$2 start=$SECONDS
+  shift 2
+  until "$@" >/dev/null 2>&1; do
+    [ $((SECONDS - start)) -lt "$seconds" ] || fail "waited ${seconds}s for $what"
+    sleep 2
+  done
+}
+
+for p in "${parts[@]}"; do
+  case $p in up | issue | renew | refuse | down) ;; *) fail "unknown part '$p' (up, issue, renew, refuse, down)" ;; esac
+done
+[[ $cluster =~ ^sick-p6-[a-z0-9-]+$ ]] || fail "SICK_ACME_K8S_CLUSTER '$cluster' is not sick-p6-*"
+for program in docker k3d kubectl helm openssl curl jq; do
+  command -v "$program" >/dev/null || fail "$program is not installed"
+done
+
+work_parent=$(dirname "$work")
+mkdir -p "$work_parent"
+work=$(cd "$work_parent" && pwd)/$(basename "$work")
+case $work/ in "$context"/*) fail "SICK_ACME_K8S_DIR $work lies inside the build context $context" ;; esac
+network=$cluster
+default_kubeconfig_mtime=$(stat -c %Y "$HOME/.kube/config" 2>/dev/null || echo none)
+umask 077
+export KUBECONFIG=$work/kubeconfig
+
+#### teardown
+
+# Deletes the cluster by its exact name and the network by name and label,
+# checks that nothing of either is left, removes the working directory.
+teardown() {
+  local left rc=0
+  local scratch=
+  note "k3d cluster delete $cluster"
+  if [ ! -s "$KUBECONFIG" ]; then
+    # k3d edits the kubeconfig it is given: never the default one
+    scratch=$(mktemp)
+    KUBECONFIG=$scratch k3d cluster delete "$cluster" 2>&1 | show
+    rm -f "$scratch"
+  else
+    k3d cluster delete "$cluster" 2>&1 | show
+  fi
+  docker network ls -q --filter "label=sick=1" --filter "name=^${network}$" | xargs -r docker network rm 2>&1 | show
+  left=$(
+    docker ps -a --format '{{.Names}}' | grep -E "^k3d-${cluster}(-|$)" | sed 's/^/container /'
+    docker volume ls --format '{{.Name}}' | grep -E "^k3d-${cluster}(-|$)" | sed 's/^/volume /'
+    docker network ls --format '{{.Name}}' | grep -E "^(k3d-)?${cluster}$" | sed 's/^/network /'
+  )
+  if [ -n "$left" ]; then
+    printf '%s\n' "$left" | sed 's/^/      | /' >&2
+    printf 'FAIL  left behind by cluster %s (listed above)\n' "$cluster" >&2
+    rc=1
+  else
+    pass "no container, volume or network of k3d cluster $cluster is left"
+  fi
+  rm -rf "${work:?}"
+  if [ -e "$work" ]; then
+    printf 'FAIL  %s is still there\n' "$work" >&2
+    rc=1
+  else
+    pass "working directory $work removed"
+  fi
+  return "$rc"
+}
+
+kubeconfig_untouched() {
+  local now
+  now=$(stat -c %Y "$HOME/.kube/config" 2>/dev/null || echo none)
+  [ "$now" = "$default_kubeconfig_mtime" ] || fail "$HOME/.kube/config changed (mtime $default_kubeconfig_mtime -> $now)"
+  pass "$HOME/.kube/config is untouched (mtime $now)"
+}
+
+finished=
+on_exit() {
+  local rc=$?
+  trap - EXIT INT TERM
+  set +e
+  if [ "$rc" -ne 0 ] && [ -z "$finished" ]; then
+    printf '\n=== teardown after a failure\n'
+    if [ "$keep" = yes ]; then
+      note "cluster $cluster and $work kept (SICK_ACME_K8S_KEEP=yes); remove them with: $0 down"
+    else
+      teardown
+    fi
+    printf '\nFAILED (exit %s)\n' "$rc" >&2
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+#### helpers on a running cluster
+
+need_cluster() {
+  [ -s "$KUBECONFIG" ] || fail "no cluster: run '$0 up' first ($KUBECONFIG is missing)"
+  k3d cluster list "$cluster" >/dev/null 2>&1 || fail "no cluster $cluster: run '$0 up' first"
+}
+
+ca() { kubectl -n dev-sick exec deploy/sick -c ca -- "$@"; }
+demo() { kubectl -n acme-demo "$@"; }
+
+# path from the generated overlay <dir> to <target>, as kustomize wants it
+rel() { realpath --relative-to="$1" "$2"; }
+
+fingerprint() { openssl x509 -noout -fingerprint -sha256 | sed 's/^.*=//'; }
+
+# the certificate in Secret <secret> of acme-demo, PEM (the leaf first)
+secret_cert() { demo get secret "$1" -o jsonpath='{.data.tls\.crt}' | base64 -d; }
+
+# probe <service>: what the client Pod sees on the Service, with the root as
+# the only trust anchor and <service>.example.internal as the name it
+# checks. Writes the leaf to $work/live-<service>.pem and prints the body.
+probe() {
+  local svc=$1 out
+  out=$(demo exec client -- curl -sS --max-time 10 \
+    --cacert /etc/sick-root/root_ca.crt \
+    --connect-to "$svc.example.internal:443:$svc.acme-demo.svc.cluster.local:443" \
+    -w '\n%{certs}' "https://$svc.example.internal/" 2>&1) || { printf '%s\n' "$out"; return 1; }
+  awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { exit }' <<<"$out" >"$work/live-$svc.pem"
+  [ -s "$work/live-$svc.pem" ] || { printf '%s\n' "$out"; return 1; }
+  head -n 1 <<<"$out"
+}
+
+eku() { openssl x509 -noout -ext extendedKeyUsage 2>/dev/null | sed -n '2,$p' | sed 's/^ *//'; }
+
+#### up
+
+if want up; then
+  step "a clean start: cluster $cluster and $work from an earlier run removed"
+  if k3d cluster list "$cluster" >/dev/null 2>&1 || [ -e "$work" ] \
+    || docker network ls --format '{{.Name}}' | grep -qx "$network"; then
+    note 'left from an earlier run: removing'
+    teardown || fail 'could not remove what an earlier run left'
+  else
+    pass 'nothing left from an earlier run'
+  fi
+  mkdir -m 0700 "$work"
+  : >"$KUBECONFIG"
+  printf '%s\n' "$default_kubeconfig_mtime" >"$work/default-kubeconfig-mtime"
+  note "KUBECONFIG=$KUBECONFIG"
+
+  step "pinned downloads, checksums verified"
+  curl -fsSL -o "$work/cert-manager.yaml" "$cm_url"
+  [ "$(sha256sum <"$work/cert-manager.yaml" | cut -d' ' -f1)" = "$cm_sha256" ] || fail "cert-manager.yaml $cm_version: checksum differs"
+  pass "cert-manager $cm_version: cert-manager.yaml sha256 $cm_sha256"
+  curl -fsSL -o "$work/step-issuer.tgz" "$si_url"
+  [ "$(sha256sum <"$work/step-issuer.tgz" | cut -d' ' -f1)" = "$si_sha256" ] || fail "step-issuer chart $si_chart: checksum differs"
+  pass "step-issuer chart $si_chart: sha256 $si_sha256, image $si_image"
+  note "images, pulled once into the local cache: ${images[*]}"
+  for image in "${images[@]}"; do
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" | show
+  done
+
+  step "k3d cluster $cluster with its own kubeconfig"
+  docker network create --label sick=1 "$network" | show
+  api_port=$(
+    for p in $(seq 16443 16543); do
+      (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; break; }
+    done
+  )
+  [ -n "$api_port" ] || fail 'no free port for the API between 16443 and 16543'
+  # In an LXC container /dev/kmsg is no device and a privileged container
+  # does not get it: the kubelet then refuses to start. An empty one does.
+  kmsg=()
+  if [ -L /dev/kmsg ] || [ ! -c /dev/kmsg ]; then
+    kmsg=(--volume '/dev/null:/dev/kmsg@server:*')
+    note '/dev/kmsg is no device on this host: the node gets /dev/null in its place'
+  fi
+  note "k3d cluster create $cluster --api-port 127.0.0.1:$api_port --no-lb --network $network ${kmsg[*]}"
+  k3d cluster create "$cluster" --api-port "127.0.0.1:$api_port" --no-lb --network "$network" "${kmsg[@]}" \
+    --kubeconfig-update-default=false --kubeconfig-switch-context=false \
+    --runtime-label 'sick=1@server:*' \
+    --k3s-arg '--disable=servicelb@server:*' --k3s-arg '--disable=metrics-server@server:*' \
+    --wait --timeout 180s 2>&1 | show
+  k3d kubeconfig get "$cluster" >"$KUBECONFIG"
+  server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+  note "API server $server"
+  [[ $server == https://127.0.0.1:* ]] || fail "the API server is $server, not on 127.0.0.1"
+  pass "the API listens on $server, the kubeconfig is $KUBECONFIG"
+  [ "$(docker inspect -f '{{index .Config.Labels "sick"}}' "k3d-$cluster-server-0")" = 1 ] || fail 'the node container has no label sick=1'
+  pass 'the node container carries the label sick=1'
+  wait_for 120 'the node to be Ready' kubectl wait --for=condition=Ready node --all --timeout=5s
+  note "versions: $(k3d version | tr '\n' ' ')"
+  kubectl version 2>/dev/null | show
+  note "k3d image import ${images[*]}"
+  k3d image import -c "$cluster" "${images[@]}" 2>&1 | tail -n 2 | show
+
+  step "cert-manager $cm_version and step-issuer $si_chart"
+  kubectl apply -f "$work/cert-manager.yaml" >/dev/null
+  for d in cert-manager cert-manager-cainjector cert-manager-webhook; do
+    kubectl -n cert-manager rollout status "deploy/$d" --timeout=180s 2>&1 | show || fail "$d did not come up"
+  done
+  pass "cert-manager $cm_version is up"
+  helm install step-issuer "$work/step-issuer.tgz" --namespace step-issuer --create-namespace \
+    --set "image.tag=${si_image##*:}" --wait --timeout 180s 2>&1 | head -n 6 | show
+  kubectl -n step-issuer get deploy -o wide 2>&1 | show
+  pass "step-issuer chart $si_chart is up"
+
+  step 'the owner of elsewhere.example.internal in the eyes of the CA: a web server of its own'
+  # It answers every request with 200 and a text of its own - the way a name
+  # that belongs to somebody else looks to the CA.
+  kubectl apply -f - 2>&1 <<'EOF' | show
+apiVersion: v1
+kind: Namespace
+metadata: { name: acme-other }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: owner, namespace: acme-other }
+spec:
+  selector: { matchLabels: { app: owner } }
+  template:
+    metadata: { labels: { app: owner } }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.30.5-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo 'server { listen 80; location / { default_type text/plain; return 200 "not yours"; } }' >/etc/nginx/conf.d/default.conf
+              exec nginx -g 'daemon off;'
+          ports: [{ containerPort: 80 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: owner, namespace: acme-other }
+spec:
+  selector: { app: owner }
+  ports: [{ port: 80 }]
+EOF
+  kubectl -n acme-other rollout status deploy/owner --timeout=120s 2>&1 | show || fail 'the owner did not come up'
+  owner_ip=$(kubectl -n acme-other get svc owner -o jsonpath='{.spec.clusterIP}')
+  [ -n "$owner_ip" ] || fail 'the owner has no ClusterIP'
+  pass "acme-other/owner answers on $owner_ip:80"
+
+  step 'the CA: k8s/cert-manager/ca, ACME lifetime shortened for the test'
+  mkdir -p "$work/kz/ca"
+  cat >"$work/kz/ca/kustomization.yaml" <<EOF
+# generated by t/e2e/acme-k8s.sh
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - $(rel "$work/kz/ca" "$repo/k8s/cert-manager/ca")
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: sick
+        namespace: dev-sick
+      spec:
+        template:
+          spec:
+            # The CA's view of two names that lead cert-manager (cluster
+            # DNS) to its solver: elsewhere.example.internal is the owner's
+            # web server, unreachable.example.internal this Pod, where
+            # nothing answers on port 80.
+            hostAliases:
+              - ip: 127.0.0.1
+                hostnames: [ca, unreachable.example.internal]
+              - ip: $owner_ip
+                hostnames: [elsewhere.example.internal]
+            containers:
+              - name: ca
+                env:
+                  - { name: SICK_CA_ACME_LIFETIME, value: "$acme_lifetime" }
+EOF
+  kubectl apply -k "$work/kz/ca" 2>&1 | show
+  kubectl -n dev-sick rollout status deploy/sick --timeout=240s 2>&1 | show || fail 'the CA did not come up'
+  log=$(kubectl -n dev-sick logs deploy/sick -c ca 2>&1 | grep '^init-ca:' || true)
+  show <<<"$log"
+  expect 'the CA is up, issuing for *.example.internal alone' "names allowed: \*\.example\.internal" "$log"
+  expect "... and 'acme' issues for $acme_lifetime, serverAuth only" "'acme' issues for $acme_lifetime \(5m to 2160h\), serverAuth only" "$log"
+  ca cat /home/step/certs/root_ca.crt >"$work/root_ca.crt"
+  root_fp=$(fingerprint <"$work/root_ca.crt")
+  expect '... the root read through the API is the one init-ca.sh names' "root fingerprint \(SHA-256\): $(tr -d : <<<"$root_fp" | tr 'A-F' 'a-f')" "$log"
+
+  step 'the provisioner "cert-manager" for step-issuer, with a password made now'
+  # no newline at the end: step trims it from a password file, step-issuer
+  # takes the Secret as it is
+  openssl rand -base64 30 | tr -d '\n' >"$work/step-provisioner.pw"
+  kubectl -n dev-sick exec -i deploy/sick -c ca -- su step -s /bin/bash -c '
+    set -euo pipefail
+    umask 077
+    config=/home/step/config/ca.json
+    pw=$(mktemp)
+    trap "rm -f \"\$pw\"" EXIT
+    cat >"$pw"
+    if jq -e ".authority.provisioners[] | select(.name == \"cert-manager\")" "$config" >/dev/null; then
+      echo "a provisioner cert-manager exists" >&2; exit 1
+    fi
+    step ca provisioner add cert-manager --type JWK --create --password-file "$pw" --ca-config "$config" >/dev/null
+    # the template of "sick" (serverAuth alone, set by init-ca.sh) and
+    # lifetimes as for ACME: 30 days, at most 90
+    template=$(jq -r ".authority.provisioners[] | select(.type == \"JWK\" and .name == \"sick\") | .options.x509.template" "$config")
+    jq --arg t "$template" "(.authority.provisioners[] | select(.type == \"JWK\" and .name == \"cert-manager\")) |=
+        (.claims = { minTLSCertDuration: \"5m\", defaultTLSCertDuration: \"720h\", maxTLSCertDuration: \"2160h\" }
+        | .options.x509.template = \$t)" "$config" >"$config.new"
+    mv "$config.new" "$config"
+    pkill -HUP -x step-ca
+  ' <"$work/step-provisioner.pw" 2>&1 | show
+  sleep 3
+  provisioners=$(ca step ca provisioner list --ca-url https://localhost:9000 --root /home/step/certs/root_ca.crt 2>/dev/null)
+  kid=$(jq -r '.[] | select(.type == "JWK" and .name == "cert-manager") | .key.kid' <<<"$provisioners")
+  [ -n "$kid" ] || fail 'the CA does not list a JWK provisioner cert-manager after the reload'
+  jq -c '.[] | select(.name == "cert-manager") | { type, name, kid: .key.kid, claims, eku: (.options.x509.template | fromjson? | .extKeyUsage) }' <<<"$provisioners" | show
+  pass "the CA lists the JWK provisioner cert-manager (kid $kid)"
+  printf '%s\n' "$kid" >"$work/kid"
+  kubectl -n step-issuer create secret generic sick-step-provisioner --from-file=password="$work/step-provisioner.pw" 2>&1 | show
+  pass 'its password is the Secret step-issuer/sick-step-provisioner, made from the file just made'
+
+  step 'cluster DNS for the ACME names: the k3s Traefik, where the http-01 solver answers'
+  wait_for 240 'the k3s Traefik' kubectl -n kube-system rollout status deploy/traefik --timeout=5s
+  traefik_ip=$(kubectl -n kube-system get svc traefik -o jsonpath='{.spec.clusterIP}')
+  [ -n "$traefik_ip" ] || fail 'Traefik has no ClusterIP'
+  kubectl -n kube-system create configmap coredns-custom \
+    --from-literal="example-internal.server=example.internal:53 {
+    errors
+    hosts {
+        $traefik_ip web-acme.example.internal elsewhere.example.internal unreachable.example.internal
+    }
+}" 2>&1 | show
+  kubectl -n kube-system rollout restart deploy/coredns 2>&1 | show
+  kubectl -n kube-system rollout status deploy/coredns --timeout=120s 2>&1 | show
+  pass "web-acme, elsewhere and unreachable.example.internal lead to Traefik ($traefik_ip); noroute.example.internal to nothing"
+
+  step 'the two issuers, with the root as caBundle'
+  mkdir -p "$work/kz/issuers"
+  bundle=$(base64 -w0 <"$work/root_ca.crt")
+  cat >"$work/kz/issuers/kustomization.yaml" <<EOF
+# generated by t/e2e/acme-k8s.sh
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - $(rel "$work/kz/issuers" "$repo/k8s/cert-manager/issuers")
+patches:
+  - target: { kind: ClusterIssuer, name: sick-acme }
+    patch: |-
+      - { op: replace, path: /spec/acme/caBundle, value: "$bundle" }
+  - target: { kind: StepClusterIssuer, name: sick-step }
+    patch: |-
+      - { op: replace, path: /spec/caBundle, value: "$bundle" }
+      - { op: replace, path: /spec/provisioner/kid, value: "$kid" }
+EOF
+  # the webhook of cert-manager may still be getting its certificate
+  wait_for 120 'cert-manager to accept the issuers' kubectl apply -k "$work/kz/issuers"
+  kubectl get clusterissuer,stepclusterissuer 2>&1 | show
+  wait_for 120 'ClusterIssuer sick-acme to be Ready' kubectl wait --for=condition=Ready clusterissuer/sick-acme --timeout=5s
+  kubectl get clusterissuer sick-acme -o jsonpath='{.status.acme.uri}{"\n"}' | show
+  pass 'ClusterIssuer sick-acme is Ready: an account at the ACME directory, the CA trusted through caBundle'
+  wait_for 120 'StepClusterIssuer sick-step to be Ready' kubectl wait --for=condition=Ready stepclusterissuer/sick-step --timeout=5s
+  pass 'StepClusterIssuer sick-step is Ready'
+  kubeconfig_untouched
+fi
+
+#### issue
+
+if want issue; then
+  need_cluster
+  step 'k8s/cert-manager/demo: a Certificate per issuer, a Deployment serving each, the client'
+  demo_ns_exists=$(kubectl get ns acme-demo -o name 2>/dev/null || true)
+  [ -n "$demo_ns_exists" ] || kubectl create namespace acme-demo 2>&1 | show
+  demo create configmap sick-root --from-file=root_ca.crt="$work/root_ca.crt" --dry-run=client -o yaml | kubectl apply -f - 2>&1 | show
+  pass "ConfigMap acme-demo/sick-root holds the root ($(fingerprint <"$work/root_ca.crt"))"
+  mkdir -p "$work/kz/demo"
+  cat >"$work/kz/demo/kustomization.yaml" <<EOF
+# generated by t/e2e/acme-k8s.sh: the step Certificate with test lifetimes
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - $(rel "$work/kz/demo" "$repo/k8s/cert-manager/demo")
+patches:
+  - target: { kind: Certificate, name: web-step }
+    patch: |-
+      - { op: replace, path: /spec/duration, value: 1h }
+      - { op: replace, path: /spec/renewBefore, value: 55m }
+EOF
+  kubectl apply -k "$work/kz/demo" 2>&1 | show
+
+  for issuer in acme step; do
+    svc=web-$issuer
+    step "$svc: issued by $([ $issuer = acme ] && echo 'ClusterIssuer sick-acme (ACME, http-01)' || echo 'StepClusterIssuer sick-step (JWK provisioner cert-manager)')"
+    if ! demo wait --for=condition=Ready "certificate/$svc" --timeout=240s >/dev/null 2>&1; then
+      demo describe "certificate/$svc" | tail -n 15 | show
+      demo get certificaterequest,order,challenge 2>&1 | show
+      fail "Certificate $svc did not become Ready"
+    fi
+    demo get certificate "$svc" -o jsonpath='{.status.conditions[?(@.type=="Ready")].message} (revision {.status.revision}, renewal {.status.renewalTime}){"\n"}' | show
+    note "Ready alone is no proof: what does the Service present?"
+    demo rollout status "deploy/$svc" --timeout=180s 2>&1 | show || fail "Deployment $svc did not come up"
+    demo wait --for=condition=Ready pod/client --timeout=120s >/dev/null 2>&1 || fail 'the client Pod is not Ready'
+    # the Service may take a few seconds to lead to the new Pod
+    tries=0
+    last=''
+    until body=$(probe "$svc"); do
+      last=$body
+      tries=$((tries + 1))
+      [ "$tries" -lt 20 ] || { show <<<"$body"; fail "the client cannot reach $svc.example.internal with the root alone"; }
+      sleep 3
+    done
+    [ "$tries" -eq 0 ] || note "reached after $tries failed attempts; the last said: $(grep -m1 'curl:' <<<"$last" || tail -n 1 <<<"$last")"
+    expect "the client (curl, root alone) gets an answer from $svc.example.internal over the Service" "^$svc\.example\.internal$" "$body"
+    live=$(fingerprint <"$work/live-$svc.pem")
+    issued=$(secret_cert "$svc-tls" | fingerprint)
+    note "live   $live"
+    note "Secret $issued"
+    [ "$live" = "$issued" ] || fail "$svc presents $live, the Secret holds $issued"
+    pass "$svc presents the certificate of Secret $svc-tls"
+    printf '%s\n' "$live" >"$work/fp-$svc"
+    demo get certificate "$svc" -o jsonpath='{.status.revision}' >"$work/rev-$svc"
+    openssl x509 -noout -subject -issuer -dates -ext subjectAltName <"$work/live-$svc.pem" 2>&1 | show
+    nb=$(date -d "$(openssl x509 -noout -startdate <"$work/live-$svc.pem" | cut -d= -f2)" +%s)
+    na=$(date -d "$(openssl x509 -noout -enddate <"$work/live-$svc.pem" | cut -d= -f2)" +%s)
+    note "lifetime $(( (na - nb) / 60 )) minutes"
+    usage=$(eku <"$work/live-$svc.pem")
+    [ "$usage" = 'TLS Web Server Authentication' ] || { show <<<"$usage"; fail "$svc: extended key usage is not serverAuth alone"; }
+    pass "$svc: extended key usage TLS Web Server Authentication alone, read back from the live certificate"
+    out=$(demo exec client -- curl -sS --max-time 10 \
+      --connect-to "$svc.example.internal:443:$svc.acme-demo.svc.cluster.local:443" \
+      "https://$svc.example.internal/" 2>&1) && { show <<<"$out"; fail "$svc is trusted without the root"; }
+    show <<<"$out"
+    pass "... and without the root curl refuses it"
+  done
+
+  step 'who reaches the CA: the client Pod does not'
+  out=$(demo exec client -- curl -sS --max-time 5 --cacert /etc/sick-root/root_ca.crt \
+    https://ca.dev-sick.svc.cluster.local:9000/health 2>&1) && { show <<<"$out"; fail 'the client Pod reaches the CA'; }
+  show <<<"$out"
+  pass 'NetworkPolicy ca-clients: a Pod in acme-demo gets no connection to the CA (cert-manager and step-issuer do, above)'
+  kubeconfig_untouched
+fi
+
+#### renew
+
+if want renew; then
+  need_cluster
+  step 'renewal: nothing is done here but looking, until both Services present a new certificate'
+  deadline=$((SECONDS + 500))
+  done_acme='' done_step=''
+  while [ -z "$done_acme" ] || [ -z "$done_step" ]; do
+    [ "$SECONDS" -lt "$deadline" ] || {
+      demo get certificate -o wide 2>&1 | show
+      fail "within 500 s:${done_acme:- web-acme not renewed}${done_step:- web-step not renewed}"
+    }
+    for issuer in acme step; do
+      svc=web-$issuer
+      var=done_$issuer
+      [ -z "${!var}" ] || continue
+      probe "$svc" >/dev/null 2>&1 || continue
+      live=$(fingerprint <"$work/live-$svc.pem")
+      if [ "$live" != "$(cat "$work/fp-$svc")" ]; then
+        printf -v "$var" '%s' "$live"
+        note "$svc presents a new certificate after $((SECONDS - deadline + 500)) s"
+      fi
+    done
+    sleep 5
+  done
+  for issuer in acme step; do
+    svc=web-$issuer
+    var=done_$issuer
+    live=${!var}
+    note "$svc before $(cat "$work/fp-$svc")"
+    note "$svc now    $live"
+    pass "$svc: the client sees a new fingerprint, without a manual step"
+    rev=$(demo get certificate "$svc" -o jsonpath='{.status.revision}')
+    [ "$rev" -gt "$(cat "$work/rev-$svc")" ] || fail "$svc: revision $rev is not above $(cat "$work/rev-$svc")"
+    issued=$(secret_cert "$svc-tls" | fingerprint)
+    # the Secret may be one renewal further than what was probed
+    if [ "$issued" != "$live" ]; then
+      probe "$svc" >/dev/null
+      live=$(fingerprint <"$work/live-$svc.pem")
+    fi
+    [ "$issued" = "$live" ] || fail "$svc presents $live, the Secret holds $issued"
+    pass "... the one of Secret $svc-tls, Certificate revision $(cat "$work/rev-$svc") -> $rev"
+    openssl x509 -noout -issuer -dates <"$work/live-$svc.pem" 2>&1 | show
+    usage=$(eku <"$work/live-$svc.pem")
+    [ "$usage" = 'TLS Web Server Authentication' ] || { show <<<"$usage"; fail "$svc: renewed certificate is not serverAuth alone"; }
+    pass "... serverAuth alone"
+  done
+  kubeconfig_untouched
+fi
+
+#### refuse
+
+if want refuse; then
+  need_cluster
+  step 'Certificates the CA must not issue'
+  demo apply -f - 2>&1 <<'EOF' | show
+# outside the policy of the CA (*.example.internal), once per issuer
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: outside-acme }
+spec:
+  secretName: outside-acme-tls
+  issuerRef: { group: cert-manager.io, kind: ClusterIssuer, name: sick-acme }
+  dnsNames: [web.example.org]
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: outside-step }
+spec:
+  secretName: outside-step-tls
+  issuerRef: { group: certmanager.step.sm, kind: StepClusterIssuer, name: sick-step }
+  dnsNames: [web.example.org]
+  duration: 1h
+  renewBefore: 55m
+---
+# inside the policy; the CA reaches another web server by that name
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: elsewhere-acme }
+spec:
+  secretName: elsewhere-acme-tls
+  issuerRef: { group: cert-manager.io, kind: ClusterIssuer, name: sick-acme }
+  dnsNames: [elsewhere.example.internal]
+---
+# inside the policy; the CA reaches nothing by that name
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: unreachable-acme }
+spec:
+  secretName: unreachable-acme-tls
+  issuerRef: { group: cert-manager.io, kind: ClusterIssuer, name: sick-acme }
+  dnsNames: [unreachable.example.internal]
+---
+# inside the policy, and nobody resolves it
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: noroute-acme }
+spec:
+  secretName: noroute-acme-tls
+  issuerRef: { group: cert-manager.io, kind: ClusterIssuer, name: sick-acme }
+  dnsNames: [noroute.example.internal]
+EOF
+
+  # the ACME objects of Certificate <name>, one line each: kind, state, reason
+  acme_state() {
+    demo get order,challenge -o json 2>/dev/null | jq -r --arg c "$1" '
+      .items[]
+      | select((.metadata.annotations["cert-manager.io/certificate-name"] // "") == $c
+               or (.metadata.ownerReferences // [] | map(.name) | any(startswith($c + "-"))))
+      | "\(.kind) \(.metadata.name) state=\(.status.state // "-") \(.status.reason // "" | gsub("\n"; " "))"'
+  }
+  # the conditions of the CertificateRequests of Certificate <name>
+  cr_state() {
+    demo get certificaterequest -o json 2>/dev/null | jq -r --arg c "$1" '
+      .items[] | select(.metadata.annotations["cert-manager.io/certificate-name"] == $c)
+      | "CertificateRequest \(.metadata.name) " + ([.status.conditions[]? | "\(.type)=\(.status)/\(.reason // "-")"] | join(" ")) + " " + ([.status.conditions[]? | select(.type == "Ready") | .message] | join(" ") | gsub("\n"; " "))'
+  }
+  # watch <seconds> <regex> <command ...>: polls the command, keeps every
+  # distinct line it printed, ends when a line matches <regex>
+  watch_until() {
+    local seconds=$1 re=$2 start=$SECONDS out
+    shift 2
+    seen=''
+    while :; do
+      out=$("$@" || true)
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        grep -qxF -- "$line" <<<"$seen" || seen+="$line"$'\n'
+      done <<<"$out"
+      grep -Eq -- "$re" <<<"$seen" && return 0
+      [ $((SECONDS - start)) -lt "$seconds" ] || return 1
+      sleep 2
+    done
+  }
+  no_secret() { ! demo get secret "$1" >/dev/null 2>&1; }
+
+  step 'ACME, web.example.org (outside the policy): the CA refuses the order'
+  watch_until 180 'Order .* state=(errored|invalid) .*' acme_state outside-acme || { show <<<"$seen"; fail 'no refused Order for web.example.org'; }
+  show <<<"$seen"
+  expect 'the CA refuses the order for web.example.org' 'Order .* state=(errored|invalid) .*(rejectedIdentifier|not allowed|policy)' "$seen"
+  no_secret outside-acme-tls || fail 'there is a Secret outside-acme-tls'
+  pass '... no certificate, no Secret'
+
+  step 'step-issuer, web.example.org (outside the policy): the CA refuses to sign'
+  watch_until 180 'Ready=False/Failed' cr_state outside-step || { show <<<"$seen"; demo describe certificaterequest | tail -n 20 | show; fail 'no failed CertificateRequest for web.example.org'; }
+  show <<<"$seen"
+  expect 'the CA refuses to sign web.example.org' 'Ready=False/Failed .*(not allowed|policy|forbidden|unauthorized)' "$seen"
+  no_secret outside-step-tls || fail 'there is a Secret outside-step-tls'
+  pass '... no certificate, no Secret'
+
+  # what the CA said about the http-01 challenge of Certificate <name>: the
+  # challenge objects in its log, found by the token
+  ca_said() {
+    local token
+    token=$(demo get challenge -o json | jq -r --arg c "$1" '.items[] | select(.metadata.name | startswith($c + "-")) | .spec.token' | head -n 1)
+    [ -n "$token" ] || return 0
+    kubectl -n dev-sick logs deploy/sick -c ca --since=15m 2>/dev/null | grep -F "path=/acme/acme/challenge/" | grep -F "$token" \
+      | grep -o 'response="{\\"type\\":\\"http-01\\",\\"status\\":\\"[a-z]*\\".*' | sed 's/\\"/"/g; s/^response="//; s/" size=.*//' \
+      | jq -r '"CA: http-01 \(.status) \(.error.type // "") \(.error.detail // "")"' 2>/dev/null || true
+  }
+
+  step 'ACME, elsewhere.example.internal (the CA finds another web server there): the challenge is invalid'
+  watch_until 240 'Challenge .* state=invalid' acme_state elsewhere-acme || { show <<<"$seen"; fail 'no invalid challenge for elsewhere.example.internal'; }
+  show <<<"$seen"
+  pass 'the Challenge is invalid'
+  # cert-manager keeps the reason of its last self check in the Challenge;
+  # what the CA found is in the CA's answer
+  watch_until 60 'CA: http-01 invalid' ca_said elsewhere-acme || { show <<<"$seen"; fail 'the CA did not answer invalid for elsewhere.example.internal'; }
+  show <<<"$seen"
+  expect "... and so does the CA: what elsewhere.example.internal served (the owner's 200 'not yours') is no key authorization" 'CA: http-01 invalid urn:ietf:params:acme:error:(rejectedIdentifier|unauthorized|incorrectResponse)' "$seen"
+  note "the Order as cert-manager has it: $(acme_state elsewhere-acme | grep '^Order' | tr '\n' ' ')"
+  no_secret elsewhere-acme-tls || fail 'there is a Secret elsewhere-acme-tls'
+  pass '... no certificate, no Secret'
+
+  step 'ACME, unreachable.example.internal (the CA reaches nothing there): the challenge never succeeds'
+  watch_until 240 'CA: http-01 [a-z]+ urn:ietf:params:acme:error:connection' ca_said unreachable-acme || { show <<<"$seen"; acme_state unreachable-acme | show; fail 'the CA reported no connection error for unreachable.example.internal'; }
+  show <<<"$seen"
+  acme_state unreachable-acme | show
+  pass 'the CA could not connect to unreachable.example.internal: urn:ietf:params:acme:error:connection, the challenge stays pending (step-ca retries a connection error, it does not make it invalid)'
+  no_secret unreachable-acme-tls || fail 'there is a Secret unreachable-acme-tls'
+  pass '... no certificate, no Secret'
+
+  step 'ACME, noroute.example.internal (nobody resolves it): held back by the self check'
+  watch_until 120 'Challenge .* state=pending .*(self check|propagation)' acme_state noroute-acme || { show <<<"$seen"; fail 'no pending challenge for noroute.example.internal'; }
+  show <<<"$seen"
+  expect "cert-manager's self check fails, the challenge stays pending and is never handed to the CA" 'Challenge .* state=pending .*(no such host|NXDOMAIN|server misbehaving|self check)' "$seen"
+  said=$(ca_said noroute-acme)
+  [ -z "$said" ] || { show <<<"$said"; fail 'the CA was asked to validate noroute.example.internal'; }
+  pass '... the CA log has no validation of its challenge'
+  no_secret noroute-acme-tls || fail 'there is a Secret noroute-acme-tls'
+  pass '... no certificate, no Secret'
+  kubeconfig_untouched
+fi
+
+#### down
+
+if want down; then
+  step "down: cluster $cluster deleted by name"
+  teardown || fail 'teardown left something behind'
+  kubeconfig_untouched
+fi
+
+finished=yes
+printf '\nALL PASSED (%s)\n' "${parts[*]}"
