@@ -164,13 +164,19 @@ off for clients. Keep the order.
    ```
 
 4. **Start the CA** (`docker compose up -d`), and check that it signs under
-   the new intermediate: `docker compose logs ca | grep init-ca`.
+   the new intermediate: issue a test certificate with the command of
+   [chapter 2, "Try it"](02-the-ca.md#what-the-ca-will-and-will-not-issue)
+   and read its issuer (`openssl x509 -in c.crt -noout -issuer` →
+   `CN=Example Intermediate CA 2026-…`); the start log does not name the
+   intermediate.
 5. **Re-issue everything:** `sick run --force` (without a device name it
    forces every device); make every ACME client renew (Traefik and Caddy:
    delete their stored certificate and restart; acme.sh: `acme.sh --renew
    --force -d <name>`; cert-manager: `cmctl renew --all` or delete the
    Secrets).
-6. **Publish:** `docker compose run --rm sick sick trust /srv/trust` – otherwise
+6. **Publish** – first keep a copy of the old page (`curl -fsS -o
+   old-ca_bundle.pem http://127.0.0.1:8080/ca_bundle.pem`, and the old
+   `trust-nss.sh`), then `docker compose run --rm sick sick trust /srv/trust` – otherwise
    the page keeps the old intermediate until the next scheduled run. Replace
    `ca_bundle.pem` wherever a program uses it. In NSS databases the new
    page's `trust-nss.sh remove` would remove the *root*; take the old
@@ -178,9 +184,12 @@ off for clients. Keep the order.
    `certutil -D -d sql:<db> -n 'sick intermediate <first 16 hex digits of its SHA-256>'`.
    Keep a copy of the old page before you regenerate it.
 7. **Backups:** take a new one now (chapter 2). **Every backup from before
-   step 3 holds the stolen key and the old provisioner – never restore one.**
-   Wipe the old `for-the-ca/intermediate_ca_key` and `password` on the
-   offline media, and `new-intermediate/` once it is in the CA.
+   step 3 holds the stolen key and the old provisioner – destroy them, and
+   never restore one.** Wipe the old `for-the-ca/intermediate_ca_key` and
+   `password` on the offline media and the key and password in
+   `new-intermediate/` once it is in the CA (keep its `ceremony.txt` with your
+   records), and replace `for-the-ca/intermediate_ca.crt` by the new one:
+   the next renewal follows the current intermediate.
 8. **Root replacement** (compromise variant, chapter 2), unless you accept
    the window until the old intermediate expires.
 

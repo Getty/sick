@@ -110,12 +110,16 @@ cd sick/docker
 docker compose -f compose.yml -f ../contrib/devices/files-nginx/compose.yml up -d web
 docker compose run --rm sick sick check web
 docker compose run --rm sick sick run web
-curl --cacert root_ca.crt --resolve web.example.internal:8443:127.0.0.1 \
+curl --cacert root_ca.pem --resolve web.example.internal:8443:127.0.0.1 \
   https://web.example.internal:8443/                        # hello from web
 ```
 
-(`root_ca.crt` from the trust page, checked against the ceremony's
-fingerprint; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). A TLS service that cannot start without a certificate would be
+(`root_ca.pem` from the trust page, checked against the ceremony's
+fingerprint – `root_ca.crt` is the same certificate as DER, which curl does
+not read; the port is `SICK_WEB_PORT`, default 8443, on 127.0.0.1). Compose
+warns about "orphan containers" (`web`) when a command does not name the
+device's file: that is expected – do **not** follow its hint
+`--remove-orphans`, which would remove the device. A TLS service that cannot start without a certificate would be
 `unreachable` instead of `missing`, and SICK does not issue for an
 unreachable device.
 

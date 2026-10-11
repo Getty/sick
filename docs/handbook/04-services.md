@@ -54,15 +54,19 @@ only clients you gave a key can open accounts.
 
 **Trying a recipe beside the Docker setup of chapter 2:** each recipe is a
 Compose project of its own. Start it with its lab override, which joins the
-CA's network under the service's name and publishes its ports on 127.0.0.1
-only, and fetch the root from the trust page, compared with the ceremony's
-fingerprint:
+CA's network (`SICK_LAB_NETWORK`, default `sick_default` – it is
+`<project>_default`) under the service's name and publishes its ports on
+127.0.0.1 (`SICK_LAB_HTTP_PORT`, `SICK_LAB_HTTPS_PORT`: a port number
+alone), and fetch the root from the trust page, compared with the
+ceremony's fingerprint:
 
 ```bash
 cd sick/contrib/acme/caddy
 curl -fsS -o root_ca.crt http://127.0.0.1:8080/root_ca.pem
-openssl x509 -in root_ca.crt -noout -fingerprint -sha256     # = the ceremony's
+openssl x509 -in root_ca.crt -noout -fingerprint -sha256 | tr -d : | tr A-F a-f   # = the ceremony's
 docker compose -f compose.yml -f compose.lab.yml up -d
+curl --cacert root_ca.crt --resolve caddy.example.internal:443:127.0.0.1 \
+  https://caddy.example.internal/                               # hello
 ```
 
 (the recipe READMEs say the same for each service). **In the lab it is

@@ -45,9 +45,11 @@ Avoid:
 
 - `.local` – it belongs to multicast DNS (RFC 6762); resolvers treat it
   specially.
-- invented top-level domains (`.lan`, `.corp`, `.internal` before you have
-  checked its status): a TLD that is delegated later turns your names into
-  someone else's.
+- invented top-level domains (`.lan`, `.corp`): a TLD that is delegated
+  later turns your names into someone else's. `.internal` is the exception:
+  ICANN reserved it for private use in 2024 and will not delegate it – which
+  is why this handbook's examples use `example.internal`, and why
+  `<site>.internal` is a fine choice where you own no domain.
 - bare host names (`switch`): they cannot be put under the constraint of a
   domain, and a client that searches domains may reach a different machine
   than the one the certificate names. Put the full name in the device list;
@@ -145,7 +147,7 @@ Each is a setting; the recommendation is ours, with the reason.
 | Names and networks | `ceremony.sh --dns`, `--ip`, `--email`, `--uri`, `--exclude-all-ip`; `SICK_CA_ALLOW_DNS`, `_IP`, `_EMAIL`, `_URI` | the one internal domain and the private ranges in use, nothing wider; with client certificates also the email domain (chapter 8) | the constraint is enforced by step-ca when it issues and by clients when they verify (both proven, chapter 2) |
 | Lifetimes | table above | as in the table | recovery budget |
 | Key types | `--kty`, device `key` | EC P-256 for the CA, RSA 2048 for device leaves | compatibility with old device firmware |
-| Who may use ACME | network access to port 9000, policy, external account binding (`requireEAB`, card k51) | the CA reachable from the service networks only, policy no wider than your domain; EAB when it must be reachable more widely | the ACME endpoint issues to whoever proves a name – chapter 4 |
+| Who may use ACME | network access to port 9000, policy, external account binding (`requireEAB`, not built yet) | the CA reachable from the service networks only, policy no wider than your domain; EAB when it must be reachable more widely | the ACME endpoint issues to whoever proves a name – chapter 4 |
 | Visibility of the repositories, CPAN release, image name and registry | – | the maintainer's | – |
 | `docker/` and `t/e2e/` in the CPAN tarball | `dist.ini` | ship `docker/`, keep `t/e2e/` out | `docker/` is a documented way to run SICK; `t/e2e/run-lab.sh` changes a real switch |
 

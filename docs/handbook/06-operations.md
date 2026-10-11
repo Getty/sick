@@ -59,8 +59,8 @@ sudo install -m 0644 contrib/systemd/sick.service contrib/systemd/sick.timer \
 sudo install -m 0755 contrib/notify/sick-notify /usr/local/bin/
 sudo install -m 0644 contrib/notify/notify.conf.example /etc/sick/notify.conf   # then edit
 sudo mkdir -p /srv/trust /var/lib/prometheus/node-exporter
-systemctl daemon-reload
-systemctl enable --now sick.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now sick.timer
 systemctl list-timers sick.timer
 ```
 
@@ -72,6 +72,12 @@ systemctl list-timers sick.timer
   (`SuccessExitStatus=3`).
 - A failure starts `sick-notify@sick.service`, which sends that run's
   journal lines.
+- To check the units before installing them, `systemd-analyze verify` needs
+  them in a root where `/usr/local/bin/sick` exists: copy
+  `/usr/lib/systemd/system`, the three units, a stub `sick` and
+  `sick-notify` into a temporary directory and run `systemd-analyze verify
+  --root=<dir> sick.service sick.timer sick-notify@sick.service` (no
+  output, exit 0).
 - The service is sandboxed (`ProtectSystem=strict`, no capabilities,
   `systemd-analyze security` 3.4). A `files` device needs its directory
   added with a drop-in: `ReadWritePaths=/srv/certs/grafana`.
@@ -88,8 +94,18 @@ See `k8s/README.md`.
 
 **Docker Compose**: the `sick` service of `docker/` runs `sick run` every
 `SICK_INTERVAL` and `sick trust` after each run (chapter 2). It has no
-notification of its own: scrape its metrics, or run the cron line on the
-host against `docker compose run --rm sick sick run`.
+notification and no metrics of its own. For both, set `SICK_INTERVAL` long
+(the timer below does the runs) or leave it, and add on the host a cron
+line that runs through the container (in `sick/docker`; `-T` because cron
+has no terminal; Compose's own messages go to `/dev/null` so that only
+SICK's output reaches the notification):
+
+```cron
+17 4 * * *  admin  cd /srv/sick/docker && docker compose run --rm -T sick sick run >/var/tmp/sick-run.log 2>/dev/null || [ $? -eq 3 ] || sick-notify "sick run failed" </var/tmp/sick-run.log; docker compose run --rm -T sick sick check --format prometheus 2>/dev/null >/var/lib/prometheus/node-exporter/sick.prom.tmp && mv /var/lib/prometheus/node-exporter/sick.prom.tmp /var/lib/prometheus/node-exporter/sick.prom
+```
+
+(`--output` cannot write outside the container's read-only file system;
+standard output and a rename on the host do the same.)
 
 ## Notification when a run fails
 
@@ -121,8 +137,9 @@ sick check --format prometheus --output /var/lib/prometheus/node-exporter/sick.p
 ```
 
 (the systemd service and the cron line do this after every run). Like `sick
-check` itself it exits 1 when a device is not `ok` – the file is written
-anyway. The file
+check` itself it exits 1 when a device could not be checked (`unreachable`,
+`error`) and 0 otherwise, also for `missing` or `expiring` – the file is
+written either way. The file
 is replaced in one step, for node_exporter's textfile collector. It
 contains, per device, the live certificate (end, remaining and total
 lifetime), the device's `renew_before`, the earliest end along its chain
@@ -177,7 +194,7 @@ sick inventory --format json
 Per device: the names, issuer, serial and fingerprint of the certificate
 issued last, the `owner` if the device list names one, until when, when it was deployed and when a run last saw the
 device present it; with `--live`, whether the device presents it right now
-(and then, like `sick check`, exit 1 when a device is not `ok`).
+(and then, like `sick check`, exit 1 when a device could not be checked).
 This is the list to go through when an intermediate or the root is
 replaced, or a device is retired (remove it from the device list – SICK then
 stops renewing it, and its certificate expires).

@@ -47,7 +47,8 @@ Make the directories and the password first; the ceremony refuses to start
 without them (`ceremony: …/root.pw: no password in it, or not readable`):
 
 ```bash
-mkdir -m 700 -p /media/offline/root /media/pwstick
+mkdir -p /media/offline/root /media/pwstick
+chmod 700 /media/offline /media/offline/root /media/pwstick
 (umask 077; openssl rand -base64 32 > /media/pwstick/root.pw)
 ```
 
@@ -127,13 +128,21 @@ each copy belongs to the root certificate – compare the public keys, never
 print the private one (`step crypto key inspect` would show it):
 
 ```bash
-step crypto key public /media/offline/root/root_ca_key --password-file /media/pwstick/root.pw | sha256sum
-openssl x509 -in /media/offline/for-the-ca/root_ca.crt -noout -pubkey | sha256sum
+docker run --rm --network none -v /media/offline:/work:ro -v /media/pwstick:/pw:ro \
+  --entrypoint sh sick:local -c \
+  'step crypto key public /work/root/root_ca_key --password-file /pw/root.pw | sha256sum;
+   openssl x509 -in /work/for-the-ca/root_ca.crt -noout -pubkey | sha256sum'
 ```
 
-Both lines must print the same sum (and the same again for the copy). Then
-store the two key media and the password medium in three places, and wipe
-any working copy.
+(with `step` and `openssl` on the laptop, the two commands inside the quotes
+work as they are, with the host paths).
+
+Both lines must print the same sum (and the same again for the copy). Keep
+`for-the-ca/root_ca.crt` and `for-the-ca/intermediate_ca.crt` (public) on the
+root medium as well: the next intermediate renewal needs them. Then store the
+two key media and the password medium in three places, and wipe any working
+copy of `for-the-ca/intermediate_ca_key` and `password` once the CA has
+imported them.
 
 ### On a YubiKey or an HSM instead of a file
 
@@ -157,13 +166,15 @@ gone at the next, and Compose then recreates the CA with defaults:
 cd sick/docker
 cp sick.example.yml sick.yml        # then set ca.url to https://ca.example.internal:9000;
                                     # the device examples are commented out until you add yours
-mkdir -m 700 secrets                # the credential files your devices need
+sudo install -d -m 0700 -o root secrets   # credential files: owned by root, 0600 (docker/README.md)
 cat > .env <<'END'
 SICK_CA_IMPORT=/media/offline/for-the-ca
 SICK_CA_DNS=ca.example.internal
 SICK_CA_ALIAS=ca.example.internal
 SICK_CA_ALLOW_DNS=*.example.internal
 SICK_CA_ALLOW_IP=192.0.2.0/24
+SICK_CA_PORT=127.0.0.1:9000         # or the address your clients reach; without one: all interfaces
+SICK_TRUST_PORT=127.0.0.1:8080
 END
 docker compose -f compose.yml -f compose.import.yml up -d
 docker compose -f compose.yml -f compose.import.yml logs ca | grep init-ca
@@ -179,14 +190,20 @@ init-ca: configuration updated: 'sick' grants up to 19800h, serverAuth only, nam
 init-ca: root fingerprint (SHA-256): 9c3289606dff96f99812f9cf9f90a499b4d32b674234de2212218ecb47d74a4c
 ```
 
-The root fingerprint must be the one of the ceremony. In lab mode the log
+The root fingerprint must be the one of the ceremony. (`SICK_CA_PORT` and
+`SICK_TRUST_PORT` take `address:port` or a port alone, which publishes on
+all interfaces; put a firewall in front of 9000 either way, chapter 4.
+Comparing fingerprints: `openssl x509 -fingerprint -sha256` prints them with
+colons and in capitals – `| tr -d : | tr A-F a-f` makes them comparable.) In lab mode the log
 would say `init-ca: lab mode:`. Import mode checks that the root signed the
 intermediate and that the key belongs to the intermediate, refuses an
 import directory that holds any other private key (a root key put there by
 mistake), and builds the CA without its own throwaway keys ever touching
 the volume. After the first start the import directory is not read again,
 and later commands may leave out `-f compose.import.yml` – keeping it does
-no harm.
+no harm. The first command without it recreates the `ca` container once
+(`Recreate … Started`); that is harmless: the log says `the CA in
+/home/step exists: nothing to make`, with the same root fingerprint.
 
 **The CA's own names** (`SICK_CA_DNS`) have to lie inside the constraints:
 `ca` and `localhost` do not, and a client refuses the CA's TLS certificate
@@ -227,7 +244,8 @@ docker compose run --rm --entrypoint sh sick -c 'cd /tmp && step ca certificate 
   --root /etc/sick/ca/root_ca.crt --provisioner sick --password-file /etc/sick/ca/provisioner.pw'
 ```
 
-prints `✔ Certificate: c.crt`; with `outside.example.org` instead it ends in
+prints `✔ Certificate: c.crt`; with `outside.example.org` instead its error
+(the line before `Re-run with STEPDEBUG=1`) is
 `DNS name "outside.example.org" is not permitted by any constraint`, with
 `198.51.100.7` in `IP address "198.51.100.7" is not permitted by any
 constraint`, with `a.b.example.internal` in `dns name "a.b.example.internal"
@@ -278,7 +296,8 @@ the default project `sick` (`docker volume ls` shows it):
 `ca-backup: wrote /safe/ca-2026-10-10.tar (… bytes, mode 0600) and
 /safe/ca-2026-10-10.tar.manifest`; `restore` prints `the archive matches its
 manifest`, `restored into sick_ca_drill: 11 files, each as in the manifest`
-and how long the intermediate is still valid.
+and how long the intermediate is still valid. Move the `.manifest` to a
+different place than the archive afterwards (see below).
 
 `backup` stops the CA for the copy (step-ca keeps its Badger database open
 and Smallstep documents no online backup; the lab CA was down for 1–2
@@ -301,6 +320,7 @@ databases drift apart.
 docker network create --internal sick-drill
 docker run -d --rm --name sick-drill-ca --network sick-drill \
   --network-alias ca.example.internal -v sick_ca_drill:/home/step smallstep/step-ca:0.30.2
+docker logs -f sick-drill-ca 2>&1 | grep -m1 'Serving HTTPS'   # wait until it serves
 docker run --rm --network sick-drill -v sick_ca_drill:/ca:ro --entrypoint sh sick:local -c \
   'cd /tmp && step ca certificate drill.example.internal c.crt c.key \
      --ca-url https://ca.example.internal:9000 --root /ca/certs/root_ca.crt \
@@ -312,10 +332,8 @@ docker stop sick-drill-ca && docker network rm sick-drill && docker volume rm si
 The last line of the second command is `c.crt: OK`: the restored CA issues
 under the same root. (The container test also checks that the restored
 database holds a certificate issued before the backup and not one issued
-after; that needs a look into its Badger files and is left to the test.) The drill in `t/e2e/ca-recovery.sh` checks that the
-restored CA issues leaves under the same root, that its intermediate is
-still valid, that its database holds a certificate issued before the backup
-and not one issued after, and that the live CA stayed the only one serving.
+after, and that the live CA stayed the only one serving; that needs a look
+into its Badger files and is left to the test, `t/e2e/ca-recovery.sh`.)
 
 Recovery figures observed in the lab: 3–4 seconds from `restore` to the
 first certificate (one host, images cached, 28 KB archive). That is the
@@ -344,9 +362,12 @@ volume, step-ca reloads, and SICK issues with it at once. A token signed
 with the old key is refused (HTTP 401).
 
 Check it with the issuing command of "What the CA will and will not issue"
-above: it issues with the new password the `sick` container now has; with a
-copy of the old password the CA answers `failed to decrypt JWE: invalid
-password`.
+above: it issues with the new password the `sick` container now has. To see
+the old one refused, save it **before** rotating (`docker compose exec -T
+sick cat /etc/sick/ca/provisioner.pw > old.pw`, then `chmod 644 old.pw` so
+the container's user can read it, and delete it after the check), mount it
+into the same command and use it as `--password-file`: the CA answers
+`failed to decrypt JWE: invalid password`.
 
 Rotate after anyone who had access to the CA volume or the `sick` container
 leaves, and whenever the password may have been seen.
@@ -360,17 +381,24 @@ not found`; `init-ca.sh` removes and re-adds the provisioner instead.)
 Do it at least one device lifetime before the intermediate ends – with the
 defaults, in year four of five – or at once after its key may have been
 exposed. The root key comes out of its safe place for this, on the offline
-machine:
+machine, from the directory that holds the `sick` checkout, with the root
+medium and the password medium mounted as for the first ceremony:
 
 ```bash
-docker run --rm --network none --label sick=1 --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v "$PWD/docker/ceremony.sh:/ceremony.sh:ro" -v /media/offline:/work \
+docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/sick/docker/ceremony.sh:/ceremony.sh:ro" \
+  -v /media/offline:/work -v /media/pwstick:/pw:ro \
   --entrypoint bash sick:local /ceremony.sh --renew-intermediate \
   --operator 'A. Operator' --out /work/new-intermediate \
   --root-cert /work/for-the-ca/root_ca.crt \
-  --root-key /work/root/root_ca_key --root-password-file /work/root/root.pw \
+  --root-key /work/root/root_ca_key --root-password-file /pw/root.pw \
   --intermediate /work/for-the-ca/intermediate_ca.crt
 ```
+
+It prints, among others, `ceremony: making the intermediate 'Example
+Intermediate CA 2026-10-11' (EC P-256, 43830h)` – the new name carries the
+date unless you give `--intermediate-name` – and the new intermediate's
+fingerprint.
 
 Before it makes anything it checks that the root is self-signed, that the
 current intermediate verifies against it, and that the root key belongs to
@@ -391,7 +419,19 @@ docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
 own root and that the key is its own and new, re-encrypts the key with the
 CA's password, keeps the old intermediate as the previous one, and has
 step-ca reload – no restart. It removes `/home/step/switch` afterwards, also
-when it refuses, because that directory held a key.
+when it refuses, because that directory held a key. It prints `init-ca:
+switched the intermediate: 'CN=Example Intermediate CA 2026-10-11' (…) signs
+from now on` and `init-ca: handed over intermediate_ca.crt: the new and the
+previous intermediate`. Wipe `new-intermediate/intermediate_ca_key` and
+`password` from the root medium, and replace `for-the-ca/intermediate_ca.crt`
+there by `new-intermediate/intermediate_ca.crt` – the next renewal follows
+the current intermediate.
+
+Publish the page now rather than at the next scheduled run (up to a day):
+
+```bash
+docker compose run --rm sick sick trust /srv/trust
+```
 
 **The overlap.** From now on the handover file `intermediate_ca.crt` holds
 both intermediates, new first, and so does the trust page after the next
@@ -404,7 +444,12 @@ instead with `sick run --force` if you prefer a short overlap.
 
 ```bash
 docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --retire-intermediate
+docker compose run --rm sick sick trust /srv/trust
 ```
+
+It prints `init-ca: retired the previous intermediate 'CN=Example
+Intermediate CA' (…): out of the handover, its key deleted from
+/home/step`.
 
 Devices that present their certificate alone are `foreign-ca` from then on
 and are renewed by the next run. A device that sends the old intermediate
@@ -419,20 +464,81 @@ A root replacement changes what every client trusts, so it is slow by
 nature: the new root has to reach every client *before* anything depends on
 it, and the old one may go only when nothing does. Three phases:
 
-| Phase | On the CA side | On the clients |
-|---|---|---|
-| **A, announce** | a new ceremony (chapter 2, as for the first one) makes the new hierarchy. The device list gets `ca.additional_roots: [/etc/sick/secrets/root_ca_2.crt]`; `sick trust` publishes both roots, `root_ca_2.pem`/`.crt`, both in `ca_bundle.pem` and the Apple profile | install the new root the same way as the first, the fingerprint checked over the second channel. Wait until the clients that matter have it |
-| **B, switch** | `docker compose stop ca`; start the CA of the new root on a second volume: `SICK_CA_IMPORT=<new hierarchy> docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d ca`. The old volume stays, unused. `ca.root` follows the handover to the new root; set `additional_roots` to the old root; `sick run --force` re-issues every device | nothing; both roots are trusted |
-| **C, retire** | empty `additional_roots`, `sick trust` | remove the old root (chapter 3) |
+**Phase A, announce.** A second ceremony makes the new hierarchy, with its
+own paths so that nothing of the first is overwritten (the ceremony refuses
+to overwrite a key anyway), from the directory that holds the `sick`
+checkout:
 
-From phase B on, every `docker compose` command names
+```bash
+(umask 077; openssl rand -base64 32 > /media/pwstick/root2.pw)
+docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v "$PWD/sick/docker/ceremony.sh:/ceremony.sh:ro" \
+  -v /media/offline:/work -v /media/pwstick:/pw:ro \
+  --entrypoint bash sick:local /ceremony.sh --operator 'A. Operator' \
+  --out /work/for-the-ca-2 --root-key /work/root2/root_ca_key \
+  --root-password-file /pw/root2.pw \
+  --root-name 'Example Root CA 2' --intermediate-name 'Example Intermediate CA 2' \
+  --dns example.internal --ip 192.0.2.0/24
+```
+
+Write its root fingerprint down, as for the first. Put the new root where the
+`sick` service can read it – the secrets directory is mounted already; a
+root is public, so mode 0644 – and announce it:
+
+```bash
+cd sick/docker
+install -m 0644 /media/offline/for-the-ca-2/root_ca.crt secrets/root_ca_2.crt
+# in sick.yml, ca section:   additional_roots: [/etc/sick/secrets/root_ca_2.crt]
+docker compose up -d --force-recreate sick          # it reads sick.yml at start
+docker compose run --rm sick sick trust /srv/trust
+```
+
+The trust page now carries both roots (`root_ca_2.pem`/`.crt`, both in
+`ca_bundle.pem` and the Apple profile). Clients install the new root the
+same way as the first, its fingerprint checked over the second channel.
+Wait until the clients that matter have it.
+
+**Phase B, switch.** The CA of the new root runs on a second volume; the old
+volume stays, unused, for a planned rollback:
+
+```bash
+install -m 0644 /media/offline/for-the-ca/root_ca.crt secrets/root_ca_old.crt
+# .env:     SICK_CA_IMPORT=/media/offline/for-the-ca-2
+# sick.yml: additional_roots: [/etc/sick/secrets/root_ca_old.crt]
+docker compose stop ca
+docker compose -f compose.yml -f compose.import.yml -f compose.ca-next.yml up -d
+docker compose -f compose.yml -f compose.ca-next.yml logs ca | grep 'root fingerprint'   # the new one
+docker compose -f compose.yml -f compose.ca-next.yml up -d --force-recreate sick
+docker compose -f compose.yml -f compose.ca-next.yml run --rm sick sick run --force
+docker compose -f compose.yml -f compose.ca-next.yml run --rm sick sick trust /srv/trust
+```
+
+`ca.root` follows the handover to the new root; every device gets a
+certificate of the new hierarchy (`renewed forced`). Clients change nothing –
+they trust both roots. From now on every `docker compose` command names
 `compose.ca-next.yml`; without it Compose goes back to the old volume.
+
+**Phase C, retire** – when every device presents the new hierarchy
+(`sick inventory --live`): empty `additional_roots`, recreate `sick`, run
+`sick trust`, and have clients remove the old root (chapter 3, "Taking trust
+away"). Then the old volume can go.
 
 **Rollback.** In a *planned* replacement, going back is starting without
 `compose.ca-next.yml` (the old CA is back), pointing `additional_roots` at
-the new root again, and `sick run --force`. After a **compromise** of the
-old root there is no rollback and no overlap: destroy its volume, skip
-phase A's waiting, and have clients remove the old root at once (chapter 7).
+the new root again, recreating `sick` and `sick run --force`.
+
+**After a compromise** (of the old root, or of an intermediate whose names
+you cannot leave exposed – chapter 7): there is no rollback and no waiting.
+Do phase A without waiting for clients, phase B at once, then phase C at
+once: destroy the old volume, and have every client remove the old root – a
+client that keeps it still accepts certificates signed with the stolen key.
+Tested from the text by a newcomer: after phase C a client with only the new
+root refused a certificate signed with the old intermediate key, also with
+the old intermediate sent along.
+
+**After every edit of `sick.yml`** recreate the `sick` service (`docker
+compose up -d --force-recreate sick`): the file is mounted on its own, and an
+editor that writes a new file leaves the running service on the old one.
 
 **What the overlap does not carry.** The trust page holds the intermediates
 of the current hierarchy only. A device that presents its certificate alone
@@ -441,7 +547,8 @@ client that has only the page's `ca_bundle.pem`: in phase A a pilot device
 of the new hierarchy, in phase B a device not yet re-issued (unreachable
 during the forced run). Devices that send their chain are not affected.
 Keep phase B short and check that the forced run reached every device
-(card k34 tracks publishing the other intermediate if this matters to you).
+(publishing the other hierarchy's intermediate too is a possible addition,
+not built).
 
 ## The CA's logs are sensitive
 

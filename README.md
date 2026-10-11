@@ -18,10 +18,15 @@ ties them together. Besides core Perl, the core depends on `Moo`,
 `namespace::autoclean` and `Type::Tiny` for its classes, `Path::Tiny` for files
 and `YAML::PP` for the device list.
 
-> Status: early, not released. The command line, the `files` and `acmesh`
-> targets, `sick trust` and a Docker Compose setup ([docker/](docker/README.md):
-> step-ca, SICK on a schedule, a page for the certificates clients have to
-> trust) are here.
+> Status: complete for a first release, not released yet. The command line
+> (check, run, trust, inventory; JSON and Prometheus output), the device
+> types `files` and `acmesh` here and `cisco-sb`, `proxmox-ve`, `proxmox-bs`
+> in their own distributions, a Docker Compose setup with an offline-root
+> ceremony ([docker/](docker/README.md)), Kubernetes manifests, recipes in
+> [contrib/](contrib/), and the [handbook](docs/handbook/README.md), which
+> leads from planning to operations and emergencies. What is still to be
+> tried on real devices is on the handbook's
+> [HQ checklist](docs/handbook/hq-checklist.md).
 
 ## A minimal device list
 

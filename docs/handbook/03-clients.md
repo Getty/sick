@@ -49,11 +49,25 @@ carries, as you got it over the second channel:
 $ sudo sh trust-linux.sh install --fingerprint 9c3289606dff96f99812f9cf9f90a499b4d32b674234de2212218ecb47d74a4c
 ```
 
-Colons and capitals in the fingerprint do not matter. A wrong, missing or
+The scripts need the store's own tools: `ca-certificates` on Debian,
+Ubuntu and Alpine (`update-ca-certificates`), `ca-certificates`/p11-kit on
+Fedora and Arch, `libnss3-tools` (`certutil`) for `trust-nss.sh`; they say
+which one is missing. Colons and capitals in the fingerprint do not matter. A wrong, missing or
 extra fingerprint ends the script with exit 1 and nothing written; it
 prints the fingerprints it computed, and tells you not to copy them from
 there. `remove` takes out exactly what `install` put in, says so, and can be
-run twice. No script restarts anything; each tells you what still needs a
+run twice. (On Debian, `update-ca-certificates` then prints its own `0
+added, 0 removed; done.` – its count does not include the file the script
+just deleted; the root is gone.)
+
+**Check it** with a program the store serves, against a service with a
+certificate of your CA – before install it is refused, after install
+accepted, after remove refused again:
+
+```bash
+curl -fsS https://ca.example.internal:9000/health        # Linux system store
+certutil -L -d sql:<db>                                  # NSS: the root with C,,
+``` No script restarts anything; each tells you what still needs a
 restart.
 
 | Script | Where it puts what |
@@ -87,8 +101,9 @@ from the operating system store on Windows, macOS and Android by default
 On Windows and macOS Chrome uses the operating system store. On Linux it
 uses the NSS database in `~/.pki/nssdb`: `trust-nss.sh install
 --fingerprint … $HOME/.pki/nssdb` (the directory, without `sql:`; create
-the database first if Chrome has not, `certutil -N -d sql:$HOME/.pki/nssdb
---empty-password`; *not tried* with Chrome itself), or
+the database first if Chrome has not, `mkdir -p $HOME/.pki/nssdb && certutil
+-N -d sql:$HOME/.pki/nssdb --empty-password`; *not tried* with Chrome
+itself), or
 `chrome://certificate-manager` (Chrome 134 and later).
 
 ### macOS
@@ -139,7 +154,7 @@ trust it. Observed in containers ([evidence](../findings/trust-runtimes.md),
 | git (GnuTLS in Debian) | system store; `http.sslCAInfo` replaces it | new process per command | system store, or `git config http.sslCAInfo /path/root_ca.pem` | unset it |
 | Python `ssl`, `urllib` | system store, loaded once per context | no – restart | system store, or `SSL_CERT_FILE` | restart after removal |
 | Python `requests` | **certifi only**; ignores the system store and `SSL_CERT_FILE` | no – restart | `REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` (or the root file), or `truststore.inject_into_ssl()` | unset, restart |
-| Java (Temurin) | its own `cacerts`; did **not** read the Debian store | no – restart | `keytool -importcert -cacerts -alias example-root -file root_ca.pem` – it shows the SHA-256 and asks `Trust this certificate?`: compare it with the fingerprint from the second channel; in a script `-noprompt` (the default store password is `changeit`); or `-Djavax.net.ssl.trustStore=` | `keytool -delete -cacerts -alias example-root`, restart |
+| Java (Temurin) | its own `cacerts`; did **not** read the Debian store | no – restart | `keytool -importcert -cacerts -alias example-root -file root_ca.pem` – it shows the SHA-256 and asks `Trust this certificate?`: compare it with the fingerprint from the second channel; in a script `-noprompt`; or `-Djavax.net.ssl.trustStore=` | `keytool -delete -cacerts -alias example-root`, restart |
 | Node | its bundled list | no – restart | `NODE_EXTRA_CA_CERTS=/path/root_ca.pem` (read at start), or `--use-system-ca` (Node 23.8+, on Linux 23.9+) | unset, restart |
 | Go | system store or `SSL_CERT_FILE`, loaded once | no – restart | system store | restart after removal |
 | container images | what was baked at build time | – | `COPY root_ca.pem /usr/local/share/ca-certificates/example-root.crt` + `RUN update-ca-certificates` (tested on Debian) | rebuild and redeploy |
