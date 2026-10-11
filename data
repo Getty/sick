@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-10-11T07:11:44Z
+created: 2026-10-11T05:49:08Z
+id: 63
+priority: medium
+started: 2026-10-11T07:10:04Z
+status: done
+tags:
+- docs
+- handbook
+- devices
+- proxmox
+title: 'Chapter 5 and contrib/devices/proxmox: from the acme.sh hooks to proxmox-ve
+  / proxmox-bs'
+updated: 2026-10-11T07:11:56Z
+---
+
+Once SICK-Target-Proxmox is in the image: switch docs/handbook/05-devices.md (Proxmox section and the table row) and contrib/devices/proxmox/ (README, sick.example.yml) from type acmesh + hooks to the native types (options token_id, token_file, node, ca, fingerprint, port 8006/8007; trust of a fresh node by the cluster CA or a fingerprint pin, never unverified). Keep native ACME as the first recommendation. Also: t/e2e/proxmox-standin.py and docs/findings/device-proxmox.md differ from the sources in 11 points (PBS accepts a mismatched key with 200, PVE default cert is signed by the cluster CA, DELETE answers 200 on both, PBS ignores force, 401/400 answer shapes, ...) - list in ../sick-target-proxmox docs/api-notes.md 'Where the earlier session disagrees'. From SICK-Target-Proxmox (../sick-target-proxmox, card #6 there).
+
+Committed as 9011657
