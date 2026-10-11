@@ -156,7 +156,7 @@ sick_ca_certificate_not_after_seconds{role="intermediate",subject="CN=Example In
 sick_ca_certificate_not_after_seconds{role="root",subject="CN=Example Root CA"} 2107028817
 # HELP sick_device_info A device of the list, its type and the status of its certificate.
 # TYPE sick_device_info gauge
-sick_device_info{device="switch",type="files",status="ok"} 1
+sick_device_info{device="switch",type="files",status="ok",owner="Netzwerk-Team"} 1
 ...
 sick_certificate_remaining_seconds{device="switch"} 7775999
 sick_device_renew_before_seconds{device="switch"} 2592000
@@ -171,7 +171,7 @@ sick_device_last_success_timestamp_seconds{device="switch"} 1791665217
 | `sick_check_timestamp_seconds` | when the check ran |
 | `sick_ca_up` | `step ca health` answered `ok` (1) or not (0); absent for `selfsigned` |
 | `sick_ca_certificate_not_after_seconds{role,subject}` | end of the root and of each intermediate |
-| `sick_device_info{device,type,status}` | `1`; `status` is that of `sick check` |
+| `sick_device_info{device,type,status,owner}` | `1`; `status` is that of `sick check`; `owner` only where the device list sets one |
 | `sick_device_reachable{device}` | `0` for `unreachable`; absent for `error` |
 | `sick_device_renew_due{device}` | `sick run` would renew now |
 | `sick_certificate_not_after_seconds`, `_remaining_seconds`, `_lifetime_seconds` | of the certificate the device presents; absent without one |
@@ -199,7 +199,7 @@ with times in ISO 8601 UTC and as epoch seconds:
          "chain_not_after" : "2027-04-28T21:46:57Z", "chain_not_after_epoch" : 1808948817,
          "consecutive_failures" : 0,
          "detail" : "valid until 2027-01-08 21:46:57 UTC, 90 days left",
-         "device" : "switch", "host" : null, "port" : 443, "type" : "files",
+         "device" : "switch", "host" : null, "owner" : "Netzwerk-Team", "port" : 443, "type" : "files",
          "last_issue" : { "fingerprint_sha256" : "c914b5c9...", "issuer" : "CN=Example Intermediate CA",
                           "names" : [ "switch.example.internal" ], "not_after" : "2027-01-08T21:46:57Z",
                           "serial" : "03EA", "time" : "2026-10-09T21:46:57Z" },
@@ -237,9 +237,9 @@ days. `contrib/prometheus/sick-alerts.test.yml` tests them
 
 ```text
 $ sick inventory --live
-DEVICE   STATUS  LIVE  SERIAL  FINGERPRINT       UNTIL             DEPLOYED          VERIFIED          ISSUER                      NAMES
-switch   ok      yes   03EA    c914b5c9d64480bd  2027-01-08 21:46  2026-10-09 21:47  2026-10-10 20:46  CN=Example Intermediate CA  switch.example.internal
-printer  ok      -     -       -                 -                 -                 -                 -                           -
+DEVICE   STATUS  LIVE  SERIAL  FINGERPRINT       UNTIL             DEPLOYED          VERIFIED          ISSUER                      NAMES                    OWNER
+switch   ok      yes   03EA    c914b5c9d64480bd  2027-01-08 21:46  2026-10-09 21:47  2026-10-10 20:46  CN=Example Intermediate CA  switch.example.internal  Netzwerk-Team
+printer  ok      -     -       -                 -                 -                 -                 -                           -                        -
 ```
 
 Times are UTC. `DEPLOYED` is the last deployment (`failed …` when it
@@ -460,14 +460,17 @@ device that keeps failing from collecting such certificates on every run.
 |---|---|
 | `ca` | `type` (`step-ca`, the default, or `selfsigned`), `name`, `url`, `root`, `intermediates`, `additional_roots`, `provisioner`, `password_file`, `step`, `dir` |
 | `defaults` | `lifetime` (`397d`), `renew_before` (`30d`), `key` (`rsa2048`) |
-| `devices.<name>` | `type` and `names` (required), `host`, `port` (`443`), `lifetime`, `renew_before`, `key`, plus the options of the type |
+| `devices.<name>` | `type` and `names` (required), `host`, `port` (`443`), `lifetime`, `renew_before`, `key`, `owner`, plus the options of the type |
 | `state` | the state directory: lock and records of `sick run` (`/var/lib/sick`) |
 
 Durations are a number with a unit: `397d`, `12h`, `45m`, `90s`. Key types are
 `rsa2048`, `rsa3072`, `rsa4096` and `ec256`. Host names end up as DNS SANs, IP
 addresses as IP SANs. `host` and `port` are where SICK looks at the certificate;
 without `host` it is the first name. `ca.name` is what the CA is called on the
-page of `sick trust`.
+page of `sick trust`. `owner` is free text, one line of at most 200 characters,
+for whoever has to ask about the device: `sick inventory` shows it, and
+`sick check --format prometheus` puts it on `sick_device_info` as the label
+`owner` where it is set. No secret goes there.
 
 `ca.root` is the root certificate of the CA and nothing else: it is what `step`
 verifies the CA with, what a certificate has to lead back to, and what

@@ -216,6 +216,39 @@ subtest 'the name of the CA' => sub {
     qr/^list\.yml: ca\.name: must be one line of at most 100 characters/, 'a name that is too long';
 };
 
+subtest 'the owner of a device' => sub {
+  my $device = "devices:\n  ant:\n    type: files\n    names: [ant.example.internal]\n";
+  my $config = SICK::Config->load_string( $device."    owner: \"Netzwerk-Team <noc\@example.internal>, Raum 2\"\n", 'list.yml' );
+  my $ant = $config->device('ant');
+  is $ant->owner, 'Netzwerk-Team <noc@example.internal>, Raum 2', 'owner is free text';
+  ok !exists $ant->options->{owner}, '... a key of every device, not an option of the type';
+  is( SICK::Config->load_string( $device, 'list.yml' )->device('ant')->owner, undef, 'undef without one' );
+  is( SICK::Config->load_string( $device."    owner: 0600\n", 'list.yml' )->device('ant')->owner, '0600',
+    'read as plain text' );
+
+  like error_of( $device."    owner:\n" ),        qr/^list\.yml: devices\.ant\.owner: must not be empty/, 'an owner without a value';
+  like error_of( $device."    owner: '  '\n" ),   qr/^list\.yml: devices\.ant\.owner: must not be empty/, 'a blank owner';
+  like error_of( $device."    owner: [a, b]\n" ), qr/^list\.yml: devices\.ant\.owner: must be a plain value/, 'a list as owner';
+  like error_of( $device."    owner: {a: b}\n" ), qr/^list\.yml: devices\.ant\.owner: must be a plain value/, 'a mapping as owner';
+  like error_of( $device."    owner: \"two\\nlines\"\n" ),
+    qr/^list\.yml: devices\.ant\.owner: must be one line of at most 200 characters/, 'an owner of two lines';
+  like error_of( $device."    owner: \"tab\\there\"\n" ),
+    qr/^list\.yml: devices\.ant\.owner: must be one line of at most 200 characters/, 'an owner with a control character';
+  like error_of( $device."    owner: ".( 'x' x 201 )."\n" ),
+    qr/^list\.yml: devices\.ant\.owner: must be one line of at most 200 characters/, 'an owner that is too long';
+  is( SICK::Config->load_string( $device."    owner: ".( 'x' x 200 )."\n", 'list.yml' )->device('ant')->owner, 'x' x 200,
+    '200 characters are fine' );
+  unlike error_of( $device."    owner: \"secret\\nvalue\"\n" ), qr/secret|value/, 'the message does not repeat the value';
+  like error_of( "defaults:\n  owner: noc\n".$device ), qr/^list\.yml: defaults: unknown key 'owner'/,
+    'owner is no default';
+
+  my $plain = SICK::Device->new( name => 'x', type => 'files', names => ['x.example'], lifetime => 2, renew_before => 1,
+    key => 'rsa2048' );
+  is $plain->owner, undef, 'SICK::Device->new without owner';
+  is( SICK::Device->new( name => 'x', type => 'files', names => ['x.example'], lifetime => 2, renew_before => 1,
+    key => 'rsa2048', owner => 'noc' )->owner, 'noc', '... and with one' );
+};
+
 subtest 'additional roots of a root replacement' => sub {
   my $config = SICK::Config->load_string(
     "ca:\n  root: /etc/sick/root_ca.crt\n  additional_roots:\n    - /etc/sick/root_ca_next.crt\n    - /etc/sick/root_ca_old.crt\n".$minimal,

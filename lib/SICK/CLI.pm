@@ -327,11 +327,12 @@ sub _inventory {
         !$deploy ? '-' : ( defined $deploy->{result} && $deploy->{result} eq 'ok' ? q{} : 'failed ' ).$time->( $deploy->{time} ),
         $time->( $entry->{last_verified} ),
         $plain->( $entry->{issuer} ),
-        $plain->( $entry->{names} ? join( ',', @{ $entry->{names} } ) : undef )
+        $plain->( $entry->{names} ? join( ',', @{ $entry->{names} } ) : undef ),
+        $plain->( $entry->{owner} )
       ];
     }
     $self->_table(
-      [ qw( DEVICE STATUS ), ( $opt->{live} ? 'LIVE' : () ), qw( SERIAL FINGERPRINT UNTIL DEPLOYED VERIFIED ISSUER NAMES ) ],
+      [ qw( DEVICE STATUS ), ( $opt->{live} ? 'LIVE' : () ), qw( SERIAL FINGERPRINT UNTIL DEPLOYED VERIFIED ISSUER NAMES OWNER ) ],
       @rows
     );
   }

@@ -52,6 +52,7 @@ The device list is the only configuration SICK has:
         host: 192.0.2.199
         names: [switch.example.internal, 192.0.2.199]
         credentials: /etc/sick/switch.cred
+        owner: Netzwerk-Team
       grafana:
         type: files
         names: [grafana.example.internal]
@@ -92,10 +93,15 @@ C<ec256>.
 =item C<devices>
 
 One entry per device, by name. Every entry needs a C<type> and a non-empty
-list of C<names>; C<host>, C<port>, C<lifetime>, C<renew_before> and C<key>
-are optional. All other keys belong to the device type and end up in
+list of C<names>; C<host>, C<port>, C<lifetime>, C<renew_before>, C<key>
+and C<owner> are optional. All other keys belong to the device type and end up in
 L<SICK::Device/options>; the target of that type checks them
 (L<SICK::Target/validate>).
+
+C<owner> is free text for humans: who to ask about the device, shown by
+C<sick inventory> and as a label of C<sick_device_info>. It is no place for
+a secret. Croaks with C<< devices.<name>.owner: must not be empty >>,
+C<must be a plain value> and C<must be one line of at most 200 characters>.
 
 =item C<state>
 
@@ -120,7 +126,7 @@ my @TOP_KEYS     = qw( ca defaults devices state );
 my $STATE_DIR    = '/var/lib/sick';
 my @CA_KEYS      = qw( type name url root intermediates additional_roots provisioner password_file step dir );
 my @DEFAULT_KEYS = qw( lifetime renew_before key );
-my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key );
+my @DEVICE_KEYS  = qw( type host port names lifetime renew_before key owner );
 my @KEY_TYPES    = qw( rsa2048 rsa3072 rsa4096 ec256 );
 my %BUILTIN      = ( lifetime => '397d', renew_before => '30d', key => 'rsa2048' );
 
@@ -442,6 +448,14 @@ sub _device {
     ? $self->_key_type( $where.'.key', $entry->{key} )
     : $defaults->{key};
 
+  my $owner = $entry->{owner};
+  if ( exists $entry->{owner} ) {
+    $self->_fail( $where.'.owner', 'must be a plain value' ) if ref $owner;
+    $self->_fail( $where.'.owner', 'must not be empty' ) unless defined $owner && $owner =~ /\S/;
+    $self->_fail( $where.'.owner', 'must be one line of at most 200 characters' )
+      if $owner =~ /[\x00-\x1f\x7f]/ || length $owner > 200;
+  }
+
   $self->_fail( $where.'.lifetime', 'must be longer than zero' ) unless $lifetime > 0;
   $self->_fail( $where, '\'renew_before\' must be shorter than \'lifetime\'' )
     unless $renew_before < $lifetime;
@@ -458,6 +472,7 @@ sub _device {
     lifetime     => $lifetime,
     renew_before => $renew_before,
     key          => $key,
+    owner        => $owner,
     options      => \%options
   );
 }

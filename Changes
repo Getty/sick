@@ -237,3 +237,6 @@ Revision history for SICK
     - selfsigned CA: created under a lock (ca.lock in its directory), key
       before certificate; a lone ca.key or ca.crt, or a key that does not
       belong to the certificate, is an error instead of a new CA.
+    - devices: optional key owner (free text, one line); shown by sick
+      inventory (column OWNER, JSON field), in sick check --format json, and
+      as label owner of sick_device_info where it is set.

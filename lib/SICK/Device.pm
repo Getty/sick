@@ -20,6 +20,7 @@ our $VERSION = '0.001';
     $device->lifetime;        # 34300800 (seconds)
     $device->renew_before;    # 2592000 (seconds)
     $device->key;             # 'rsa2048'
+    $device->owner;           # 'Netzwerk-Team', or undef
     $device->options;         # { credentials => '/etc/sick/switch.cred' }
 
     my $bundle = $issuer->issue( $device->spec );
@@ -44,6 +45,7 @@ around BUILDARGS => sub {
     unless ref $arg{names} eq 'ARRAY' && @{ $arg{names} };
   $arg{names} = [ @{ $arg{names} } ];
   delete $arg{port}    unless defined $arg{port};
+  delete $arg{owner}   unless defined $arg{owner};
   delete $arg{options} unless $arg{options};
   return \%arg;
 };
@@ -57,11 +59,12 @@ around BUILDARGS => sub {
       lifetime     => 34300800,
       renew_before => 2592000,
       key          => 'rsa2048',
+      owner        => 'Monitoring',
       options      => { dir => '/srv/certs/grafana' },
     );
 
-Takes the values exactly as the accessors return them; C<host>, C<port> and
-C<options> are optional. Nothing is parsed or normalized here - that is the
+Takes the values exactly as the accessors return them; C<host>, C<port>,
+C<owner> and C<options> are optional. Nothing is parsed or normalized here - that is the
 work of L<SICK::Config/load>.
 
 =cut
@@ -74,6 +77,7 @@ has _names       => ( is => 'ro', isa => ArrayRef[Str], required => 1, init_arg 
 has lifetime     => ( is => 'ro', isa => Int,           required => 1 );
 has renew_before => ( is => 'ro', isa => Int,           required => 1 );
 has key          => ( is => 'ro', isa => Str,           required => 1 );
+has owner        => ( is => 'ro', isa => Maybe[Str] );
 has options      => ( is => 'ro', isa => HashRef,       default  => sub { {} } );
 
 sub names { [ @{ shift->_names } ] }
@@ -113,6 +117,11 @@ How long before its end a certificate is renewed, in seconds.
 
 The key type of a new certificate: C<rsa2048>, C<rsa3072>, C<rsa4096> or
 C<ec256>.
+
+=attr owner
+
+Who to ask about the device, free text from the list, or C<undef> when the
+entry has no C<owner>.
 
 =attr options
 

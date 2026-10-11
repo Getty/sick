@@ -111,7 +111,8 @@ sub list {
 }
 
 my $gone = device( 'gone', host => '127.0.0.1', port => $closed_port );
-my $all  = device('web').device('stale').device('empty').device('foreign').$gone;
+my $owner = 'NOC "Team" \\ Raum 2';
+my $all  = device( 'web', owner => q{'}.$owner.q{'} ).device('stale').device('empty').device('foreign').$gone;
 my $state_dir = $tmp.'/state';
 my $path = list( $all, state => $state_dir );
 
@@ -271,7 +272,7 @@ subtest 'json' => sub {
   my $device = by_device($data);
   is_deeply [ sort keys %$device ], [qw( empty foreign gone stale web )], 'every device';
   my @keys = qw( chain_not_after chain_not_after_epoch consecutive_failures detail device host last_issue
-    last_success last_success_epoch live matches_last_issue names next_attempt next_attempt_epoch port renew
+    last_success last_success_epoch live matches_last_issue names next_attempt next_attempt_epoch owner port renew
     renew_before_seconds state_error status type );
   is_deeply [ sort keys %{ $device->{$_} } ], [ sort @keys ], 'the fields of '.$_ for sort keys %$device;
 
@@ -281,6 +282,8 @@ subtest 'json' => sub {
   ok JSON::MaybeXS::is_bool( $web->{renew} ) && !$web->{renew}, '... renew is false';
   like $web->{detail}, qr/^valid until /, '... detail';
   is_deeply $web->{names}, ['web.example.internal'], '... names';
+  is $web->{owner}, $owner, '... owner as in the list';
+  is $device->{empty}{owner}, undef, 'owner is null for a device without one';
   my $leaf = $live{web};
   my %live = %{ $web->{live} };
   my $remaining = delete $live{remaining_seconds};
@@ -362,6 +365,12 @@ subtest 'prometheus' => sub {
     is value_of( $samples, 'sick_device_renew_before_seconds', device => $name ), 864000, '... renew_before';
   }
   like $out, qr/^sick_device_info\{device="odd \\"one\\" \\\\ here",/m, 'label values are escaped';
+  my @info = grep { $_->{name} eq 'sick_device_info' } @$samples;
+  is_deeply [ map { $_->{labels}{device} } grep { exists $_->{labels}{owner} } @info ], ['web'],
+    'only the device with an owner has the label owner';
+  is value_of( $samples, 'sick_device_info', device => 'web', owner => $owner ), 1, '... which is the owner of the list';
+  like $out, qr/^sick_device_info\{device="web",type="files",status="ok",owner="NOC \\"Team\\" \\\\ Raum 2"\} 1$/m,
+    '... escaped like the other labels, after status';
 
   is value_of( $samples, 'sick_device_reachable', device => 'gone' ), 0, 'gone is not reachable';
   is value_of( $samples, 'sick_device_reachable', device => 'web' ),  1, 'web is';
@@ -490,17 +499,17 @@ subtest 'inventory from the records alone' => sub {
   is $err, q{}, 'nothing on standard error';
   is_deeply step_calls(), [], 'the CA was not asked either';
   my @lines = split /\n/, $out;
-  like $lines[0], qr/^DEVICE +STATUS +SERIAL +FINGERPRINT +UNTIL +DEPLOYED +VERIFIED +ISSUER +NAMES$/, 'the header';
+  like $lines[0], qr/^DEVICE +STATUS +SERIAL +FINGERPRINT +UNTIL +DEPLOYED +VERIFIED +ISSUER +NAMES +OWNER$/, 'the header';
   my $web = $live{web};
   my $until = strftime( '%Y-%m-%d %H:%M', gmtime $web->not_after );
-  like $out, qr/^web +ok +\Q${\ $web->serial }\E +\Q${\ substr( $web->fingerprint_sha256, 0, 16 ) }\E +\Q$until\E +2026-09-01 04:00 +2026-10-01 04:00 +CN=Example Intermediate CA +web\.example\.internal$/m,
+  like $out, qr/^web +ok +\Q${\ $web->serial }\E +\Q${\ substr( $web->fingerprint_sha256, 0, 16 ) }\E +\Q$until\E +2026-09-01 04:00 +2026-10-01 04:00 +CN=Example Intermediate CA +web\.example\.internal +\Q$owner\E$/m,
     'web: what was issued, deployed and last seen';
-  like $out, qr/^stale +expiring +ABCDEF01 +abababababababab +2027-01-01 00:00 +failed 2026-10-02 04:00 +- +CN=Example Intermediate CA +stale\.example\.internal$/m,
+  like $out, qr/^stale +expiring +ABCDEF01 +abababababababab +2027-01-01 00:00 +failed 2026-10-02 04:00 +- +CN=Example Intermediate CA +stale\.example\.internal +-$/m,
     'stale: a failed deployment, the certificate issued last never seen';
-  like $out, qr/^gone +unreachable +0123 +cdcdcdcdcdcdcdcd +2026-11-01 00:00 +2026-08-01 04:00 +2026-08-01 04:00 +CN=Example Intermediate CA +gone\.example\.internal$/m,
+  like $out, qr/^gone +unreachable +0123 +cdcdcdcdcdcdcdcd +2026-11-01 00:00 +2026-08-01 04:00 +2026-08-01 04:00 +CN=Example Intermediate CA +gone\.example\.internal +-$/m,
     'gone: the last look is on record';
-  like $out, qr/^empty +- +- +- +- +- +- +- +-$/m, 'empty: no record';
-  like $out, qr/^foreign +(?:- +){7}-$/m, 'foreign: no record';
+  like $out, qr/^empty +- +- +- +- +- +- +- +- +-$/m, 'empty: no record, no owner';
+  like $out, qr/^foreign +(?:- +){8}-$/m, 'foreign: no record';
   unlike $out, qr/[ \t]\n/, 'no line ends in blanks';
 
   ( $code, $out, $err ) = cli( '--config', $path, 'inventory', '--format', 'json', 'web', 'empty' );
@@ -512,6 +521,7 @@ subtest 'inventory from the records alone' => sub {
   is_deeply $data->{devices}[0], {
     device             => 'web',
     type               => 'files',
+    owner              => $owner,
     names              => ['web.example.internal'],
     issuer             => 'CN=Example Intermediate CA',
     serial             => $web->serial,
@@ -525,8 +535,9 @@ subtest 'inventory from the records alone' => sub {
     last_checked       => '2026-10-01T04:00:00Z',
     state_error        => undef
   }, 'web, from its record';
-  is_deeply [ @{ $data->{devices}[1] }{qw( device type names serial last_deploy last_verified last_status )} ],
-    [ 'empty', 'files', undef, undef, undef, undef, undef ], 'empty: nothing on record';
+  is_deeply [ @{ $data->{devices}[1] }{qw( device type owner names serial last_deploy last_verified last_status )} ],
+    [ 'empty', 'files', undef, undef, undef, undef, undef, undef ], 'empty: nothing on record, no owner';
+  ok exists $data->{devices}[1]{owner}, '... owner is there as null';
 
   ( $code, $out, $err ) = cli( '--config', $path, 'inventory', 'nobody' );
   is $code, 2, 'a name that is not in the list: exit code 2';
@@ -537,7 +548,7 @@ subtest 'inventory --live' => sub {
   my ( $code, $out, $err ) = cli( '--config', $path, 'inventory', '--live' );
   push @everything, $out, $err;
   is $code, 1, 'exit code 1: a device is unreachable, as with check';
-  like( ( split /\n/, $out )[0], qr/^DEVICE +STATUS +LIVE +SERIAL +FINGERPRINT +UNTIL +DEPLOYED +VERIFIED +ISSUER +NAMES$/,
+  like( ( split /\n/, $out )[0], qr/^DEVICE +STATUS +LIVE +SERIAL +FINGERPRINT +UNTIL +DEPLOYED +VERIFIED +ISSUER +NAMES +OWNER$/,
     'the header has the column LIVE' );
   like $out, qr/^web +ok +yes +/m, 'web presents the certificate issued last';
   like $out, qr/^stale +ok +no +ABCDEF01 /m, 'stale presents another one: the mismatch shows';
@@ -553,6 +564,7 @@ subtest 'inventory --live' => sub {
   ok !$device->{stale}{matches_last_issue}, '... stale does not';
   is $device->{stale}{live}{fingerprint_sha256}, $live{stale}->fingerprint_sha256, '... live is what it presents';
   is $device->{stale}{fingerprint_sha256}, $stale_issue_fp, '... beside what was issued';
+  is $device->{web}{owner}, $owner, '... and the owner';
   is_deeply [ @{ $device->{stale} }{qw( status last_status )} ], [qw( ok expiring )], '... the status of now and the one on record';
 };
 

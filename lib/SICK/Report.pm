@@ -129,6 +129,7 @@ asked by L<SICK::Issuer/health>. Returns
       },
       devices => [ {
         device, type, status, renew, detail,  # status is the reason of check; renew true|false|null
+        owner,                                # as in the device list, or null
         names, host, port,                    # as in the device list; host null without one
         live => {                             # the certificate it presents, or null
           fingerprint_sha256, serial, issuer,
@@ -215,6 +216,7 @@ over the network. Without names it is every device of the list. Returns
       generated_at, generated_at_epoch,
       devices => [ {
         device, type,
+        owner,                                      # as in the device list, or null
         names, issuer, serial, fingerprint_sha256,  # of the certificate issued last
         not_after, not_after_epoch,
         issued,                                     # when it was issued
@@ -225,11 +227,11 @@ over the network. Without names it is every device of the list. Returns
       }, ... ],
     }
 
-All of them C<null> for a device without a record. B<last_verified> is the
-last time a run saw the device present the certificate issued last: the
-time of a deployment that ended C<ok> (a deployment counts once the device
-presents the certificate), or of a look that saw its fingerprint, whichever
-is later.
+All but C<device>, C<type> and C<owner> are C<null> for a device without
+a record. B<last_verified> is the last time a run saw the device present
+the certificate issued last: the time of a deployment that ended C<ok> (a
+deployment counts once the device presents the certificate), or of a look
+that saw its fingerprint, whichever is later.
 
 With C<states> from L<SICK::Runner/check> the entries follow those, and
 each gains C<status>, C<renew>, C<detail>, C<live> and C<matches_last_issue>
@@ -271,7 +273,10 @@ sub _families {
     [ 'sick_ca_certificate_not_after_seconds', 'End of validity of a certificate of the CA, as epoch seconds.',
       $self->_ca_samples($ca) ],
     [ 'sick_device_info', 'A device of the list, its type and the status of its certificate.',
-      [ map { [ { device => $_->{device}, type => $_->{type}, status => $_->{status} }, 1 ] } @devices ] ],
+      [ map {
+          [ { device => $_->{device}, type => $_->{type}, status => $_->{status},
+              ( defined $_->{owner} ? ( owner => $_->{owner} ) : () ) }, 1 ]
+        } @devices ] ],
     [ 'sick_device_reachable', 'Whether the device answered; absent when it could not be asked (status error).',
       $per->( sub { $_[0]{status} eq 'unreachable' ? 0 : $_[0]{status} eq 'error' ? () : 1 } ) ],
     [ 'sick_device_renew_due', 'Whether sick run would renew the certificate of the device now.',
@@ -322,7 +327,7 @@ double quote, newline):
     sick_check_timestamp_seconds                       when check looked
     sick_ca_up                                         1 or 0; absent for selfsigned
     sick_ca_certificate_not_after_seconds{role,subject}  role root or intermediate
-    sick_device_info{device,type,status}               1
+    sick_device_info{device,type,status[,owner]}       1; owner only where the list sets one
     sick_device_reachable{device}                      0 for unreachable; absent for error
     sick_device_renew_due{device}                      absent when unknown
     sick_certificate_not_after_seconds{device}         \
@@ -343,7 +348,7 @@ ends first is reported: a series appears once.
 
 sub _label_order {
   my ( $self, $labels ) = @_;
-  my %rank = ( device => 0, role => 0, type => 1, subject => 1, status => 2 );
+  my %rank = ( device => 0, role => 0, type => 1, subject => 1, status => 2, owner => 3 );
   return sort { ( $rank{$a} // 9 ) <=> ( $rank{$b} // 9 ) || $a cmp $b } keys %$labels;
 }
 
@@ -505,6 +510,7 @@ sub _device_check {
   return {
     device               => $name,
     type                 => $device ? $device->type : undef,
+    owner                => $device ? $device->owner : undef,
     status               => $state->{reason},
     renew                => $self->_bool( $state->{renew} ),
     detail               => $state->{detail},
@@ -542,6 +548,7 @@ sub _device_inventory {
   return {
     device             => $name,
     type               => $device ? $device->type : undef,
+    owner              => $device ? $device->owner : undef,
     names              => ref $issue->{names} eq 'ARRAY' ? $issue->{names} : undef,
     issuer             => $issue->{issuer},
     serial             => $issue->{serial},
