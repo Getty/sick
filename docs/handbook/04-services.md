@@ -68,7 +68,7 @@ it on port 80 (http-01) or 443 (tls-alpn-01).
 | nginx + acme.sh 3.1.6 | http-01 (webroot) | `--ca-bundle` of acme.sh | `--days -10` – 10 days before the end (the default 30 would renew a 30-day certificate one day before it expires) | about 10 days | [contrib/acme/nginx](../../contrib/acme/nginx/) |
 | cert-manager v1.21 (ACME `ClusterIssuer`) | http-01 through an Ingress | `caBundle` of the issuer | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
 | cert-manager + step-issuer 0.11 | none: a JWK provisioner of its own | `caBundle` of the `StepClusterIssuer` | `renewBefore: 240h` | about 10 days | [k8s/cert-manager](../../k8s/cert-manager/) |
-| Proxmox VE | http-01 (standalone, port 80) | the node's system store | `pvenode`'s own schedule | *not tried* | below |
+| Proxmox VE | http-01 (standalone, port 80) | the node's system store | once less than 30 days are left, checked daily by `pveupdate` – with 30-day certificates that is every day (card k57) | *not tried* | below |
 
 "The root goes" is the trust the *service* needs to talk to the CA. The
 clients of the service need the root as in chapter 3.

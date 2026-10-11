@@ -185,23 +185,9 @@ SHA-256).
 
 ## To try at HQ
 
-Written from vendor documentation, not walked through yet. The hub works
-through this list on real devices:
-
-- [ ] Windows 11: `trust-windows.ps1 install` and `remove` (Windows
-      PowerShell 5.1 and PowerShell 7), Edge and Chrome accept a SICK device,
-      refuse after removal
-- [ ] Windows: Firefox picks up the root from the Windows store
-- [ ] macOS: `trust-macos.sh install`/`remove`; the profile; Safari and
-      Chrome; whether `add-trusted-cert` accepts a root already in the keychain
-- [ ] iPhone/iPad: the profile, "Not Verified", Certificate Trust Settings,
-      Safari; a leaf-only switch through the profile's intermediate
-- [ ] Android: root as user CA; Chrome accepts, an app without opt-in
-      refuses; a leaf-only switch is refused (expected)
-- [ ] Chrome on Linux with `~/.pki/nssdb` through `trust-nss.sh`
-- [ ] Decide whether to sign the Apple profile (needs a signing key and
-      certificate; removes "Not Verified")
-- [ ] Docker daemon registry trust through `/etc/docker/certs.d`
+The steps for Windows, macOS, iPhone/iPad, Android, Chrome on Linux, the
+Apple profile and Docker's registry trust that could not be walked through
+here are on the [HQ checklist](hq-checklist.md#chapter-3--clients).
 
 ## Test report
 

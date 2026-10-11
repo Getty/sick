@@ -15,9 +15,12 @@ them together. This handbook is the path through all of it.
 | [2. The CA](02-the-ca.md) | an offline root, a name-constrained intermediate in step-ca, a ceremony record, a restored backup, and the procedures to renew the intermediate and replace the root |
 | [3. Clients trust the CA](03-clients.md) | every machine and program you care about trusts the root – and only the root –, checked against a fingerprint from a second channel, and you can take it back |
 | [4. Services that speak ACME](04-services.md) | Traefik, Caddy, nginx and Kubernetes workloads getting and renewing certificates from your CA by themselves |
-| 5. Devices that cannot | switches, routers, hypervisors, BMCs served by SICK (P7, to come) |
+| [5. Devices that cannot](05-devices.md) | switches, routers, hypervisors and Linux hosts served by SICK, one recipe each |
 | [6. Operations](06-operations.md) | a schedule, a notification when a run fails, Prometheus metrics with alert rules relative to each device, an inventory of what is deployed |
 | [7. Emergencies](07-emergencies.md) | what to do when a key is lost or exposed, the CA is down or compromised, a certificate expired, a device is locked out |
+
+What could not be tried in the lab is collected on the
+[HQ checklist](hq-checklist.md), with what counts as passed.
 
 Conventions:
 
