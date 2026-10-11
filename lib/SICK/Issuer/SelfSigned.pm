@@ -4,13 +4,14 @@ package SICK::Issuer::SelfSigned;
 use Moo;
 extends 'SICK::Issuer';
 use Carp qw( croak );
+use Fcntl qw( LOCK_EX O_CREAT O_RDWR );
 use POSIX qw( strftime );
 use Path::Tiny ();
 use SICK::Bundle;
 use SICK::Names;
 use SICK::OpenSSL;
 use SICK::Temp;
-use Types::Standard qw( Str );
+use Types::Standard qw( Bool Str );
 use namespace::autoclean;
 
 our $VERSION = '0.001';
@@ -103,11 +104,25 @@ has dir => ( is => 'ro', isa => Str, required => 1 );
 
 =attr dir
 
-Required. The directory of the CA: C<ca.crt> and C<ca.key> (mode C<0600>).
-It is created with mode C<0700> when it does not exist, and the CA in it
-when one of the two files is missing.
+Required. The directory of the CA: C<ca.crt>, C<ca.key> (mode C<0600>) and
+the empty lock file C<ca.lock>. It is created with mode C<0700> when it does
+not exist, and the CA in it when neither C<ca.crt> nor C<ca.key> is there.
+
+The CA is created under an exclusive lock on C<ca.lock>, so two processes
+starting at once end up with one CA. The key is put into place first, the
+certificate last. One of the two files without the other is an error,
+C<< the CA in '<dir>' is incomplete: '<path>' is missing beside '<path>' >>,
+never a reason to make a new CA: every device would turn C<foreign-ca>.
+Before the first use the key is checked against the certificate; a key that
+does not belong is C<< the CA in '<dir>' is broken: '<key>' is not the key
+of '<cert>' >>, and a file that cannot be read
+C<< cannot use the CA in '<dir>': <reason> >>.
 
 =cut
+
+# Set once the CA in dir was found whole; rw because it is a memo of
+# _ensure_ca, not a setting.
+has _ca_ready => ( is => 'rw', isa => Bool, init_arg => undef, default => 0 );
 
 sub root_lifetime_days { 3650 }
 sub root_subject       { '/CN=SICK self-signed CA' }
@@ -233,16 +248,63 @@ sub _openssl {
   );
 }
 
+# The CA is there and whole, or made now, or an error. Checked once per
+# object: a run asks for every device.
 sub _ensure_ca {
   my ( $self ) = @_;
+  return if $self->_ca_ready;
   my $dir = $self->dir;
-  return if -s $self->_ca_cert && -s $self->_ca_key;
 
-  unless ( Path::Tiny::path($dir)->is_dir ) {
-    eval { Path::Tiny::path($dir)->mkdir( { mode => 0700 } ); 1 }
-      or croak 'cannot create CA directory \''.$dir.'\': '.$self->_reason($@);
+  # Both files there: a whole CA, since the certificate is put into place
+  # last. Anything else is looked at again under the lock, because another
+  # process may be creating the CA right now.
+  unless ( -f $self->_ca_cert && -f $self->_ca_key ) {
+    unless ( Path::Tiny::path($dir)->is_dir ) {
+      eval { Path::Tiny::path($dir)->mkdir( { mode => 0700 } ); 1 }
+        or croak 'cannot create CA directory \''.$dir.'\': '.$self->_reason($@);
+    }
+    my $lock = $self->_lock;
+    my %there = map { $_ => -f $_ } $self->_ca_cert, $self->_ca_key;
+    if ( !grep { $_ } values %there ) {
+      $self->_create_ca;
+    }
+    elsif ( my ($missing) = grep { !$there{$_} } sort keys %there ) {
+      my ($present) = grep { $there{$_} } sort keys %there;
+      croak 'the CA in \''.$dir.'\' is incomplete: \''.$missing.'\' is missing beside \''.$present
+        .'\' (restore it, or remove \''.$present.'\' for a new CA)';
+    }
   }
 
+  my $matches = eval { SICK::Bundle->from_files( cert => $self->_ca_cert, key => $self->_ca_key )->key_matches };
+  unless ( defined $matches ) {
+    ( my $error = $@ ) =~ s/ at \S+ line [0-9]+\.?\s*\z//;
+    croak 'cannot use the CA in \''.$dir.'\': '.$error;
+  }
+  croak 'the CA in \''.$dir.'\' is broken: \''.$self->_ca_key.'\' is not the key of \''.$self->_ca_cert.'\''
+    unless $matches;
+  $self->_ca_ready(1);
+  return;
+}
+
+# An exclusive lock on ca.lock in the CA directory, held as long as the
+# handle lives. The file stays: removing it would let a waiting process
+# lock a file nobody else sees any more.
+sub _lock {
+  my ( $self ) = @_;
+  my $path = $self->_ca_file('ca.lock');
+  sysopen my $fh, $path, O_RDWR | O_CREAT, 0600
+    or croak 'cannot open \''.$path.'\': '.$!;
+  flock $fh, LOCK_EX
+    or croak 'cannot lock \''.$path.'\': '.$!;
+  return $fh;
+}
+
+# Key and certificate are made beside their places, then renamed: the key
+# first, the certificate last, so a crash in between leaves a key alone,
+# which the next use refuses instead of taking the pair for whole.
+sub _create_ca {
+  my ( $self ) = @_;
+  my $dir      = $self->dir;
   my $tmp      = SICK::Temp->dir;
   my $new_key  = $self->_ca_file( '.ca.key.'.$$ );
   my $new_cert = $self->_ca_file( '.ca.crt.'.$$ );

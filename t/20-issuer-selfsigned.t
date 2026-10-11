@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Test::More;
 use File::Temp qw( tempdir );
+use POSIX ();
 use lib 't/lib';
 
 use SICK::Bundle;
@@ -74,7 +75,10 @@ subtest 'the CA appears on first use' => sub {
   ok -s $ca_dir.'/ca.crt', 'ca.crt';
   ok -s $ca_dir.'/ca.key', 'ca.key';
   is mode_of( $ca_dir.'/ca.key' ), '0600', 'the CA key is mode 0600';
-  is_deeply [ sort map { s{.*/}{}r } glob( $ca_dir.'/{.,}*' ) ], [ '.', '..', 'ca.crt', 'ca.key' ], 'nothing else is left there';
+  is_deeply [ sort map { s{.*/}{}r } glob( $ca_dir.'/{.,}*' ) ], [ '.', '..', 'ca.crt', 'ca.key', 'ca.lock' ],
+    'nothing else is left there but the lock file';
+  is mode_of( $ca_dir.'/ca.lock' ), '0600', '... which is mode 0600';
+  ok !-s $ca_dir.'/ca.lock', '... and empty';
 
   my $root = SICK::Bundle->new( cert => $root_pem );
   is $root->subject_dn, $root->issuer_dn, 'the root is self-signed';
@@ -93,6 +97,93 @@ subtest 'the CA appears on first use' => sub {
   ok !$ok, 'a directory in the place of ca.key is an error';
   like $@, qr/^cannot create the CA in '\Q$blocked\E': cannot write '\Q$blocked\E\/ca\.key': \S/, '... naming it';
   is_deeply [ glob( $blocked.'/ca.key/{.,}*' ) ], [ $blocked.'/ca.key/.', $blocked.'/ca.key/..' ], '... and the key is not moved into it';
+};
+
+subtest 'two processes creating the CA at once make one CA' => sub {
+  # openssl that takes its time making the root, so that both processes
+  # are inside the creation at the same time unless one waits for the other
+  my $real = SICK::OpenSSL::bin();
+  my $slow = spew( $tmp.'/openssl-slow', <<"SLOW" );
+#!$^X
+sleep 1 if grep { \$_ eq '-x509' } \@ARGV;
+exec { '$real' } '$real', \@ARGV;
+SLOW
+  chmod 0755, $slow or die 'chmod: '.$!;
+  local $ENV{SICK_OPENSSL} = $slow;
+
+  my $dir = $tmp.'/race-ca';
+  pipe my $go_read, my $go_write or die 'pipe: '.$!;
+  my @children;
+  for my $n ( 1, 2 ) {
+    my $pid = fork;
+    die 'fork: '.$! unless defined $pid;
+    unless ($pid) {
+      close $go_write;
+      my $go = <$go_read>;    # both start when the pipe closes
+      my $root = eval { SICK::Issuer::SelfSigned->new( dir => $dir )->root_pem };
+      spew( $tmp.'/race-'.$n, defined $root ? $root : 'died: '.$@ );
+      POSIX::_exit(0);
+    }
+    push @children, $pid;
+  }
+  close $go_read;
+  close $go_write;
+  waitpid $_, 0 for @children;
+
+  my @roots = map { slurp( $tmp.'/race-'.$_ ) } 1, 2;
+  like $roots[$_], qr/\A-----BEGIN CERTIFICATE-----/, 'process '.( $_ + 1 ).' got a root' for 0, 1;
+  ok $roots[0] eq $roots[1], 'both got the same root';
+  is slurp( $dir.'/ca.crt' ), $roots[0], '... the one in the directory';
+  ok( SICK::Bundle->from_files( cert => $dir.'/ca.crt', key => $dir.'/ca.key' )->key_matches,
+    '... whose key is the one beside it' );
+};
+
+subtest 'half a CA is refused, not replaced' => sub {
+  my $good = SICK::Issuer::SelfSigned->new( dir => $tmp.'/good-ca' );
+  $good->root_pem;
+  my %pem = map { $_ => slurp( $tmp.'/good-ca/ca.'.$_ ) } qw( crt key );
+
+  for my $case ( [ crt => 'key' ], [ key => 'crt' ] ) {
+    my ( $present, $missing ) = @$case;
+    my $dir = $tmp.'/lone-'.$present;
+    mkdir $dir, 0700 or die 'mkdir: '.$!;
+    spew( $dir.'/ca.'.$present, $pem{$present} );
+    chmod 0600, $dir.'/ca.'.$present or die 'chmod: '.$!;
+    my $half = SICK::Issuer::SelfSigned->new( dir => $dir );
+    for my $method (qw( root_pem issue )) {
+      my $ok = eval { $half->$method( { names => ['a.example.internal'], lifetime => 60 } ); 1 };
+      ok !$ok, 'ca.'.$present.' alone: '.$method.' dies';
+      like $@, qr/^the CA in '\Q$dir\E' is incomplete: '\Q$dir\E\/ca\.$missing' is missing beside '\Q$dir\E\/ca\.$present'/,
+        '... naming what is missing';
+    }
+    ok !-e $dir.'/ca.'.$missing, '... no new ca.'.$missing.' appeared';
+    ok slurp( $dir.'/ca.'.$present ) eq $pem{$present}, '... and ca.'.$present.' is untouched';
+    unlike $@, qr/PRIVATE KEY|-----BEGIN/, '... nothing of the files in the message';
+  }
+
+  my $other = SICK::Issuer::SelfSigned->new( dir => $tmp.'/other-good-ca' );
+  $other->root_pem;
+  my $dir = $tmp.'/mismatch';
+  mkdir $dir, 0700 or die 'mkdir: '.$!;
+  spew( $dir.'/ca.crt', $pem{crt} );
+  spew( $dir.'/ca.key', slurp( $tmp.'/other-good-ca/ca.key' ) );
+  chmod 0600, $dir.'/ca.key' or die 'chmod: '.$!;
+  my $mixed = SICK::Issuer::SelfSigned->new( dir => $dir );
+  for my $method (qw( root_pem issue )) {
+    my $ok = eval { $mixed->$method( { names => ['a.example.internal'], lifetime => 60 } ); 1 };
+    ok !$ok, 'key and certificate of two CAs: '.$method.' dies';
+    like $@, qr/^the CA in '\Q$dir\E' is broken: '\Q$dir\E\/ca\.key' is not the key of '\Q$dir\E\/ca\.crt'/,
+      '... saying so';
+  }
+  is slurp( $dir.'/ca.crt' ), $pem{crt}, '... and nothing was replaced';
+
+  my $garbage = $tmp.'/garbage';
+  mkdir $garbage, 0700 or die 'mkdir: '.$!;
+  spew( $garbage.'/ca.crt', $pem{crt} );
+  spew( $garbage.'/ca.key', "not a key\n" );
+  my $ok = eval { SICK::Issuer::SelfSigned->new( dir => $garbage )->root_pem; 1 };
+  ok !$ok, 'a ca.key that is no key: dies';
+  like $@, qr/^cannot use the CA in '\Q$garbage\E': key is not a PEM private key/, '... saying why';
 };
 
 subtest 'issue' => sub {

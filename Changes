@@ -234,3 +234,6 @@ Revision history for SICK
       rights, how to get back) and t/e2e/device-proxmox.sh, which proves the
       hooks end to end against a stand-in API; the hooks do not verify the
       API's TLS certificate.
+    - selfsigned CA: created under a lock (ca.lock in its directory), key
+      before certificate; a lone ca.key or ca.crt, or a key that does not
+      belong to the certificate, is an error instead of a new CA.
