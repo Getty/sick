@@ -26,7 +26,8 @@ and `YAML::PP` for the device list.
 > [contrib/](contrib/), and the [handbook](docs/handbook/README.md), which
 > leads from planning to operations and emergencies. What is still to be
 > tried on real devices is on the handbook's
-> [HQ checklist](docs/handbook/hq-checklist.md).
+> [HQ checklist](docs/handbook/hq-checklist.md); the
+> [final report](docs/final-report.md) sums up what exists and what is open.
 
 ## A minimal device list
 
