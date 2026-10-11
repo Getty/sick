@@ -1,0 +1,33 @@
+---
+class: standard
+completed: 2026-10-11T03:49:16Z
+created: 2026-10-11T02:52:20Z
+id: 58
+priority: high
+started: 2026-10-11T02:53:07Z
+status: done
+tags:
+- mtls
+- p8
+title: 'P8a init-ca manages declared provisioners: clients (clientAuth only), cert-manager,
+  a long ACME; constraint test for email/URI SANs'
+updated: 2026-10-11T03:49:28Z
+---
+
+A provisioners file applied at every start (JWK/ACME, template serverAuth|clientAuth, lifetimes, ACME challenge types); covers k50 and the provisioner part of k57; a container test of how the intermediate's DNS/IP name constraints treat email and URI SANs at issuance (step-ca) and at verification (OpenSSL, Go, Java or Python). Part of P8 (k19); binding: docs/roadmap.md, section P8, and the hub's brief of 2026-10-11.
+
+2026-10-11 02:55 w-p8a started: read cards, roadmap P8, init-ca.sh, ceremony.sh, ca-ceremony.sh, acme-k8s.sh
+
+2026-10-11 03:13 init-ca.sh: SICK_CA_PROVISIONERS_FILE (JSON, docker/compose.provisioners.yml, docker/provisioners.example.json) + SICK_CA_ACME_CHALLENGES; ca-ceremony.sh part 8 ALL PASSED (146 PASS). client-san.sh narrow+wide ALL PASSED. Finding: step-ca 0.30.2 issues email/URI SANs under a DNS/IP-only intermediate; Java treats single-label CN as DNS name; Go refuses host-less URIs under any constrained CA; GnuTLS 3.8.9 ignores URI constraints; the CA policy (SICK_CA_ALLOW_*) refuses email/URI SANs.
+
+2026-10-11 03:30 Also found: (1) init-ca.sh sets only dns/ip in authority.policy; with SICK_CA_ALLOW_* set, step-ca refuses every email/URI SAN, so 'clients' can issue DNS identities only - email/uri allow rules (or a provisioner policy) would be needed. (2) k57 provisioner part is done here (acme-long, 1440h, http-01); k57 part 2 (DEPLOY_PROXMOXVE_USER_REALM in README/SYNOPSIS of SICK::Target::Acmesh) and the handbook PVE row (docs/handbook/04-services.md) are untouched. (3) docker/README.md transcript at the end not refreshed (init-ca log lines now end with ', challenges ...'). (4) A serverAuth-only cert cannot 'step ca renew' over mTLS (tls: bad certificate); clientAuth ones can.
+
+2026-10-11 03:30 Done: init-ca.sh declared provisioners (SICK_CA_PROVISIONERS_FILE, docker/compose.provisioners.yml, docker/provisioners.example.json: clients/cert-manager/acme-long) + SICK_CA_ACME_CHALLENGES; ceremony.sh --email/--uri; t/e2e/client-san.sh + docs/findings/client-san.md; k8s cert-manager provisioner declared, acme-k8s.sh switched. Verified: ca-ceremony (146 PASS), ca-recovery (51), ca-rollover (125), run-local (33), client-san (51 PASS, 108 RECORD), acme-k8s up/issue/renew/refuse/down all ALL PASSED; prove -lr t PASS (19 files, 241 tests, no skip); nothing labelled sick=1 left.
+
+Committed: ceremony.sh email/URI 225a9f4, init-ca provisioners ea2f8d2, client-san test 3ee7c38; follow-up still to come
+
+follow-up (worker): init-ca.sh SICK_CA_ALLOW_EMAIL/_URI into authority.policy.x509.allow (syntax checked in smallstep/certificates v0.30.2 policy/options.go), compose.yml, README, k8s/test copy, client-san.sh third policy step; e2e runs next
+
+follow-up done: SICK_CA_ALLOW_EMAIL/_URI. Verified: client-san both parts ALL PASSED (65 PASS, 108 RECORD), ca-ceremony 146, ca-recovery 51, ca-rollover 125, run-local 33 ALL PASSED; prove -lr t PASS (19 files, 241, no skip); t/60-k8s.t PASS; nothing labelled sick=1 left. Drift: docs/findings/client-san.md point 2 and docs/handbook (02-the-ca, 04-services, 01-planning) still name only DNS/IP - prose for the main agent.
+
+Committed: ceremony.sh email/URI 225a9f4, init-ca provisioners ea2f8d2, client-san test 3ee7c38, policy email/URI 22d1531
