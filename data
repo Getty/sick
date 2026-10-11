@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-10-11T08:11:05Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-10-11T10:14:46Z
+created: 2026-10-10T06:24:10Z
+id: 20
+priority: high
+started: 2026-10-11T08:11:05Z
+status: done
+tags:
+- docs
+title: 'P9 Handbook: docs/handbook from zero to operations and emergencies'
+updated: 2026-10-11T10:14:46Z
+---
+
+The final pass; each package from P3 on writes its chapter. Package, result and 'done when': docs/roadmap.md, section P9 Handbook.
+
+2026-10-10: 'done when' sharpened against skill ssl-tls-pki; the binding version is docs/roadmap.md. New: trust graph, profile/enrollment table, decision records, test records with scope/versions/expected/observed; restore and intermediate-compromise drills run from the handbook text alone.
+
+Done with 67-70. Open follow-ups: k72-k77.
