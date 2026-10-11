@@ -1,0 +1,25 @@
+---
+class: standard
+completed: 2026-10-11T04:28:18Z
+created: 2026-10-11T02:52:32Z
+id: 59
+priority: high
+started: 2026-10-11T03:49:16Z
+status: done
+tags:
+- mtls
+- p8
+title: 'P8b mTLS recipe: nginx with client certificates, SAN-to-principal, proxy headers,
+  PKCS#12'
+updated: 2026-10-11T04:28:29Z
+---
+
+Person and machine certificates with step, one key per holder, PKCS#12; nginx accepts the approved client and refuses the six cases of P8's done-when; a second client stack; PKCS#12 import into NSS checked with tstclnt. Part of P8 (k19); binding: docs/roadmap.md, section P8, and the hub's brief of 2026-10-11.
+
+2026-10-11 03:52 Started: recipe in contrib/mtls/ (enroll.sh, nginx direct + terminating proxy with mTLS hop to backend, systemd renew timer), t/e2e/mtls.sh with helpers t/e2e/mtls-*, findings in docs/findings/mtls.md. Mapping: exact $ssl_client_s_dn (CN from token subject); second stack Go.
+
+2026-10-11 04:25 Observed: nginx refuses cases 1-4 with HTTP 400 after a completed handshake (verify=NONE/FAILED:...), case 5 with 403 (verify=SUCCESS). Revocation passive; a cert renewed BEFORE the revocation keeps renewing; the CA policy is not checked at renewal; the CA log names subject+serial of each renewal. Go sends no cert when the server's CA list does not name its issuer; NSS tstclnt picks a matching cert without -n.
+
+2026-10-11 04:26 Done: contrib/mtls (enroll.sh, nginx mtls/proxy/backend confs + maps, compose.yml, systemd renew timer, README), t/e2e/mtls.sh (+ mtls-client.go, mtls-compose.yml), docs/findings/mtls.md. Verified: t/e2e/mtls.sh all seven parts twice in a row, ALL PASSED (79 PASS, 0 FAIL each), nothing of sick-e2e-mtls left. Staged, not committed.
+
+Committed as b72f496
