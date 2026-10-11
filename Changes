@@ -240,3 +240,6 @@ Revision history for SICK
     - devices: optional key owner (free text, one line); shown by sick
       inventory (column OWNER, JSON field), in sick check --format json, and
       as label owner of sick_device_info where it is set.
+    - docs: the acmesh example for proxmoxve sets DEPLOY_PROXMOXVE_USER and
+      DEPLOY_PROXMOXVE_USER_REALM (the hooks default to root@pam) and points
+      to contrib/devices/proxmox/.

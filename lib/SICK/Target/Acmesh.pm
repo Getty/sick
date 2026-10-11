@@ -36,10 +36,17 @@ In the device list:
         names: [pve.example.internal, 192.0.2.30]
         env:
           DEPLOY_PROXMOXVE_SERVER: pve.example.internal
+          # both default to root@pam; the token belongs to sick@pve
           DEPLOY_PROXMOXVE_USER: sick
+          DEPLOY_PROXMOXVE_USER_REALM: pve
           DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick
         env_files:
           DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/pve.token
+
+Without C<DEPLOY_PROXMOXVE_USER> and C<DEPLOY_PROXMOXVE_USER_REALM> (for
+C<proxmoxbs> the C<DEPLOY_PROXMOXBS_> pair) the hook logs in as
+C<root@pam>. Token, rights and the alternative of the node's own ACME
+client: F<contrib/devices/proxmox/README.md> in the distribution.
 
 =head1 DESCRIPTION
 

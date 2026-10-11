@@ -571,11 +571,18 @@ devices:
     names: [pve.example.internal]
     env:
       DEPLOY_PROXMOXVE_SERVER: pve.example.internal
+      # both default to root@pam; the token below belongs to sick@pve
       DEPLOY_PROXMOXVE_USER: sick
+      DEPLOY_PROXMOXVE_USER_REALM: pve
       DEPLOY_PROXMOXVE_API_TOKEN_NAME: sick
     env_files:
       DEPLOY_PROXMOXVE_API_TOKEN_KEY: /etc/sick/pve.token
 ```
+
+User and realm are set on purpose: without them the hooks `proxmoxve` and
+`proxmoxbs` log in as `root@pam`. Token, rights, the PBS variant and why the
+node's own ACME client is usually the better choice:
+[contrib/devices/proxmox/](contrib/devices/proxmox/README.md).
 
 | Option | |
 |---|---|
