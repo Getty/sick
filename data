@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-10-11T06:57:54Z
+created: 2026-10-11T05:48:56Z
+id: 62
+priority: medium
+started: 2026-10-11T06:41:25Z
+status: done
+tags:
+- docker
+- devices
+- proxmox
+title: 'Image: install SICK-Target-Proxmox and its dependencies'
+updated: 2026-10-11T06:58:06Z
+---
+
+The sick image should carry the device types proxmox-ve and proxmox-bs: COPY sick-target-proxmox/lib/ like sick-target-ciscosb, and the Debian packages libio-socket-ssl-perl (2.089 in trixie, brings libnet-ssleay-perl) and libhttp-tiny-perl (0.090+deb13u1: patched HTTP::Tiny; core perl 5.40.1 has 0.088). JSON::MaybeXS, Moo, Path::Tiny, namespace::autoclean are there already. Decision record: ../sick-target-proxmox docs/decisions/0002-http-client.md. From SICK-Target-Proxmox (../sick-target-proxmox, card #6 there).
+
+SICK-Target-Proxmox t/e2e/sick/Dockerfile shows the layer that works: FROM sick:local + ca-certificates libhttp-tiny-perl libio-socket-ssl-perl libnet-ssleay-perl + COPY sick-target-proxmox/lib/; unit suite green on trixie IO::Socket::SSL 2.089 / HTTP::Tiny 0.090 (commit 0569ddd there).
+
+w-image: Dockerfile base stage installs libhttp-tiny-perl + libio-socket-ssl-perl (ca-certificates was there already; libnet-ssleay-perl comes with IO::Socket::SSL), from-local COPYs sick-target-proxmox/lib, from-cpan cpanm adds SICK::Target::ProxmoxVE (unbuilt, dist not on CPAN), final RUN loads ProxmoxVE+ProxmoxBS. dockerignore allows sick-target-proxmox/lib. docker/README, compose comment, e2e prerequisite checks updated. run-local.sh ALL PASSED; in image VE/BS 0.001, IO::Socket::SSL 2.089, HTTP::Tiny 0.090, Net::SSLeay 1.94. ../sick-target-proxmox t/e2e/device-proxmox.sh against it: 65 PASS, ALL PASSED, first run. For the sick-target-proxmox board: its t/e2e/sick/Dockerfile layer is now redundant (sick:local carries packages and lib), and its step-1 text says sick:local is built from ../sick and ../sick-target-ciscosb only.
+
+Committed as 0713477
