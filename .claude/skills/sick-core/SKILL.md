@@ -148,6 +148,30 @@ regression:
   with the message the tests pin. Elsewhere the type is the second line behind
   that check.
 
+**The "core Perl only" rule is the maintainer's, not a design decision.** It was
+recorded as his requirement for this repository; what he had said before was "take as
+much from others as possible". Do not read it as an invitation to add a dependency,
+nor as permission to keep one that is no longer used.
+
+## The lab: docker, k3d and kubeconfig
+
+- **`prove` never starts a container.** A change under `docker/` is proven by
+  `t/e2e/run-local.sh` — compose project `sick-e2e`, ports bound to 127.0.0.1,
+  torn down at exit — where the host has Docker (agent-lab); elsewhere it is
+  checked by reading, and reported as such.
+- **A change under `k8s/`** is checked by reading and by `t/60-k8s.t`; the full
+  proof runs in a k3d cluster named `sick-*`.
+- **Every container, volume and network of ours carries the label `sick=1`** and is
+  removed by that label alone. What has no label stays, whatever its age — other
+  people's containers run on the same host. Never `prune`.
+- **`KUBECONFIG` points to a private file** for every `kubectl`, `k3d` and `helm`
+  call, also one typed by hand. Without it the call acts on the host's own context —
+  on a shared host somebody else's cluster, with admin rights — and `k3d` rewrites
+  that file. It lives outside the checkout and is never committed.
+- **`t/e2e/run-lab.sh` changes a real switch** and is not run unasked. The live test
+  in `../sick-target-ciscosb/t/90-live.t` needs `SICK_LIVE_CISCOSB_HOST` and
+  `SICK_LIVE_CISCOSB_CREDENTIALS`; they are never set here.
+
 ## Copies that must stay identical
 
 `k8s/test/init-ca.sh` and `k8s/test/trust-httpd.conf` are copies of the files in
