@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-10-26T22:46:41Z
+claimed_by: sick-worker
+class: standard
+completed: 2026-10-26T22:46:41Z
+created: 2026-10-11T09:14:52Z
+id: 77
+priority: low
+started: 2026-10-26T22:26:36Z
+status: done
+tags:
+- docs
+- docker
+title: 'docker/README Quick start: secrets dir mode vs. handbook''s root-owned form'
+updated: 2026-10-26T22:47:42Z
+---
+
+docker/README.md Quick start says `mkdir -m 700 secrets` (owned by the user); handbook ch2 makes the secrets directory root-owned 0700 (`sudo install -d -m 0700 -o root`). Not wrong for lab mode, but a newcomer (walkthrough round 4) saw a contradiction. Fix: one sentence in docker/README pointing at ch2 for a real CA. docker/ = worker lane.
+
+Also: handbook ch2 now carries the CA part on a separate transfer medium (/media/transfer) so the root-key medium never enters the CA host (walkthrough round 5). docker/README.md lines ~336, 493, 523 still use /media/offline/for-the-ca and /media/offline/new-intermediate on the CA host; align them.
+
+docker/README.md: Quick start sentence pointing at handbook ch2 (root-owned 0700); CA-host paths now /media/transfer/for-the-ca and /media/transfer/new-intermediate (3 places). Laptop-side ceremony paths under /media/offline left as is.
+
+Committed as 5b090b0
