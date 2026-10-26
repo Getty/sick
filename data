@@ -1,0 +1,17 @@
+---
+class: standard
+completed: 2026-10-26T21:53:22Z
+created: 2026-10-11T08:19:11Z
+id: 73
+priority: medium
+started: 2026-10-26T21:53:22Z
+status: done
+tags:
+- release
+title: 'Target dists: require SICK 0.001'
+updated: 2026-10-26T21:53:22Z
+---
+
+From the release audit 2026-10-11. ../sick-target-ciscosb and ../sick-target-proxmox cpanfile say requires 'SICK' without a version; they need the Moo SICK::Target, key_matches, trust_roots/default_port/has_port: requires 'SICK', '0.001' once SICK 0.001 is released (card on their boards too).
+
+2026-10-26 21:53 2026-10-26: both target cpanfiles pin SICK 0.001 now (ciscosb 463da1f, proxmox), ahead of CPAN — the family is released together, waiting for CPAN is no blocker (sick-coordination).
