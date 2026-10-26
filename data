@@ -1,0 +1,21 @@
+---
+class: standard
+created: 2026-10-11T08:18:59Z
+id: 72
+priority: high
+started: 2026-10-11T08:50:10Z
+status: backlog
+tags:
+- release
+- blocker
+title: 'Tarball: whether docker/, k8s/, contrib/, t/e2e/ ship (decisions.md 9)'
+updated: 2026-10-26T21:30:38Z
+---
+
+From the release audit 2026-10-11. dzil build ships .claude/, CLAUDE.md and .github/ (agent and CI configuration), plus docker/, k8s/, contrib/, docs/, t/e2e/. Agent configuration does not belong on CPAN: prune .claude/, CLAUDE.md, .github/ in dist.ini (options of [@Author::GETTY] per the release skill). Whether docker/, k8s/, contrib/, t/e2e/ ship is the maintainer's decision (handbook decisions.md #9; proposal: ship docker/, contrib/, docs/; leave t/e2e/ out; k8s/ to decide). Done when: agent config pruned and the rest implemented as decided; dzil build lists the result.
+
+Agent/CI config pruned in dist.ini only: [@Author::GETTY] gather_exclude_filename = CLAUDE.md, gather_exclude_match = ^\.claude/ and ^\.github/. dzil build: 211 -> 201 files; leaving: 8 under .claude/, CLAUDE.md, .github/workflows/ci.yml. docker/, k8s/, contrib/, docs/, t/e2e/ unchanged on purpose (maintainer decision, decisions.md #9, still open). dzil test PASS, 21 files, only t/release-changes_has_content.t skipped (release-only). Open on this card: the docker/k8s/contrib/t/e2e part.
+
+4c28d11: agent/CI config pruned; docker/, k8s/, contrib/, t/e2e/ shipping stays open for the maintainer (decisions.md #9)
+
+2026-10-26 21:30 Agent and CI part reverted on the maintainer's word (2026-10-26): .claude/, CLAUDE.md and .github/ ship by design, as the bundle gathers them; pruning them was a mistake (dist.ini back to the bundle default). What stays open on this card is only decisions.md 9: docker/, k8s/, contrib/, t/e2e/.
