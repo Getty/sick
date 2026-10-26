@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-10-26T22:47:02Z
+claimed_by: sick-test-writer
+class: standard
+completed: 2026-10-26T22:47:02Z
+created: 2026-10-10T06:04:25Z
+depends_on:
+- 9
+id: 10
+priority: medium
+started: 2026-10-26T22:26:03Z
+status: done
+tags:
+- stack
+- tests
+title: 'Move the tests to the house tooling: Path::Tiny, JSON::MaybeXS'
+updated: 2026-10-26T22:47:54Z
+---
+
+Lane: sick-test-writer.
+
+Why this is in the backlog: the maintainer said "Wir wollten Path::Tiny, JSON::MaybeXS und Moo". That the tests leave their core-modules-only tooling as well is Claude s reading of that sentence, not something he said. Promote the card when it is right.
+
+What it covers:
+- t/lib/Test/SICK/PKI.pm exports hand-written slurp and spew; 13 files under t/ use them. They give way to Path::Tiny;
+- JSON::PP in t/21-issuer-stepca.t, t/42-target-acmesh.t, t/bin/fake-step and t/bin/fake-acme-sh gives way to JSON::MaybeXS. The two fakes run as programs of their own (first line rewritten to the perl that runs the test), so the module has to be loadable there;
+- on test in cpanfile follows.
+
+What does not change: 127.0.0.1 only, no checked-in key or certificate, the suite stays serial, and no assertion gets weaker on the way.
+
+Best done after k9, when the module cards have stopped touching the same test files.
+
+2026-10-26: Freigegeben vom Koordinator (Hub reuben): der Hausstack gilt auch für die Tests; die Core-only-Regel war nie Gettys. Tag needs-maintainer entfällt.
+
+k10: slurp/spew gone from PKI.pm and all users (Path::Tiny slurp_raw/spew_raw), JSON::PP -> JSON::MaybeXS in 21, 42 and both fakes, JSON::PP removed from on test in cpanfile. prove -lr t green (245 tests); targets green. Not committed.
+
+Committed as c53c526
