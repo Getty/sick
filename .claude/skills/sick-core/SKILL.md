@@ -6,9 +6,10 @@ user-invocable: false
 
 # SICK — Distribution Internals
 
-The rules on dependencies, the shell, secrets and the layout are in `CLAUDE.md`. This
-skill holds the contracts between the parts: what a change has to keep, in the core and
-in every `SICK-Target-*` distribution built on it.
+The rules on dependencies, the shell and secrets are in each repository's
+`.claude/rules/sick*-rules.md`; who owns what across the family is in `sick-coordination`.
+This skill holds the contracts between the parts: what a change has to keep, in the core
+and in every `SICK-Target-*` distribution built on it.
 
 ## The run: four steps, one result per device
 
@@ -122,7 +123,7 @@ program was seen to behave differently, and the header gets that observation.
 
 ## Where the house stack stops
 
-Moo, `Types::Standard` and `Path::Tiny` are the rule (CLAUDE.md). Three places
+Moo, `Types::Standard` and `Path::Tiny` are the rule (the house stack). Four places
 deviate on purpose and stay that way; a conversion that "tidies" them back is a
 regression:
 
@@ -148,16 +149,11 @@ regression:
   with the message the tests pin. Elsewhere the type is the second line behind
   that check.
 
-**The "core Perl only" rule is the maintainer's, not a design decision.** It was
-recorded as his requirement for this repository; what he had said before was "take as
-much from others as possible". Do not read it as an invitation to add a dependency,
-nor as permission to keep one that is no longer used.
-
 ## The lab: docker, k3d and kubeconfig
 
 - **`prove` never starts a container.** A change under `docker/` is proven by
   `t/e2e/run-local.sh` — compose project `sick-e2e`, ports bound to 127.0.0.1,
-  torn down at exit — where the host has Docker (agent-lab); elsewhere it is
+  torn down at exit — where the host has Docker; elsewhere it is
   checked by reading, and reported as such.
 - **A change under `k8s/`** is checked by reading and by `t/60-k8s.t`; the full
   proof runs in a k3d cluster named `sick-*`.

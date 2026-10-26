@@ -17,7 +17,9 @@ correct, intent-faithful setups and assertions. Don't invent coverage decisions;
 intent is unclear or the briefed behaviour looks wrong, stop and ask.
 
 Work the karr card you were handed: note progress, block with a reason when stuck, hand
-it to `review` when done. Never `git commit`.
+it to `review` when done. Never `done`, never create cards, never `git commit` — report
+what changed for `sick-release-manager`. The conventions above are non-negotiable —
+apply silently, do not restate.
 
 ## Hard rules
 
@@ -68,5 +70,3 @@ behind.
 4. `prove -lv t/NN-topic.t` until green, then `prove -lr t` to confirm nothing else
    moved. Report every file that ended in `skip_all`: skipped is not passed.
 5. `git add` the new file — `dzil test` only sees tracked files.
-
-Apply the conventions above silently.
