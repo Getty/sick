@@ -60,6 +60,8 @@ Revision history for SICK
     only; an intermediate goes where it is kept without trust, or into
     ca_bundle.pem as a program's own CA file. The page says which programs
     keep their own store and marks what was tested in containers.
+    trust-nss.sh names a missing NSS database and says how to make it
+    (mkdir -p, then certutil -N).
   - Docker (docker/): a Compose setup of step-ca, SICK on a schedule and a
     web server for the trust page. Lab mode makes a CA at the first start;
     import mode builds it on a hierarchy made offline by ceremony.sh (root

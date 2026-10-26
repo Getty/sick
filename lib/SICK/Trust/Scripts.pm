@@ -646,7 +646,7 @@ sub _nss {
 command -v certutil >/dev/null 2>&1 \
   || fail 'certutil is missing: apt-get install libnss3-tools (Debian, Ubuntu), dnf install nss-tools (Fedora), pacman -S nss (Arch)'
 [ -f "$DIR/cert9.db" ] \
-  || fail "no NSS database (cert9.db) in '$DIR'. Firefox: the profile directory from about:profiles. Chrome on Linux: \$HOME/.pki/nssdb, made with: certutil -N -d sql:\$HOME/.pki/nssdb --empty-password"
+  || fail "no NSS database (cert9.db) in '$DIR'. Firefox: the profile directory from about:profiles. Chrome on Linux: \$HOME/.pki/nssdb, made with: mkdir -p \$HOME/.pki/nssdb && certutil -N -d sql:\$HOME/.pki/nssdb --empty-password"
 DB="sql:$DIR"
 
 nickname() {

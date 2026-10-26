@@ -1123,6 +1123,8 @@ subtest 'trust-nss.sh: roots trusted as CA, intermediates without trust, removed
   my ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', ( map { ( '--fingerprint', $sha->($_) ) } @site_roots ), $db );
   is $exit, 1, 'a directory without cert9.db: refused';
   like $err, qr/cert9\.db/, '... saying what is missing';
+  like $err, qr{made with: mkdir -p \$HOME/\.pki/nssdb && certutil -N -d sql:\$HOME/\.pki/nssdb --empty-password},
+    '... and the hint makes the directory before certutil -N, which fails in one that is not there';
   spew( $db.'/cert9.db', q{} );
 
   ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', '--fingerprint', $sha->($facts), $db );
