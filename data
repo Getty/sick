@@ -1,0 +1,19 @@
+---
+class: standard
+completed: 2026-10-26T21:56:48Z
+created: 2026-10-11T08:20:47Z
+id: 74
+priority: high
+started: 2026-10-26T21:56:48Z
+status: done
+tags:
+- release
+- blocker
+title: 'Release blocker: META repository and bugtracker are wrong (SSH host alias
+  remote)'
+updated: 2026-10-26T21:56:48Z
+---
+
+From the release audits 2026-10-11. origin is an SSH host alias (git@github-sick:Getty/sick.git); [@Author::GETTY] recognises GitHub only when the remote contains github.com, so the build drops GithubMeta/GitHub::CreateRelease, META gets git://github-sick/Getty/sick.git and bugtracker {}, the woven SUPPORT section is empty. Same in sick-target-ciscosb and sick-target-proxmox (cards there). Fix: a remote URL containing github.com at release time (e.g. a second remote or url.insteadOf), or explicit repository/bugtracker in dist.ini; the maintainer's release machine decides.
+
+2026-10-26 21:56 2026-10-26: origin is git@github.com:Getty/sick.git here (also in both targets); dzil build now writes repository/bugtracker https://github.com/Getty/sick and the SUPPORT section. Done.
