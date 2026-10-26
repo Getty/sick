@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-10-26T22:45:57Z
+claimed_by: sick-worker
+class: standard
+completed: 2026-10-26T22:45:57Z
+created: 2026-10-11T08:55:29Z
+id: 75
+priority: low
+started: 2026-10-26T22:26:14Z
+status: done
+tags:
+- trust
+- finding
+title: 'trust-nss.sh: its hint to create a database lacks mkdir -p'
+updated: 2026-10-26T22:47:17Z
+---
+
+From a newcomer walkthrough 2026-10-11: trust-nss.sh's message for a missing database suggests 'certutil -N -d sql:<dir> --empty-password', which fails with SEC_ERROR_BAD_DATABASE when <dir> does not exist. Add 'mkdir -p <dir> &&' to the hint (lib/SICK/Trust/Scripts.pm), with a t/50 assertion.
+
+trust-nss.sh hint now: mkdir -p $HOME/.pki/nssdb && certutil -N -d sql:$HOME/.pki/nssdb --empty-password (Scripts.pm line 649). t/50 assertion left to sick-test-writer.
+
+k75: t/50-trust.t asserts the mkdir -p before certutil -N in the trust-nss.sh hint; red without the lib change (checked with git stash of Scripts.pm), green with it.
+
+Committed as 6ca2f08
