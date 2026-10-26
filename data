@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-10-26T22:46:19Z
+claimed_by: sick-worker
+class: standard
+completed: 2026-10-26T22:46:19Z
+created: 2026-10-11T09:04:56Z
+id: 76
+priority: low
+started: 2026-10-26T22:26:25Z
+status: done
+tags:
+- docker
+- finding
+title: 'sick.example.yml: the web example lacks mode_key 0640'
+updated: 2026-10-26T22:47:31Z
+---
+
+From the round-3 drill 2026-10-11: docker/sick.example.yml's commented web: example has no mode_key: 0640, contrib/devices/files-nginx/sick.yml has it (nginx reads the key as an unprivileged worker). Make them the same.
+
+docker/sick.example.yml: web example has mode_key: 0640 (same comment as contrib/devices/files-nginx/sick.yml).
+
+Committed as 5b090b0
