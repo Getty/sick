@@ -27,7 +27,6 @@ on test => sub {
   requires 'File::Path';
   requires 'File::Temp';
   requires 'IO::Socket::INET';
-  requires 'JSON::PP';
   requires 'MIME::Base64';
   requires 'Test::More', '0.96';
 };

@@ -2,7 +2,8 @@
 use strict;
 use warnings;
 use Digest::SHA qw( sha256_hex );
-use JSON::PP;
+use JSON::MaybeXS ();
+use Path::Tiny qw( path );
 
 # A stand-in for "acme.sh --deploy", for t/42-target-acmesh.t and
 # t/41-cli.t. It behaves the way acme.sh 3.1.6 was seen to behave
@@ -35,9 +36,7 @@ sub mode_of { my @stat = stat $_[0]; return @stat ? sprintf( '%04o', $stat[2] & 
 
 sub slurp {
   my ( $path ) = @_;
-  open my $in, '<', $path or return undef;
-  local $/;
-  return scalar <$in>;
+  return eval { path($path)->slurp_raw };
 }
 
 my %call = (
@@ -51,7 +50,7 @@ my %call = (
 sub record {
   return unless defined $ENV{FAKE_ACME_LOG};
   open my $log, '>>', $ENV{FAKE_ACME_LOG} or die 'fake-acme-sh: cannot write log: '.$!;
-  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
+  print {$log} JSON::MaybeXS->new->canonical->encode( \%call ), "\n";
   close $log;
 }
 

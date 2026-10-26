@@ -10,7 +10,8 @@ use lib 't/lib';
 use SICK::Device;
 use SICK::OpenSSL;
 use SICK::Target;
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # The default presented_cert: openssl s_client against host:port. Everything
 # here stays on 127.0.0.1 - an openssl s_server and two tiny servers of our
@@ -112,7 +113,7 @@ my $tls_port = free_port();
 my $tls_up = answers($tls_port);
 
 subtest 'a TLS server presents its certificate' => sub {
-  plan skip_all => 'openssl s_server did not come up: '.( -e $tmp.'/s_server.log' ? slurp( $tmp.'/s_server.log' ) : q{} )
+  plan skip_all => 'openssl s_server did not come up: '.( -e $tmp.'/s_server.log' ? path($tmp.'/s_server.log')->slurp_raw : q{} )
     unless $tls_up;
 
   my $bundle = target( host => '127.0.0.1', port => $tls_port )->presented_cert;
@@ -158,7 +159,7 @@ subtest 'a server that never answers: unreachable after the time limit' => sub {
 subtest 'what s_client is asked' => sub {
   my $log     = $tmp.'/s_client-args.log';
   my $wrapper = $tmp.'/openssl-recorder';
-  spew( $wrapper, <<"WRAPPER" );
+  path($wrapper)->spew_raw(<<"WRAPPER");
 #!$^X
 open my \$log, '>>', '$log' or die \$!;
 print {\$log} join( ' ', \@ARGV ), "\\n";
@@ -173,7 +174,7 @@ WRAPPER
     my ( %arg ) = @_;
     unlink $log;
     eval { target(%arg)->presented_cert };
-    return slurp($log);
+    return path($log)->slurp_raw;
   };
 
   is $asked->( host => '192.0.2.5' ),

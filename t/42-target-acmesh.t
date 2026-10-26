@@ -4,7 +4,7 @@ use warnings;
 use Test::More;
 use Digest::SHA qw( sha256_hex );
 use File::Temp qw( tempdir );
-use JSON::PP;
+use JSON::MaybeXS ();
 use lib 't/lib';
 
 use SICK::Bundle;
@@ -14,7 +14,8 @@ use SICK::Issuer::SelfSigned;
 use SICK::OpenSSL;
 use SICK::Target;
 use SICK::Target::Acmesh;
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # SICK::Target::Acmesh, twice: against t/bin/fake-acme-sh, which records
 # what it is called with, and - when acme.sh is installed - against the real
@@ -44,8 +45,8 @@ sub mode_of { sprintf '%04o', ( stat $_[0] )[2] & 07777 }
 
 # The fake acme.sh, runnable by the perl that runs this test.
 my $fake = $tmp.'/acme.sh';
-( my $source = slurp('t/bin/fake-acme-sh') ) =~ s/\A#![^\n]*\n/#!$^X\n/;
-spew( $fake, $source );
+( my $source = path('t/bin/fake-acme-sh')->slurp_raw ) =~ s/\A#![^\n]*\n/#!$^X\n/;
+path($fake)->spew_raw($source);
 chmod 0755, $fake or die 'chmod: '.$!;
 
 my $log = $tmp.'/acme.log';
@@ -54,7 +55,7 @@ local $ENV{FAKE_ACME_LOG} = $log;
 # the calls the fake recorded since the last look
 sub calls {
   return [] unless -e $log;
-  my @calls = map { JSON::PP->new->decode($_) } grep { /\S/ } split /\n/, slurp($log);
+  my @calls = map { JSON::MaybeXS->new->decode($_) } grep { /\S/ } split /\n/, path($log)->slurp_raw;
   unlink $log;
   return \@calls;
 }
@@ -66,7 +67,8 @@ my $bundle = $issuer->issue( {%spec} );
 
 # a secret that is none, and the file it lives in
 my $token      = 'placeholder-'.$$.'-not-a-real-token';
-my $token_file = spew( $tmp.'/router.token', $token."\n" );
+my $token_file = $tmp.'/router.token';
+path($token_file)->spew_raw($token."\n");
 
 my $count = 0;
 
@@ -204,10 +206,10 @@ subtest 'deploy lays out the certificate and runs acme.sh' => sub {
   ok !$set{$_}, $_.' of the calling environment does not reach acme.sh' for qw( DOMAIN_PATH CERT_PATH DEBUG LOG_FILE );
   is $call->{no_timestamp}, 1, 'timestamps are switched off';
 
-  is slurp( $out.'/cert.pem' ),      $bundle->cert,      'the hook received the certificate';
-  is slurp( $out.'/key.pem' ),       $bundle->key,       '... the key';
-  is slurp( $out.'/fullchain.pem' ), $bundle->fullchain, '... the full chain';
-  is slurp( $out.'/ca.pem' ),        q{},                '... and an empty chain file, there being no intermediate';
+  is path($out.'/cert.pem')->slurp_raw,      $bundle->cert,      'the hook received the certificate';
+  is path($out.'/key.pem')->slurp_raw,       $bundle->key,       '... the key';
+  is path($out.'/fullchain.pem')->slurp_raw, $bundle->fullchain, '... the full chain';
+  is path($out.'/ca.pem')->slurp_raw,        q{},                '... and an empty chain file, there being no intermediate';
 
   like $lines[0], qr/^running \Q$fake\E --deploy -d router\.example\.internal --deploy-hook localcopy --home /, 'the log has the command';
   is_deeply [ @lines[ 1 .. $#lines ] ], [ q{acme.sh: 'localcopy' deploy success}, 'acme.sh: Success' ], '... and what acme.sh printed';
@@ -222,8 +224,8 @@ subtest 'a certificate with a chain, and a single name' => sub {
 
   my $out = $tmp.'/out2';
   target( names => ['solo.example.internal'], env => copy_to($out) )->deploy($chained);
-  is slurp( $out.'/ca.pem' ),        $inter->{pem},                   'ca.cer is the chain';
-  is slurp( $out.'/fullchain.pem' ), $leaf->{cert_pem}.$inter->{pem}, 'fullchain.cer is certificate plus chain';
+  is path($out.'/ca.pem')->slurp_raw,        $inter->{pem},                   'ca.cer is the chain';
+  is path($out.'/fullchain.pem')->slurp_raw, $leaf->{cert_pem}.$inter->{pem}, 'fullchain.cer is certificate plus chain';
   is calls()->[0]{conf}, "Le_Domain='solo.example.internal'\nLe_Alt='no'\nLe_Keylength='ec-256'\n",
     'no other names: Le_Alt is "no", as acme.sh writes it';
 };
@@ -242,12 +244,12 @@ subtest 'a home that stays' => sub {
   ok $call->{key_is_pem}, 'the key was there while acme.sh ran';
   is_deeply files_in($dir), [qw( ca.cer fullchain.cer router.example.internal.cer router.example.internal.conf )],
     '... and is removed afterwards; no temporary files either';
-  is slurp( $out.'/key.pem' ), $bundle->key, 'the hook got it all the same';
+  is path($out.'/key.pem')->slurp_raw, $bundle->key, 'the hook got it all the same';
 
   my $second = $issuer->issue( {%spec} );
   $target->deploy($second);
-  is slurp( $out.'/cert.pem' ), $second->cert, 'a second deployment replaces the certificate';
-  is slurp( $dir.'/router.example.internal.conf' ),
+  is path($out.'/cert.pem')->slurp_raw, $second->cert, 'a second deployment replaces the certificate';
+  is path($dir.'/router.example.internal.conf')->slurp_raw,
     "Le_Domain='router.example.internal'\nLe_Alt='router.hq.example.org,192.0.2.9'\nLe_Keylength='ec-256'\nLe_DeployHook='localcopy,'\nLe_DeployHook='localcopy,'\n",
     'the configuration is written once and then left to acme.sh';
   is_deeply leftovers(), [], 'no private temporary directory was needed';
@@ -318,7 +320,7 @@ subtest 'what cannot work' => sub {
   ok !eval { target( class => 'SICK::Target::AcmeshImpatient', hook => 'sickwait' )->deploy($bundle); 1 }, 'a hook that does not finish';
   like $@, qr/^'\Q$fake\E' timed out after 1s/, '... is stopped after the timeout';
   ok -e $marker, '... having been started';
-  my ( $home, $pid ) = split /\n/, slurp($marker);
+  my ( $home, $pid ) = split /\n/, path($marker)->slurp_raw;
   ok !kill( 0, $pid ), '... the program is not running any more';
   ok !-e $home, 'its home with the key is gone';
   is_deeply leftovers(), [], '... like everything else';
@@ -351,9 +353,9 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
     my @lines;
     target( acme_sh => $real, env => copy_to($out), log => sub { push @lines, @_ } )->deploy($issued);
 
-    is slurp( $out.'/cert.pem' ),      $issued->cert,      $key.': the certificate is where the hook was told to put it';
-    is slurp( $out.'/key.pem' ),       $issued->key,       '... the key';
-    is slurp( $out.'/fullchain.pem' ), $issued->fullchain, '... the full chain';
+    is path($out.'/cert.pem')->slurp_raw,      $issued->cert,      $key.': the certificate is where the hook was told to put it';
+    is path($out.'/key.pem')->slurp_raw,       $issued->key,       '... the key';
+    is path($out.'/fullchain.pem')->slurp_raw, $issued->fullchain, '... the full chain';
     is mode_of( $out.'/key.pem' ), '0600', '... the key private';
     ok scalar( grep { /^acme\.sh: .*'localcopy' deploy success/ } @lines ), '... and acme.sh says so in the log';
     ok !scalar( grep { /^acme\.sh: \[/ } @lines ), '... without timestamps';
@@ -367,8 +369,8 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
     my $chained = SICK::Bundle->new( cert => $leaf->{cert_pem}, chain => $inter->{pem}, key => $leaf->{key_pem} );
     my $out     = $tmp.'/real-chain';
     target( acme_sh => $real, names => ['solo.example.internal'], env => copy_to($out) )->deploy($chained);
-    is slurp( $out.'/ca.pem' ),        $inter->{pem},                   'the hook receives the chain as its CA file';
-    is slurp( $out.'/fullchain.pem' ), $leaf->{cert_pem}.$inter->{pem}, '... and certificate plus chain as full chain';
+    is path($out.'/ca.pem')->slurp_raw,        $inter->{pem},                   'the hook receives the chain as its CA file';
+    is path($out.'/fullchain.pem')->slurp_raw, $leaf->{cert_pem}.$inter->{pem}, '... and certificate plus chain as full chain';
   };
 
   subtest 'names that are no host names' => sub {
@@ -376,7 +378,7 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
       my $out = $tmp.'/real-name';
       unlink glob $out.'/*';
       target( acme_sh => $real, names => [ $first, 'other.example.internal' ], env => copy_to($out) )->deploy($bundle);
-      is slurp( $out.'/cert.pem' ), $bundle->cert, 'a certificate whose first name is '.$first;
+      is path($out.'/cert.pem')->slurp_raw, $bundle->cert, 'a certificate whose first name is '.$first;
     }
   };
 
@@ -391,7 +393,7 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
       env_files => { SICK_TEST_TOKEN => $token_file },
       log       => sub { push @lines, @_ },
     )->deploy($bundle);
-    is slurp( $out.'/cert.pem' ), $bundle->cert, 'deployed';
+    is path($out.'/cert.pem')->slurp_raw, $bundle->cert, 'deployed';
     ok scalar( grep { $_ eq 'acme.sh: token is [hidden]' } @lines ), 'the hook saw the value of env_files, and the log hides it';
     unlike join( "\n", @lines ), qr/\Q$token\E/, '... everywhere';
     unlike $lines[0], qr/token/, '... and it never was on the command line';
@@ -413,9 +415,9 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
     my $out  = $tmp.'/real-kept';
     my $dir  = $home.'/router.example.internal';
     target( acme_sh => $real, home => $home, env => copy_to($out) )->deploy($bundle);
-    is slurp( $out.'/cert.pem' ), $bundle->cert, 'deployed';
+    is path($out.'/cert.pem')->slurp_raw, $bundle->cert, 'deployed';
     ok !-e $dir.'/router.example.internal.key', 'the key is gone from the home';
-    my $conf = slurp( $dir.'/router.example.internal.conf' );
+    my $conf = path($dir.'/router.example.internal.conf')->slurp_raw;
     like $conf, qr/^Le_Domain='router\.example\.internal'$/m, 'the configuration SICK started';
     like $conf, qr/^SAVED_DEPLOY_LOCALCOPY_CERTIFICATE='\Q$out\E\/cert\.pem'$/m, '... is where acme.sh remembers what the hook was given';
     is mode_of( $dir.'/router.example.internal.conf' ), '0600', '... readable for nobody else';
@@ -423,7 +425,7 @@ subtest 'the real acme.sh with its localcopy hook' => sub {
     # acme.sh uses what it remembered: no env this time
     my $second = $issuer->issue( {%spec} );
     target( acme_sh => $real, home => $home )->deploy($second);
-    is slurp( $out.'/cert.pem' ), $second->cert, 'a second deployment without env goes to the remembered place';
+    is path($out.'/cert.pem')->slurp_raw, $second->cert, 'a second deployment without env goes to the remembered place';
   };
 
   subtest 'through the runner' => sub {

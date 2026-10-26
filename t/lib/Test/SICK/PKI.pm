@@ -8,9 +8,10 @@ use strict;
 use warnings;
 use Carp qw( croak );
 use Exporter qw( import );
+use Path::Tiny qw( path );
 use SICK::OpenSSL;
 
-our @EXPORT_OK = qw( new_ca new_cert new_csr slurp spew );
+our @EXPORT_OK = qw( new_ca new_cert new_csr );
 
 my $CONFIG = <<'CONFIG';
 [req]
@@ -46,21 +47,6 @@ CONFIG
 
 my $serial = 1000;
 
-sub slurp {
-  my ( $path ) = @_;
-  open my $fh, '<', $path or croak 'cannot read '.$path.': '.$!;
-  local $/;
-  return scalar <$fh>;
-}
-
-sub spew {
-  my ( $path, $content ) = @_;
-  open my $fh, '>', $path or croak 'cannot write '.$path.': '.$!;
-  print {$fh} $content;
-  close $fh or croak 'cannot write '.$path.': '.$!;
-  return $path;
-}
-
 sub _openssl {
   my ( $args, %opt ) = @_;
   my ( $out, $err, $exit ) = SICK::OpenSSL::run(
@@ -75,7 +61,7 @@ sub _openssl {
 sub _config {
   my ( $dir ) = @_;
   my $path = $dir.'/test-openssl.cnf';
-  spew( $path, $CONFIG ) unless -e $path;
+  path($path)->spew_raw($CONFIG) unless -e $path;
   return $path;
 }
 
@@ -116,7 +102,7 @@ sub new_ca {
         '-days', $days, '-extensions', $ext, '-out', $cert ] );
   }
 
-  return { cert => $cert, key => $key, pem => slurp($cert) };
+  return { cert => $cert, key => $key, pem => path($cert)->slurp_raw };
 }
 
 # new_cert( ca => $ca, dir => $dir, name => 'leaf', cn => 'host.example',
@@ -147,8 +133,8 @@ sub new_cert {
     cert     => $cert,
     key      => $key,
     csr      => $csr,
-    cert_pem => slurp($cert),
-    key_pem  => slurp($key)
+    cert_pem => path($cert)->slurp_raw,
+    key_pem  => path($key)->slurp_raw
   };
 }
 
@@ -172,7 +158,7 @@ sub new_csr {
     san => $arg{san},
   );
 
-  return { csr => $csr, key => $key, csr_pem => slurp($csr) };
+  return { csr => $csr, key => $key, csr_pem => path($csr)->slurp_raw };
 }
 
 1;

@@ -10,7 +10,8 @@ use SICK::Bundle;
 use SICK::Issuer;
 use SICK::Issuer::SelfSigned;
 use SICK::OpenSSL;
-use Test::SICK::PKI qw( new_ca new_csr slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_csr );
 
 # SICK::Issuer::SelfSigned: a CA out of nothing but openssl.
 
@@ -103,7 +104,8 @@ subtest 'two processes creating the CA at once make one CA' => sub {
   # openssl that takes its time making the root, so that both processes
   # are inside the creation at the same time unless one waits for the other
   my $real = SICK::OpenSSL::bin();
-  my $slow = spew( $tmp.'/openssl-slow', <<"SLOW" );
+  my $slow = $tmp.'/openssl-slow';
+  path($slow)->spew_raw(<<"SLOW");
 #!$^X
 sleep 1 if grep { \$_ eq '-x509' } \@ARGV;
 exec { '$real' } '$real', \@ARGV;
@@ -121,7 +123,7 @@ SLOW
       close $go_write;
       my $go = <$go_read>;    # both start when the pipe closes
       my $root = eval { SICK::Issuer::SelfSigned->new( dir => $dir )->root_pem };
-      spew( $tmp.'/race-'.$n, defined $root ? $root : 'died: '.$@ );
+      path($tmp.'/race-'.$n)->spew_raw(defined $root ? $root : 'died: '.$@);
       POSIX::_exit(0);
     }
     push @children, $pid;
@@ -130,10 +132,10 @@ SLOW
   close $go_write;
   waitpid $_, 0 for @children;
 
-  my @roots = map { slurp( $tmp.'/race-'.$_ ) } 1, 2;
+  my @roots = map { path($tmp.'/race-'.$_)->slurp_raw } 1, 2;
   like $roots[$_], qr/\A-----BEGIN CERTIFICATE-----/, 'process '.( $_ + 1 ).' got a root' for 0, 1;
   ok $roots[0] eq $roots[1], 'both got the same root';
-  is slurp( $dir.'/ca.crt' ), $roots[0], '... the one in the directory';
+  is path($dir.'/ca.crt')->slurp_raw, $roots[0], '... the one in the directory';
   ok( SICK::Bundle->from_files( cert => $dir.'/ca.crt', key => $dir.'/ca.key' )->key_matches,
     '... whose key is the one beside it' );
 };
@@ -141,13 +143,13 @@ SLOW
 subtest 'half a CA is refused, not replaced' => sub {
   my $good = SICK::Issuer::SelfSigned->new( dir => $tmp.'/good-ca' );
   $good->root_pem;
-  my %pem = map { $_ => slurp( $tmp.'/good-ca/ca.'.$_ ) } qw( crt key );
+  my %pem = map { $_ => path($tmp.'/good-ca/ca.'.$_)->slurp_raw } qw( crt key );
 
   for my $case ( [ crt => 'key' ], [ key => 'crt' ] ) {
     my ( $present, $missing ) = @$case;
     my $dir = $tmp.'/lone-'.$present;
     mkdir $dir, 0700 or die 'mkdir: '.$!;
-    spew( $dir.'/ca.'.$present, $pem{$present} );
+    path($dir.'/ca.'.$present)->spew_raw($pem{$present});
     chmod 0600, $dir.'/ca.'.$present or die 'chmod: '.$!;
     my $half = SICK::Issuer::SelfSigned->new( dir => $dir );
     for my $method (qw( root_pem issue )) {
@@ -157,7 +159,7 @@ subtest 'half a CA is refused, not replaced' => sub {
         '... naming what is missing';
     }
     ok !-e $dir.'/ca.'.$missing, '... no new ca.'.$missing.' appeared';
-    ok slurp( $dir.'/ca.'.$present ) eq $pem{$present}, '... and ca.'.$present.' is untouched';
+    ok path($dir.'/ca.'.$present)->slurp_raw eq $pem{$present}, '... and ca.'.$present.' is untouched';
     unlike $@, qr/PRIVATE KEY|-----BEGIN/, '... nothing of the files in the message';
   }
 
@@ -165,8 +167,8 @@ subtest 'half a CA is refused, not replaced' => sub {
   $other->root_pem;
   my $dir = $tmp.'/mismatch';
   mkdir $dir, 0700 or die 'mkdir: '.$!;
-  spew( $dir.'/ca.crt', $pem{crt} );
-  spew( $dir.'/ca.key', slurp( $tmp.'/other-good-ca/ca.key' ) );
+  path($dir.'/ca.crt')->spew_raw($pem{crt});
+  path($dir.'/ca.key')->spew_raw(path($tmp.'/other-good-ca/ca.key')->slurp_raw);
   chmod 0600, $dir.'/ca.key' or die 'chmod: '.$!;
   my $mixed = SICK::Issuer::SelfSigned->new( dir => $dir );
   for my $method (qw( root_pem issue )) {
@@ -175,12 +177,12 @@ subtest 'half a CA is refused, not replaced' => sub {
     like $@, qr/^the CA in '\Q$dir\E' is broken: '\Q$dir\E\/ca\.key' is not the key of '\Q$dir\E\/ca\.crt'/,
       '... saying so';
   }
-  is slurp( $dir.'/ca.crt' ), $pem{crt}, '... and nothing was replaced';
+  is path($dir.'/ca.crt')->slurp_raw, $pem{crt}, '... and nothing was replaced';
 
   my $garbage = $tmp.'/garbage';
   mkdir $garbage, 0700 or die 'mkdir: '.$!;
-  spew( $garbage.'/ca.crt', $pem{crt} );
-  spew( $garbage.'/ca.key', "not a key\n" );
+  path($garbage.'/ca.crt')->spew_raw($pem{crt});
+  path($garbage.'/ca.key')->spew_raw("not a key\n");
   my $ok = eval { SICK::Issuer::SelfSigned->new( dir => $garbage )->root_pem; 1 };
   ok !$ok, 'a ca.key that is no key: dies';
   like $@, qr/^cannot use the CA in '\Q$garbage\E': key is not a PEM private key/, '... saying why';
@@ -283,7 +285,7 @@ subtest 'keys on disk: private while they exist, gone afterwards' => sub {
   my $real    = SICK::OpenSSL::bin();
   my $log     = $tmp.'/openssl-calls.log';
   my $wrapper = $tmp.'/openssl-wrapper';
-  spew( $wrapper, <<"WRAPPER" );
+  path($wrapper)->spew_raw(<<"WRAPPER");
 #!$^X
 use strict;
 use warnings;
@@ -310,7 +312,7 @@ WRAPPER
   my $bundle = $issuer->issue( { names => ['tmp.example.internal'], lifetime => 86400, key => 'ec256' } );
   ok $bundle->key, 'issue works through the wrapper';
 
-  my @seen = grep { m{/key\.pem } } split /\n/, slurp($log);
+  my @seen = grep { m{/key\.pem } } split /\n/, path($log)->slurp_raw;
   ok scalar @seen, 'the key was a file while openssl used it';
   for my $line (@seen) {
     my ( $command, $file, $file_mode, $dir_mode ) = split / /, $line;
@@ -325,7 +327,7 @@ WRAPPER
   my $ok = eval { $issuer->issue( { names => ['fail.example.internal'], lifetime => 86400, key => 'ec256' } ); 1 };
   ok !$ok, 'issue dies when openssl fails half way';
   like $@, qr/^openssl ca failed \(exit 9\): simulated failure/, '... with the message of openssl';
-  my ($key_line) = grep { m{/key\.pem } } split /\n/, slurp($log);
+  my ($key_line) = grep { m{/key\.pem } } split /\n/, path($log)->slurp_raw;
   ok $key_line, 'a key had been generated by then';
   ( my $dir = ( split / /, $key_line )[1] ) =~ s{/[^/]+\z}{};
   ok !-e $dir, '... and its directory is gone all the same';
@@ -340,7 +342,9 @@ subtest 'additional roots' => sub {
   is $with->additional_roots_pem, $next->{pem}, 'a selfsigned CA takes additional_roots as well';
   is $with->root_pem, $issuer->root_pem, '... and its root stays its own';
 
-  my $own = spew( $tmp.'/own-root.crt', $issuer->root_pem );
+  my $own = $tmp.'/own-root.crt';
+
+  path($own)->spew_raw($issuer->root_pem);
   my $ok  = eval { SICK::Issuer::SelfSigned->new( dir => $ca_dir, additional_roots => [$own] )->additional_roots_pem; 1 };
   ok !$ok, 'its own root as an additional root dies';
   like $@, qr/^ca\.additional_roots '\Q$own\E' is the root of this CA \(CN=SICK self-signed CA\)/, '... saying so';

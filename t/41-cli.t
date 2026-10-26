@@ -13,7 +13,8 @@ use SICK::Bundle;
 use SICK::CLI;
 use SICK::Command;
 use SICK::OpenSSL;
-use Test::SICK::PKI qw( new_ca slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca );
 
 # The sick command line: in this process through SICK::CLI, where output and
 # exit code are easy to look at, and as the real program bin/sick, where the
@@ -70,11 +71,10 @@ sub list {
   my ( $devices, %ca ) = @_;
   my $path = $tmp.'/list'.++$number.'.yml';
   my %section = ( type => 'selfsigned', dir => $tmp.'/ca', %ca );
-  spew( $path,
-    "ca:\n".join( q{}, map { '  '.$_.': '.$section{$_}."\n" } sort keys %section )
+  path($path)->spew_raw("ca:\n".join( q{}, map { '  '.$_.': '.$section{$_}."\n" } sort keys %section )
       ."defaults:\n  lifetime: 40d\n  renew_before: 10d\n  key: ec256\n"
       ."state: ".state_of($path)."\n"
-      ."devices:\n".$devices );
+      ."devices:\n".$devices);
   return $path;
 }
 
@@ -156,7 +156,9 @@ subtest 'the device list' => sub {
   like $err, qr/^sick: cannot read config file '\Q$missing\E': \S.*\n\z/, '... with path and reason, on one line';
   unlike $err, qr/ at \S+ line \d+/, '... and without the place in the code';
 
-  my $broken = spew( $tmp.'/broken.yml', "devices:\n  web:\n    names: [web.example.internal]\n" );
+  my $broken = $tmp.'/broken.yml';
+
+  path($broken)->spew_raw("devices:\n  web:\n    names: [web.example.internal]\n");
   ( $code, $out, $err ) = cli( '-c', $broken, 'run' );
   is $code, 2, 'a list that is wrong: exit code 2';
   is $err, 'sick: '.$broken.': devices.web: missing \'type\''."\n", '... with the place in the list';
@@ -166,7 +168,9 @@ subtest 'the device list' => sub {
   is $code, 2, 'a ca section that makes no issuer: exit code 2';
   is $err, 'sick: '.$no_issuer.': ca.type: unknown type \'letsencrypt\' (step-ca or selfsigned)'."\n", '... saying why';
 
-  my $step = spew( $tmp.'/step.yml', "ca:\n  url: https://ca.example.internal:9000\n".files_device('web') =~ s/\A/devices:\n/r );
+  my $step = $tmp.'/step.yml';
+
+  path($step)->spew_raw("ca:\n  url: https://ca.example.internal:9000\n".files_device('web') =~ s/\A/devices:\n/r);
   ( $code, $out, $err ) = cli( 'check', '-c', $step );
   is $code, 2, 'a step-ca section without its keys: exit code 2';
   is $err, 'sick: '.$step.': ca: missing \'root\''."\n", '... naming the first one that is missing';
@@ -313,7 +317,7 @@ subtest 'one run at a time' => sub {
   my ( $code, $out, $err ) = cli( 'run', '--config', $path );
   is $code, 0, 'once the other run is gone: exit code 0';
   like $out, qr/^locked  renewed  missing/m, '... renewed';
-  is slurp($lock), $$."\n", 'the lock file names the last run';
+  is path($lock)->slurp_raw, $$."\n", 'the lock file names the last run';
   ok lock_is_free($state), 'the lock is released after the run';
   ok -s $state.'/devices/locked.json', 'the record is written';
 };
@@ -335,9 +339,10 @@ subtest 'the lock goes with a run that dies' => sub {
 };
 
 subtest 'a state directory that cannot be used' => sub {
-  my $file = spew( $tmp.'/plain-file', "not a directory\n" );
+  my $file = $tmp.'/plain-file';
+  path($file)->spew_raw("not a directory\n");
   my $path = list( files_device('homeless') );
-  spew( $path, slurp($path) =~ s/^state: .*$/state: $file\/state/mr );
+  path($path)->spew_raw(path($path)->slurp_raw =~ s/^state: .*$/state: $file\/state/mr);
   my ( $code, $out, $err ) = cli( 'run', '--config', $path );
   is $code, 1, 'run: exit code 1';
   like $err, qr/^sick: cannot take the lock '\Q$file\E\/state\/sick\.lock': \S.*\n\z/, '... with path and reason';
@@ -359,7 +364,8 @@ subtest 'a record that cannot be written' => sub {
 
 subtest 'a device that keeps failing is deferred' => sub {
   # a directory below a plain file: every deployment fails before it writes
-  my $file = spew( $tmp.'/flaky-file', "not a directory\n" );
+  my $file = $tmp.'/flaky-file';
+  path($file)->spew_raw("not a directory\n");
   my $path = list( "  flaky:\n    type: files\n    names: [flaky.example.internal]\n    dir: $file/certs\n" );
   my ( $code, $out, $err ) = cli( 'run', '--config', $path );
   is $code, 1, 'first run: exit code 1';
@@ -372,11 +378,11 @@ subtest 'a device that keeps failing is deferred' => sub {
 
   ( $code, $out, $err ) = cli( 'run', '--force', '--config', $path );
   like $out, qr/^flaky   failed  missing  deploy failed: /m, '--force tries again';
-  like slurp( state_of($path).'/devices/flaky.json' ), qr/"consecutive_failures"\s*:\s*2/, '... and that counts';
-  unlike slurp( state_of($path).'/devices/flaky.json' ), qr/PRIVATE KEY|key\.pem/, 'no key in the record';
+  like path(state_of($path).'/devices/flaky.json')->slurp_raw, qr/"consecutive_failures"\s*:\s*2/, '... and that counts';
+  unlike path(state_of($path).'/devices/flaky.json')->slurp_raw, qr/PRIVATE KEY|key\.pem/, 'no key in the record';
 
   my $broken = state_of($path).'/devices/flaky.json';
-  spew( $broken, "{oops\n" );
+  path($broken)->spew_raw("{oops\n");
   ( $code, $out, $err ) = cli( 'run', '--config', $path );
   like $err, qr/^sick: flaky: cannot read state record '\Q$broken\E': not valid JSON\n/m, 'a broken record is reported';
   like $out, qr/^flaky   failed  missing  deploy failed: /m, '... and the device worked on as if it had none';
@@ -390,15 +396,17 @@ subtest 'trust' => sub {
   is $out, 'wrote root_ca.pem, root_ca.crt, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n", '... saying what was written';
   is $err, q{}, '... nothing on standard error';
   ok -s $dir.'/'.$_, $_.' is there' for qw( root_ca.pem root_ca.crt trust-linux.sh trust-macos.sh trust-windows.ps1 trust-nss.sh root_ca.mobileconfig index.html );
-  is slurp( $dir.'/root_ca.pem' ), slurp( $tmp.'/ca/ca.crt' ), 'the root certificate is the one of the CA';
-  like slurp( $dir.'/index.html' ), qr/<h1>Trust Example &lt;Internal&gt; CA<\/h1>/, 'the page uses the name of the ca section';
+  is path($dir.'/root_ca.pem')->slurp_raw, path($tmp.'/ca/ca.crt')->slurp_raw, 'the root certificate is the one of the CA';
+  like path($dir.'/index.html')->slurp_raw, qr/<h1>Trust Example &lt;Internal&gt; CA<\/h1>/, 'the page uses the name of the ca section';
 
   my $unnamed = list( files_device('web') );
   ( $code, $out, $err ) = cli( 'trust', $tmp.'/trust/unnamed', '--config', $unnamed );
-  like slurp( $tmp.'/trust/unnamed/index.html' ), qr/<h1>Trust SICK self-signed CA<\/h1>/,
+  like path($tmp.'/trust/unnamed/index.html')->slurp_raw, qr/<h1>Trust SICK self-signed CA<\/h1>/,
     'without a name it is the common name of the root certificate';
 
-  my $blocked = spew( $tmp.'/a-file', "in the way\n" );
+  my $blocked = $tmp.'/a-file';
+
+  path($blocked)->spew_raw("in the way\n");
   ( $code, $out, $err ) = cli( 'trust', $blocked.'/site', '--config', $path );
   is $code, 1, 'a directory that cannot be made: exit code 1';
   like $err, qr/^sick: cannot create directory '\Q$blocked\E\/site': \S.*\n\z/, '... with path and reason';
@@ -413,10 +421,11 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   my $inter = new_ca( dir => $pki, name => 'inter', cn => 'Example Internal Intermediate CA', issuer => $root );
   my $section = sub {
     my ( %ca ) = @_;
-    return spew( $tmp.'/list'.++$number.'.yml',
-      "ca:\n  url: https://ca.example.internal:9000\n  root: $root->{cert}\n"
+    my $list = $tmp.'/list'.++$number.'.yml';
+    path($list)->spew_raw("ca:\n  url: https://ca.example.internal:9000\n  root: $root->{cert}\n"
         .join( q{}, map { '  '.$_.': '.$ca{$_}."\n" } sort keys %ca )
-        ."  provisioner: sick\n  password_file: $tmp/no-such-password\ndevices:\n".files_device('web') );
+        ."  provisioner: sick\n  password_file: $tmp/no-such-password\ndevices:\n".files_device('web'));
+    return $list;
   };
 
   my $dir = $tmp.'/trust/chained';
@@ -425,9 +434,9 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   is $out, 'wrote root_ca.pem, root_ca.crt, intermediate_ca.pem, intermediate_ca.crt, ca_bundle.pem, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n",
     '... saying what was written: the intermediate and the bundle as well';
   is $err, q{}, '... nothing on standard error';
-  is slurp( $dir.'/intermediate_ca.pem' ), $inter->{pem}, 'the intermediate is the one of the ca section';
-  is slurp( $dir.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}, 'the bundle is root and intermediate';
-  like slurp( $dir.'/index.html' ), qr/<a href="intermediate_ca\.crt"/, 'the page offers it';
+  is path($dir.'/intermediate_ca.pem')->slurp_raw, $inter->{pem}, 'the intermediate is the one of the ca section';
+  is path($dir.'/ca_bundle.pem')->slurp_raw, $root->{pem}.$inter->{pem}, 'the bundle is root and intermediate';
+  like path($dir.'/index.html')->slurp_raw, qr/<a href="intermediate_ca\.crt"/, 'the page offers it';
 
   ( $code, $out, $err ) = cli( 'trust', $dir, '--config', $section->() );
   is $code, 0, 'the same CA without intermediates in its section: exit code 0';
@@ -447,8 +456,8 @@ subtest 'trust for a CA that signs through an intermediate' => sub {
   is $code, 0, 'a section with additional_roots: exit code 0';
   is $out, 'wrote root_ca.pem, root_ca.crt, root_ca_2.pem, root_ca_2.crt, ca_bundle.pem, trust-linux.sh, trust-macos.sh, trust-windows.ps1, trust-nss.sh, root_ca.mobileconfig, index.html to '.$dir."\n",
     '... the additional root and the bundle as well';
-  is slurp( $dir.'/root_ca.pem' ),   $root->{pem}, 'root_ca.pem stays the root of the section';
-  is slurp( $dir.'/root_ca_2.pem' ), $next->{pem}, 'root_ca_2.pem is the additional root';
+  is path($dir.'/root_ca.pem')->slurp_raw,   $root->{pem}, 'root_ca.pem stays the root of the section';
+  is path($dir.'/root_ca_2.pem')->slurp_raw, $next->{pem}, 'root_ca_2.pem is the additional root';
 
   ( $code, $out, $err ) = cli( 'trust', $tmp.'/trust/selfroot', '--config', $section->( additional_roots => '[ '.$inter->{cert}.' ]' ) );
   is $code, 1, 'an additional root that is none: exit code 1';
@@ -494,8 +503,8 @@ subtest 'a run that is terminated takes its key with it' => sub {
   # An acmesh device whose "acme.sh" never finishes: while it waits, the
   # new key lies in the private home. Then sick is told to stop.
   my $fake = $tmp.'/acme.sh';
-  ( my $source = slurp('t/bin/fake-acme-sh') ) =~ s/\A#![^\n]*\n/#!$^X\n/;
-  spew( $fake, $source );
+  ( my $source = path('t/bin/fake-acme-sh')->slurp_raw ) =~ s/\A#![^\n]*\n/#!$^X\n/;
+  path($fake)->spew_raw($source);
   chmod 0755, $fake or die 'chmod: '.$!;
   my $marker = $tmp.'/waiting';
 
@@ -512,7 +521,7 @@ YAML
   # nothing instead of being unreachable
   my $lib = $tmp.'/lib/SICK/Target';
   File::Path::make_path($lib);
-  spew( $lib.'/AcmeshMute.pm', <<'PERL' );
+  path($lib.'/AcmeshMute.pm')->spew_raw(<<'PERL');
 package SICK::Target::AcmeshMute;
 use strict;
 use warnings;
@@ -520,7 +529,7 @@ use parent 'SICK::Target::Acmesh';
 sub presented_cert { return undef }
 1;
 PERL
-  spew( $path, slurp($path) =~ s/type: acmesh/type: acmesh-mute/r );
+  path($path)->spew_raw(path($path)->slurp_raw =~ s/type: acmesh/type: acmesh-mute/r);
 
   my $pid = fork;
   die 'fork: '.$! unless defined $pid;
@@ -537,10 +546,10 @@ PERL
   unless ( -s $marker ) {
     kill 'KILL', $pid;
     waitpid $pid, 0;
-    plan skip_all => 'the run did not get as far as the hook: '.slurp( $tmp.'/terminated.err' );
+    plan skip_all => 'the run did not get as far as the hook: '.path($tmp.'/terminated.err')->slurp_raw;
   }
   select undef, undef, undef, 0.2;    # the fake writes home and pid in one go, but let it finish
-  my ( $home, $hook_pid ) = split /\n/, slurp($marker);
+  my ( $home, $hook_pid ) = split /\n/, path($marker)->slurp_raw;
   my $key = $home.'/waiting.example.internal/waiting.example.internal.key';
 
   like $home, qr{^\Q$scratch\E/sick-}, 'while the hook runs, acme.sh has a private home';

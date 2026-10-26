@@ -14,8 +14,8 @@ use SICK::Issuer::SelfSigned;
 use SICK::OpenSSL;
 use SICK::Target;
 use SICK::Target::Files;
-use Path::Tiny ();
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # SICK::Target::Files with certificates of SICK::Issuer::SelfSigned: files
 # on disk, their modes, the generations they are published as, the reload
@@ -54,7 +54,7 @@ sub counting_reload {
     .' if ( -e $ARGV[1] ) { unlink $ARGV[1] if $ARGV[2]; print STDERR qq{service is down\n}; exit 3 } exit 0';
   return [ $^X, '-e', $code, $count, $fail, $once ? 1 : 0 ];
 }
-sub runs_in { -e $_[0] ? scalar( () = slurp( $_[0] ) =~ /^run$/mg ) : 0 }
+sub runs_in { -e $_[0] ? scalar( () = path($_[0])->slurp_raw =~ /^run$/mg ) : 0 }
 
 # a files device with a fresh directory, and its target
 sub target {
@@ -129,10 +129,10 @@ subtest 'deploy publishes one generation' => sub {
   is_deeply files_in( $dir.'/.sick/'.$generation ), [@FOUR], '... with the four files in it';
   is previous_of($dir), undef, 'no previous generation after the first deploy';
 
-  is slurp( $dir.'/cert.pem' ),      $bundle->cert,      'cert.pem';
-  is slurp( $dir.'/fullchain.pem' ), $bundle->fullchain, 'fullchain.pem';
-  is slurp( $dir.'/key.pem' ),       $bundle->key,       'key.pem';
-  is slurp( $dir.'/chain.pem' ),     q{},                'chain.pem is empty without a chain';
+  is path($dir.'/cert.pem')->slurp_raw,      $bundle->cert,      'cert.pem';
+  is path($dir.'/fullchain.pem')->slurp_raw, $bundle->fullchain, 'fullchain.pem';
+  is path($dir.'/key.pem')->slurp_raw,       $bundle->key,       'key.pem';
+  is path($dir.'/chain.pem')->slurp_raw,     q{},                'chain.pem is empty without a chain';
 
   is mode_of( $dir.'/key.pem' ), '0600', 'key.pem has mode 0600 (the file the link points to)';
   is mode_of( $dir.'/'.$_ ), '0644', $_.' has mode 0644' for qw( cert.pem chain.pem fullchain.pem );
@@ -167,15 +167,15 @@ subtest 'a chain' => sub {
 
   my $target = target();
   $target->deploy($chained);
-  is slurp( $target->dir.'/chain.pem' ), $inter->{pem}, 'chain.pem';
-  is slurp( $target->dir.'/fullchain.pem' ), $leaf->{cert_pem}.$inter->{pem}, 'fullchain.pem is certificate plus chain';
+  is path($target->dir.'/chain.pem')->slurp_raw, $inter->{pem}, 'chain.pem';
+  is path($target->dir.'/fullchain.pem')->slurp_raw, $leaf->{cert_pem}.$inter->{pem}, 'fullchain.pem is certificate plus chain';
 
   my $presented = $target->presented_cert;
   is $presented->chain, $inter->{pem}, 'presented_cert reads the chain back';
   ok $presented->is_issued_by( $root->{pem} ), '... so it verifies against the root';
 
   $target->deploy($bundle);
-  is slurp( $target->dir.'/chain.pem' ), q{}, 'a later certificate without a chain empties chain.pem';
+  is path($target->dir.'/chain.pem')->slurp_raw, q{}, 'a later certificate without a chain empties chain.pem';
   is $target->presented_cert->chain, undef, '... and presented_cert has none';
 };
 
@@ -189,8 +189,8 @@ subtest 'deploy replaces files, it does not rewrite them' => sub {
   my $second = $issuer->issue( {%spec} );
   $target->deploy($second);
 
-  is slurp( $dir.'/cert.pem' ), $second->cert, 'the new certificate is in place';
-  is slurp( $dir.'/key.pem' ),  $second->key,  'the new key is in place';
+  is path($dir.'/cert.pem')->slurp_raw, $second->cert, 'the new certificate is in place';
+  is path($dir.'/key.pem')->slurp_raw,  $second->key,  'the new key is in place';
   isnt( ( stat $dir.'/'.$_ )[1], $inode{$_}, $_.' is a new file (written aside, then renamed)' ) for qw( cert.pem key.pem );
   is do { local $/; <$reader> }, $bundle->cert, 'someone who had the old file open still reads all of the old one';
   is_deeply files_in($dir), [ '.sick', @FOUR ], 'no temporary files left';
@@ -204,8 +204,8 @@ subtest 'a bundle without a key' => sub {
   $target->deploy($bundle);
   my $no_key = SICK::Bundle->new( cert => $issuer->issue( {%spec} )->cert );
   $target->deploy($no_key);
-  is slurp( $dir.'/cert.pem' ), $no_key->cert, 'the certificate is replaced';
-  is slurp( $dir.'/key.pem' ),  $bundle->key,  'the key that was there stays';
+  is path($dir.'/cert.pem')->slurp_raw, $no_key->cert, 'the certificate is replaced';
+  is path($dir.'/key.pem')->slurp_raw,  $bundle->key,  'the key that was there stays';
   ok -e $dir.'/.sick/'.current_of($dir).'/key.pem', '... carried over into the new generation';
   is mode_of( $dir.'/key.pem' ), '0600', '... with its mode';
 
@@ -215,7 +215,7 @@ subtest 'a bundle without a key' => sub {
   ok !-e $fresh->dir.'/.sick/'.current_of( $fresh->dir ).'/key.pem', '... not in the generation either';
   $fresh->deploy($bundle);
   is readlink( $fresh->dir.'/key.pem' ), '.sick/current/key.pem', 'a later bundle with a key gets its link';
-  is slurp( $fresh->dir.'/key.pem' ), $bundle->key, '... to its key';
+  is path($fresh->dir.'/key.pem')->slurp_raw, $bundle->key, '... to its key';
 };
 
 subtest 'reload runs after the files are written' => sub {
@@ -226,19 +226,19 @@ subtest 'reload runs after the files are written' => sub {
 
   $target = target( dir => $dir, reload => [ $^X, '-e', $copy, $dir.'/fullchain.pem', $seen ] );
   $target->deploy($bundle);
-  is slurp($seen), $bundle->fullchain, 'a reload given as a list saw the new files';
+  is path($seen)->slurp_raw, $bundle->fullchain, 'a reload given as a list saw the new files';
 
   unlink $seen;
   my $argument = q{it's "one" $argument; with * and spaces};
   my $echo = target( reload => [ $^X, '-e', 'open my $out, q{>}, shift; print {$out} shift', $seen, $argument ] );
   $echo->deploy($bundle);
-  is slurp($seen), $argument, 'the elements of a list reach the program untouched by any shell';
+  is path($seen)->slurp_raw, $argument, 'the elements of a list reach the program untouched by any shell';
 
   unlink $seen;
   my $shell = target();
   $shell = target( dir => $shell->dir, reload => 'cat "'.$shell->dir.'/cert.pem" > "'.$seen.'" && true' );
   $shell->deploy($bundle);
-  is slurp($seen), $bundle->cert, 'a reload given as one string is a shell command';
+  is path($seen)->slurp_raw, $bundle->cert, 'a reload given as one string is a shell command';
 
   my $none = target( reload => q{} );
   ok eval { $none->deploy($bundle); 1 }, 'an empty reload is no reload';
@@ -250,7 +250,7 @@ subtest 'a failing reload on the first deploy: nothing to go back to' => sub {
   ok !$ok, 'deploy dies';
   like $@, qr/^reload failed \(exit 3\): service is down; there is no previous certificate to restore, the new one stays in place/,
     '... with the exit code, the message of the command and that nothing was restored';
-  is slurp( $target->dir.'/cert.pem' ), $bundle->cert, 'the files are in place all the same';
+  is path($target->dir.'/cert.pem')->slurp_raw, $bundle->cert, 'the files are in place all the same';
   is scalar @{ generations( $target->dir ) }, 1, '... as the one generation';
 
   $target = target( reload => 'exit 4' );
@@ -276,7 +276,7 @@ subtest 'a failing reload goes back to the previous generation' => sub {
   is runs_in($runs), 1, 'the first deploy ran the reload once';
 
   my $second = $issuer->issue( {%spec} );
-  spew( $fail, q{} );
+  path($fail)->spew_raw(q{});
   @lines = ();
   my $ok = eval { $target->deploy($second); 1 };
   my $error = $@;
@@ -286,8 +286,8 @@ subtest 'a failing reload goes back to the previous generation' => sub {
   is runs_in($runs), 3, 'the reload ran twice: for the new certificate, then for the old one';
   is current_of($dir), $old, '.sick/current points to the old generation again';
   is_deeply generations($dir), [$old], 'the new generation is gone';
-  is slurp( $dir.'/cert.pem' ), $bundle->cert, 'cert.pem is the old certificate';
-  is slurp( $dir.'/key.pem' ),  $bundle->key,  '... key.pem the old key';
+  is path($dir.'/cert.pem')->slurp_raw, $bundle->cert, 'cert.pem is the old certificate';
+  is path($dir.'/key.pem')->slurp_raw,  $bundle->key,  '... key.pem the old key';
   is $target->presented_cert->fingerprint_sha256, $bundle->fingerprint_sha256, 'presented_cert sees the old one';
   like join( "\n", @lines ), qr/^reload failed, going back to generation \Q$old\E$/m, 'the switch back is logged';
   unlike join( "\n", @lines ).$error, qr/PRIVATE KEY/, 'no key material in log or message';
@@ -296,14 +296,14 @@ subtest 'a failing reload goes back to the previous generation' => sub {
   $target->deploy($second);
   my $new = current_of($dir);
   is previous_of($dir), $old, 'after a good deploy the old generation is the previous one';
-  spew( $fail, q{} );
+  path($fail)->spew_raw(q{});
   ok !eval { $target->deploy( $issuer->issue( {%spec} ) ); 1 }, 'another failing reload';
   is current_of($dir), $new, '... goes back to the generation before it';
   is previous_of($dir), $old, '... and previous is what it was';
   is_deeply [ sort @{ generations($dir) } ], [ sort $old, $new ], '... the two generations stay';
 
   # a reload that fails for the old certificate as well
-  spew( $fail, q{} );
+  path($fail)->spew_raw(q{});
   my $always = target( dir => $dir, reload => counting_reload( $runs, $fail, 0 ) );
   my $before = runs_in($runs);
   $ok = eval { $always->deploy( $issuer->issue( {%spec} ) ); 1 };
@@ -332,8 +332,8 @@ subtest 'a directory that cannot be written' => sub {
   ok !$ok, 'deploy dies';
   like $error, qr/^cannot create directory '\Q$dir\E\/\.sick\/[^']+': \S/, '... with the directory and the reason';
   unlike $error, qr/PRIVATE KEY/, '... and without the key';
-  is slurp( $dir.'/cert.pem' ), $bundle->cert, 'the old certificate is untouched';
-  is slurp( $dir.'/key.pem' ),  $bundle->key,  '... and so is the old key';
+  is path($dir.'/cert.pem')->slurp_raw, $bundle->cert, 'the old certificate is untouched';
+  is path($dir.'/key.pem')->slurp_raw,  $bundle->key,  '... and so is the old key';
   is current_of($dir), $old, '... and current';
   is_deeply files_in($dir), [ '.sick', @FOUR ], 'no temporary files left';
   is_deeply files_in( $dir.'/.sick' ), [ sort 'current', $old ], '... in .sick either';
@@ -352,10 +352,10 @@ subtest 'plain files of an earlier SICK become the previous generation' => sub {
   my $target = target();
   my $dir    = $target->dir;
   Path::Tiny::path($dir)->mkdir;
-  spew( $dir.'/cert.pem',      $bundle->cert );
-  spew( $dir.'/chain.pem',     q{} );
-  spew( $dir.'/fullchain.pem', $bundle->fullchain );
-  spew( $dir.'/key.pem',       $bundle->key );
+  path($dir.'/cert.pem')->spew_raw($bundle->cert);
+  path($dir.'/chain.pem')->spew_raw(q{});
+  path($dir.'/fullchain.pem')->spew_raw($bundle->fullchain);
+  path($dir.'/key.pem')->spew_raw($bundle->key);
   chmod 0600, $dir.'/key.pem';
   chmod 0644, map { $dir.'/'.$_ } qw( cert.pem chain.pem fullchain.pem );
 
@@ -367,11 +367,11 @@ subtest 'plain files of an earlier SICK become the previous generation' => sub {
   $target->deploy($second);
 
   is readlink( $dir.'/'.$_ ), '.sick/current/'.$_, $_.' is now a link' for @FOUR;
-  is slurp( $dir.'/cert.pem' ), $second->cert, 'to the new certificate';
-  is slurp( $dir.'/key.pem' ),  $second->key,  '... and its key';
+  is path($dir.'/cert.pem')->slurp_raw, $second->cert, 'to the new certificate';
+  is path($dir.'/key.pem')->slurp_raw,  $second->key,  '... and its key';
   my $migrated = previous_of($dir);
   like $migrated, qr/\A[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8}\z/, 'the plain files are the previous generation';
-  is slurp( $dir.'/.sick/'.$migrated.'/key.pem' ), $bundle->key, '... with the old key';
+  is path($dir.'/.sick/'.$migrated.'/key.pem')->slurp_raw, $bundle->key, '... with the old key';
   is mode_of( $dir.'/.sick/'.$migrated.'/key.pem' ), '0600', '... in its mode';
   like $lines[0], qr/^moved cert\.pem, chain\.pem, fullchain\.pem, key\.pem of an earlier SICK into generation \Q$migrated\E, \Q$dir\E now links to \.sick\/current$/,
     'the move is logged';
@@ -380,14 +380,14 @@ subtest 'plain files of an earlier SICK become the previous generation' => sub {
   my $again = target();
   my $odir  = $again->dir;
   Path::Tiny::path($odir)->mkdir;
-  spew( $odir.'/'.$_, slurp( $dir.'/.sick/'.$migrated.'/'.$_ ) ) for @FOUR;
+  path($odir.'/'.$_)->spew_raw(path($dir.'/.sick/'.$migrated.'/'.$_)->slurp_raw) for @FOUR;
   chmod 0600, $odir.'/key.pem';
   $again = target( dir => $odir, reload => counting_reload( $runs, $fail, 1 ) );
-  spew( $fail, q{} );
+  path($fail)->spew_raw(q{});
   ok !eval { $again->deploy($second); 1 }, 'a failing reload right after the move';
   like $@, qr/; restored the previous certificate \(generation /, '... restores';
-  is slurp( $odir.'/cert.pem' ), $bundle->cert, '... the certificate of the plain files';
-  is slurp( $odir.'/key.pem' ),  $bundle->key,  '... and their key';
+  is path($odir.'/cert.pem')->slurp_raw, $bundle->cert, '... the certificate of the plain files';
+  is path($odir.'/key.pem')->slurp_raw,  $bundle->key,  '... and their key';
 };
 
 subtest 'at most two generations remain' => sub {
@@ -437,9 +437,9 @@ subtest 'a reader never sees a key that is not its certificate' => sub {
   }
 
   $target->deploy( $bundles[ $_ % 3 ] ) for 1 .. 30;
-  spew( $stop, q{} );
+  path($stop)->spew_raw(q{});
   waitpid $pid, 0;
-  my ( $reads, $mixed, $gone ) = split / /, slurp($report);
+  my ( $reads, $mixed, $gone ) = split / /, path($report)->slurp_raw;
   cmp_ok $reads, '>', 30, 'the reader read while 30 deploys happened ('.$reads.' times)';
   is $mixed, 0, 'never a key beside a certificate it does not belong to';
   note $gone.' reads found their generation removed and tried again';
@@ -456,7 +456,7 @@ subtest 'presented_cert without a host is cert.pem' => sub {
   is $presented->fingerprint_sha256, $bundle->fingerprint_sha256, 'after deploy it is the deployed certificate';
   is $presented->key, undef, '... without the key';
 
-  spew( $target->dir.'/cert.pem', "not a certificate\n" );
+  path($target->dir.'/cert.pem')->spew_raw("not a certificate\n");
   is $target->presented_cert, undef, 'a cert.pem without a certificate is no certificate';
 
 SKIP: {

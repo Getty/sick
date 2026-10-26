@@ -3,14 +3,8 @@
 # reads nothing above its own directory. They must not drift apart.
 use strict;
 use warnings;
+use Path::Tiny qw( path );
 use Test::More;
-
-sub slurp {
-  my ($file) = @_;
-  open my $fh, '<:raw', $file or die "$file: $!";
-  local $/;
-  return scalar <$fh>;
-}
 
 for my $pair (
   [ 'docker/init-ca.sh',        'k8s/test/init-ca.sh' ],
@@ -19,7 +13,7 @@ for my $pair (
   my ( $original, $copy ) = @$pair;
 SKIP: {
     skip "$original is not in this tree", 1 unless -f $original && -f $copy;
-    is slurp($copy), slurp($original), "$copy is $original";
+    is path($copy)->slurp_raw, path($original)->slurp_raw, "$copy is $original";
   }
 }
 

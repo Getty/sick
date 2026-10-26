@@ -1,7 +1,8 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use JSON::PP;
+use JSON::MaybeXS ();
+use Path::Tiny qw( path );
 
 # A stand-in for the step command line, for t/21-issuer-stepca.t and
 # t/43-report.t.
@@ -91,9 +92,7 @@ sub progress {
 
 sub slurp {
   my ( $path ) = @_;
-  open my $in, '<', $path or return;
-  local $/;
-  return scalar <$in>;
+  return eval { path($path)->slurp_raw };
 }
 
 sub mode_of { my @stat = stat $_[0]; return @stat ? sprintf( '%04o', $stat[2] & 07777 ) : undef }
@@ -153,7 +152,7 @@ my $one = sub { my ( $name ) = @_; return $flag{$name} ? $flag{$name}[-1] : unde
 sub record {
   return unless defined $ENV{FAKE_STEP_LOG};
   open my $log, '>>', $ENV{FAKE_STEP_LOG} or fail( 'fake-step: cannot write log: '.$! );
-  print {$log} JSON::PP->new->canonical->encode( \%call ), "\n";
+  print {$log} JSON::MaybeXS->new->canonical->encode( \%call ), "\n";
   close $log;
 }
 

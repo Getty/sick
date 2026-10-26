@@ -3,13 +3,14 @@ use strict;
 use warnings;
 use Test::More;
 use File::Temp qw( tempdir );
-use JSON::PP;
+use JSON::MaybeXS ();
 use lib 't/lib';
 
 use SICK::Bundle;
 use SICK::Issuer::StepCA;
 use SICK::OpenSSL;
-use Test::SICK::PKI qw( new_ca new_cert new_csr slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert new_csr );
 
 # SICK::Issuer::StepCA against t/bin/fake-step: what is on the command line,
 # what comes back, and what happens to the files in between. No step-ca.
@@ -20,8 +21,8 @@ my $tmp = tempdir( CLEANUP => 1 );
 
 # The fake step, runnable by the perl that runs this test.
 my $step = $tmp.'/step';
-( my $source = slurp('t/bin/fake-step') ) =~ s/\A#![^\n]*\n/#!$^X\n/;
-spew( $step, $source );
+( my $source = path('t/bin/fake-step')->slurp_raw ) =~ s/\A#![^\n]*\n/#!$^X\n/;
+path($step)->spew_raw($source);
 chmod 0755, $step or die 'chmod: '.$!;
 
 # A test CA with an intermediate, and what the fake step hands out.
@@ -32,12 +33,13 @@ my $leaf  = new_cert( ca => $inter, dir => $tmp, name => 'leaf', cn => 'switch.e
 
 my $fixtures = $tmp.'/fixtures';
 mkdir $fixtures or die 'mkdir: '.$!;
-spew( $fixtures.'/fullchain.pem', $leaf->{cert_pem}.$inter->{pem} );
-spew( $fixtures.'/key.pem',       $leaf->{key_pem} );
-spew( $fixtures.'/signed.pem',    $leaf->{cert_pem}.$inter->{pem} );
+path($fixtures.'/fullchain.pem')->spew_raw($leaf->{cert_pem}.$inter->{pem});
+path($fixtures.'/key.pem')->spew_raw($leaf->{key_pem});
+path($fixtures.'/signed.pem')->spew_raw($leaf->{cert_pem}.$inter->{pem});
 
 my $secret        = 'placeholder-'.$$.'-not-a-real-password';
-my $password_file = spew( $tmp.'/provisioner.pw', $secret."\n" );
+my $password_file = $tmp.'/provisioner.pw';
+path($password_file)->spew_raw($secret."\n");
 my $log           = $tmp.'/step.log';
 
 local $ENV{FAKE_STEP_LOG}      = $log;
@@ -61,9 +63,9 @@ my %spec = (
 # the calls the fake step recorded since the last look
 sub calls {
   return () unless -e $log;
-  my $raw = slurp($log);
+  my $raw = path($log)->slurp_raw;
   unlink $log;
-  return ( $raw, map { JSON::PP->new->decode($_) } split /\n/, $raw );
+  return ( $raw, map { JSON::MaybeXS->new->decode($_) } split /\n/, $raw );
 }
 
 subtest 'construction' => sub {
@@ -97,7 +99,8 @@ subtest 'intermediates' => sub {
   is $with->root_pem,          $root->{pem},   '... and root_pem stays the root alone';
 
   my $second = new_ca( dir => $tmp, name => 'inter2', cn => 'Fake Step Intermediate 2', issuer => $root );
-  my $both   = spew( $tmp.'/intermediates.pem', $inter->{pem}."\n".$second->{pem} );
+  my $both   = $tmp.'/intermediates.pem';
+  path($both)->spew_raw($inter->{pem}."\n".$second->{pem});
   is( SICK::Issuer::StepCA->new( %ca, intermediates => $both )->intermediates_pem,
     $inter->{pem}.$second->{pem}, 'a file with several intermediates' );
 
@@ -120,7 +123,8 @@ subtest 'intermediates' => sub {
 subtest 'a root file with the intermediate in it' => sub {
   # what step itself says to such a file: "error decoding <file>: contains
   # more than one PEM encoded block"
-  my $bundle = spew( $tmp.'/root-and-intermediate.pem', $root->{pem}.$inter->{pem} );
+  my $bundle = $tmp.'/root-and-intermediate.pem';
+  path($bundle)->spew_raw($root->{pem}.$inter->{pem});
   my $crowded = SICK::Issuer::StepCA->new( %ca, root => $bundle );
   my $ok = eval { $crowded->root_pem; 1 };
   ok !$ok, 'root_pem dies';
@@ -186,7 +190,8 @@ subtest 'an intermediates file with something else than intermediates in it' => 
   my $n = 0;
   for my $case (@cases) {
     my ( $what, $pem, $subject, $reason ) = @$case;
-    my $path = spew( $tmp.'/wrong-intermediates-'.++$n.'.pem', $pem );
+    my $path = $tmp.'/wrong-intermediates-'.++$n.'.pem';
+    path($path)->spew_raw($pem);
     my $ok = eval { SICK::Issuer::StepCA->new( %ca, intermediates => $path )->intermediates_pem; 1 };
     ok !$ok, 'intermediates_pem dies for '.$what;
     like $@, qr/^ca\.intermediates '\Q$path\E': the certificate '\Q$subject\E' /,
@@ -194,12 +199,15 @@ subtest 'an intermediates file with something else than intermediates in it' => 
     like $@, $reason, '... and the reason';
   }
 
-  my $with_root = spew( $tmp.'/intermediates-and-root.pem', $inter->{pem}.$root->{pem} );
+  my $with_root = $tmp.'/intermediates-and-root.pem';
+
+  path($with_root)->spew_raw($inter->{pem}.$root->{pem});
   is( SICK::Issuer::StepCA->new( %ca, intermediates => $with_root )->intermediates_pem,
     $inter->{pem}.$root->{pem}, 'a bundle of intermediate and root is taken as it is' );
 
   my $deep  = new_ca( dir => $tmp, name => 'inter-deep', cn => 'Fake Step Intermediate Deep', issuer => $inter );
-  my $chain = spew( $tmp.'/intermediates-deep.pem', $deep->{pem}.$inter->{pem} );
+  my $chain = $tmp.'/intermediates-deep.pem';
+  path($chain)->spew_raw($deep->{pem}.$inter->{pem});
   is( SICK::Issuer::StepCA->new( %ca, intermediates => $chain )->intermediates_pem,
     $deep->{pem}.$inter->{pem}, 'an intermediate below an intermediate leads to the root through the other' );
 };
@@ -319,7 +327,8 @@ subtest 'files step needs' => sub {
 
 SKIP: {
     skip 'root reads every file', 3 unless $>;
-    my $locked = spew( $tmp.'/locked.pw', $secret."\n" );
+    my $locked = $tmp.'/locked.pw';
+    path($locked)->spew_raw($secret."\n");
     chmod 0000, $locked or die 'chmod: '.$!;
     $ok = eval { SICK::Issuer::StepCA->new( %ca, password_file => $locked )->issue( {%spec} ); 1 };
     ok !$ok, 'issue dies when the password file is unreadable';
@@ -348,8 +357,8 @@ SKIP: {
 subtest 'an encrypted key is refused' => sub {
   my $encrypted = $tmp.'/encrypted-fixtures';
   mkdir $encrypted or die 'mkdir: '.$!;
-  spew( $encrypted.'/fullchain.pem', $leaf->{cert_pem} );
-  spew( $encrypted.'/key.pem', "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n" );
+  path($encrypted.'/fullchain.pem')->spew_raw($leaf->{cert_pem});
+  path($encrypted.'/key.pem')->spew_raw("-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n");
   local $ENV{FAKE_STEP_FIXTURES} = $encrypted;
   my $ok = eval { $issuer->issue( {%spec} ); 1 };
   ok !$ok, 'issue dies';
@@ -440,9 +449,12 @@ subtest 'additional roots: published, not handed to step, checked like the root'
   like $@, qr/^ca\.additional_roots: must be a list of paths/, '... the same way';
 
   my $missing   = $tmp.'/missing-root-2.crt';
-  my $crowded   = spew( $tmp.'/two-roots.pem', $next->{pem}.$old->{pem} );
-  my $root_copy = spew( $tmp.'/root-again.crt', $root->{pem} );
-  my $next_copy = spew( $tmp.'/next-again.crt', $next->{pem} );
+  my $crowded   = $tmp.'/two-roots.pem';
+  path($crowded)->spew_raw($next->{pem}.$old->{pem});
+  my $root_copy = $tmp.'/root-again.crt';
+  path($root_copy)->spew_raw($root->{pem});
+  my $next_copy = $tmp.'/next-again.crt';
+  path($next_copy)->spew_raw($next->{pem});
   my $lone_leaf = new_ca( dir => $tmp, name => 'lone-leaf-2', cn => 'lone2.example.internal', extensions => 'leaf_ext' );
   my @cases = (
     [ 'a missing file', [$missing], qr/^cannot read ca\.additional_roots '\Q$missing\E': \S/ ],

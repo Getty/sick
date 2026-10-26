@@ -12,7 +12,8 @@ use SICK::Bundle;
 use SICK::CLI;
 use SICK::OpenSSL;
 use SICK::State;
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # sick check --format json|prometheus [--output FILE] and sick inventory,
 # through SICK::CLI. A step-ca section whose step is t/bin/fake-step (it
@@ -29,8 +30,8 @@ local $ENV{TMPDIR} = $scratch;
 delete local $ENV{SICK_CONFIG};
 
 my $step = $tmp.'/step';
-( my $source = slurp('t/bin/fake-step') ) =~ s/\A#![^\n]*\n/#!$^X\n/;
-spew( $step, $source );
+( my $source = path('t/bin/fake-step')->slurp_raw ) =~ s/\A#![^\n]*\n/#!$^X\n/;
+path($step)->spew_raw($source);
 chmod 0755, $step or die 'chmod: '.$!;
 my $step_log = $tmp.'/step.log';
 local $ENV{FAKE_STEP_LOG} = $step_log;
@@ -39,7 +40,7 @@ delete local $ENV{FAKE_STEP_STDERR};
 
 sub step_calls {
   return [] unless -e $step_log;
-  my @calls = map { JSON::MaybeXS->new->decode($_) } split /\n/, slurp($step_log);
+  my @calls = map { JSON::MaybeXS->new->decode($_) } split /\n/, path($step_log)->slurp_raw;
   unlink $step_log;
   return \@calls;
 }
@@ -82,7 +83,7 @@ sub presents {
   File::Path::make_path($dir);
   my $cert = new_cert( ca => $ca, dir => $pki, name => 'leaf-'.$name, cn => $name.'.example.internal',
     san => 'DNS:'.$name.'.example.internal', days => $arg{days} || 60 );
-  spew( $dir.'/cert.pem', $cert->{cert_pem} );
+  path($dir.'/cert.pem')->spew_raw($cert->{cert_pem});
   return $live{$name} = SICK::Bundle->new( cert => $cert->{cert_pem} );
 }
 use File::Path ();
@@ -106,7 +107,7 @@ sub list {
     ? "ca:\n  type: selfsigned\n  dir: $tmp/selfsigned\n"
     : "ca:\n  url: https://ca.example.internal:9000\n  root: $root->{cert}\n  intermediates: $inter->{cert}\n"
     ."  provisioner: sick\n  password_file: $tmp/no-such-password\n  step: $step\n";
-  spew( $path, $ca."defaults:\n  lifetime: 90d\n  renew_before: 10d\n  key: ec256\nstate: $state\ndevices:\n".$devices );
+  path($path)->spew_raw($ca."defaults:\n  lifetime: 90d\n  renew_before: 10d\n  key: ec256\nstate: $state\ndevices:\n".$devices);
   return $path;
 }
 
@@ -218,7 +219,7 @@ sub value_of {
 subtest 'the table is the table it was' => sub {
   my $plain = list( device('empty').device('foreign'), state => $state_dir );
   # a record that cannot be read: the table does not read records
-  spew( $state_dir.'/devices/foreign.json', "{oops\n" );
+  path($state_dir.'/devices/foreign.json')->spew_raw("{oops\n");
   step_calls();
   my ( $code, $out, $err ) = cli( '--config', $plain, 'check' );
   is $code, 0, 'exit code 0';
@@ -405,7 +406,8 @@ subtest 'a record that cannot be read' => sub {
   my $broken_state = $tmp.'/broken-state';
   my $one = list( device('web'), state => $broken_state );
   File::Path::make_path( $broken_state.'/devices' );
-  my $record = spew( $broken_state.'/devices/web.json', "{oops\n" );
+  my $record = $broken_state.'/devices/web.json';
+  path($record)->spew_raw("{oops\n");
   my ( $code, $out, $err ) = cli( '--config', $one, 'check', '--format', 'json' );
   push @everything, $out, $err;
   is $code, 0, 'exit code 0: it changes nothing about the devices';
@@ -456,7 +458,8 @@ subtest 'a self-signed CA has no health' => sub {
 subtest '--output' => sub {
   my $dir  = $tmp.'/textfile';
   mkdir $dir or die 'mkdir: '.$!;
-  my $file = spew( $dir.'/sick.prom', "old\n" );
+  my $file = $dir.'/sick.prom';
+  path($file)->spew_raw("old\n");
   my $inode = ( stat $file )[1];
   my $umask = umask 077;
   my ( $code, $out, $err ) = cli( '--config', $path, 'check', '--format', 'prometheus', '--output', $file );
@@ -464,7 +467,7 @@ subtest '--output' => sub {
   is $code, 1, 'exit code as without --output';
   is $out, q{}, 'nothing on standard output';
   is $err, q{}, 'nothing on standard error';
-  my $written = slurp($file);
+  my $written = path($file)->slurp_raw;
   push @everything, $written;
   like $written, qr/^sick_check_timestamp_seconds [0-9]+$/m, 'the file holds the metrics';
   my ( undef, $problems ) = parse_prometheus($written);
@@ -475,7 +478,7 @@ subtest '--output' => sub {
   is_deeply [ sort grep { !/\A\.\.?\z/ } readdir $dh ], ['sick.prom'], 'nothing left beside it';
 
   ( $code, $out, $err ) = cli( '--config', $path, 'check', '--format', 'json', '--output', $dir.'/sick.json' );
-  ok eval { JSON::MaybeXS->new->decode( slurp( $dir.'/sick.json' ) ) }, 'json goes there as well';
+  ok eval { JSON::MaybeXS->new->decode( path($dir.'/sick.json')->slurp_raw ) }, 'json goes there as well';
 
   my $nowhere = $tmp.'/no-such-dir/sick.prom';
   ( $code, $out, $err ) = cli( '--config', $path, 'check', '--format', 'prometheus', '--output', $nowhere );
@@ -590,7 +593,7 @@ subtest 'the command line' => sub {
 };
 
 subtest 'the alert rules use the metrics there are' => sub {
-  my $rules = slurp('contrib/prometheus/sick-alerts.yml');
+  my $rules = path('contrib/prometheus/sick-alerts.yml')->slurp_raw;
   my %used = map { $_ => 1 } $rules =~ /\b(sick_[a-z_]+)\b/g;
   my ( $code, $out ) = cli( '--config', $path, 'check', '--format', 'prometheus' );
   my ( undef, undef, $type ) = parse_prometheus($out);

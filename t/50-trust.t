@@ -12,7 +12,8 @@ use SICK::Command;
 use SICK::Issuer::SelfSigned;
 use SICK::OpenSSL;
 use SICK::Trust;
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # SICK::Trust: the root certificate as PEM, DER and Apple profile, and the
 # page around them.
@@ -102,7 +103,7 @@ subtest 'the root, the scripts, the profile and the page' => sub {
 };
 
 subtest 'root_ca.pem and root_ca.crt' => sub {
-  is slurp( $dir.'/root_ca.pem' ), $root->{pem}, 'the PEM file is the root certificate';
+  is path($dir.'/root_ca.pem')->slurp_raw, $root->{pem}, 'the PEM file is the root certificate';
 
   my $der = raw( $dir.'/root_ca.crt' );
   unlike $der, qr/BEGIN CERTIFICATE/, 'the .crt file is not PEM';
@@ -114,7 +115,7 @@ subtest 'root_ca.pem and root_ca.crt' => sub {
 };
 
 subtest 'root_ca.mobileconfig' => sub {
-  my $profile = slurp( $dir.'/root_ca.mobileconfig' );
+  my $profile = path($dir.'/root_ca.mobileconfig')->slurp_raw;
   is xml_problem($profile), undef, 'well-formed XML';
   like $profile, qr/\A<\?xml version="1\.0" encoding="UTF-8"\?>\n<!DOCTYPE plist PUBLIC "-\/\/Apple\/\/DTD PLIST 1\.0\/\/EN" /, 'a property list';
 
@@ -139,12 +140,12 @@ SKIP: {
 
   my $elsewhere = $tmp.'/other-trust';
   SICK::Trust->write( $elsewhere, root_pem => $other->{pem} );
-  my @others = slurp( $elsewhere.'/root_ca.mobileconfig' ) =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
+  my @others = path($elsewhere.'/root_ca.mobileconfig')->slurp_raw =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
   isnt $others[1], $uuids[1], 'another root certificate is another profile';
 };
 
 subtest 'index.html' => sub {
-  my $page = slurp( $dir.'/index.html' );
+  my $page = path($dir.'/index.html')->slurp_raw;
   like $page, qr/\A<!DOCTYPE html>\n<html lang="en">/, 'an HTML page';
   like $page, qr/<meta charset="utf-8">/, '... that declares its encoding';
   like $page, qr{<title>Trust Example Internal CA</title>}, 'the name is in the title';
@@ -187,11 +188,11 @@ subtest 'writing twice produces the same bytes' => sub {
 subtest 'the name' => sub {
   my $unnamed = $tmp.'/unnamed';
   SICK::Trust->write( $unnamed, root_pem => $root->{pem} );
-  like slurp( $unnamed.'/index.html' ), qr{<h1>Trust Example Internal Root CA</h1>},
+  like path($unnamed.'/index.html')->slurp_raw, qr{<h1>Trust Example Internal Root CA</h1>},
     'without a name it is the common name of the root certificate';
-  like slurp( $unnamed.'/root_ca.mobileconfig' ), qr{<string>Example Internal Root CA</string>}, '... in the profile as well';
+  like path($unnamed.'/root_ca.mobileconfig')->slurp_raw, qr{<string>Example Internal Root CA</string>}, '... in the profile as well';
   SICK::Trust->write( $unnamed, root_pem => $root->{pem}, name => '  ' );
-  like slurp( $unnamed.'/index.html' ), qr{<h1>Trust Example Internal Root CA</h1>}, 'a blank name is no name';
+  like path($unnamed.'/index.html')->slurp_raw, qr{<h1>Trust Example Internal Root CA</h1>}, 'a blank name is no name';
 
   my $awkward = $tmp.'/awkward';
   my $name    = qq{R&D <"Lab"> 'CA' \x{e4}\x{f6}\x{fc} \x{2713}};
@@ -217,11 +218,11 @@ subtest 'the name' => sub {
 subtest 'which certificate is the root' => sub {
   my $both = $tmp.'/both';
   SICK::Trust->write( $both, root_pem => $inter->{pem}.$root->{pem} );
-  is slurp( $both.'/root_ca.pem' ), $root->{pem}, 'of a root file with the intermediate in it, the self-signed one is published';
+  is path($both.'/root_ca.pem')->slurp_raw, $root->{pem}, 'of a root file with the intermediate in it, the self-signed one is published';
 
   my $issuer = SICK::Issuer::SelfSigned->new( dir => $tmp.'/ca' );
   my @paths = SICK::Trust->write( $tmp.'/selfsigned', root_pem => $issuer->root_pem );
-  is slurp( $paths[0] ), $issuer->root_pem, 'the root of an issuer';
+  is path($paths[0])->slurp_raw, $issuer->root_pem, 'the root of an issuer';
 
   my %bad = (
     'no root_pem'           => [ [], qr/^SICK::Trust->write needs root_pem/ ],
@@ -240,7 +241,9 @@ subtest 'which certificate is the root' => sub {
   ok !eval { SICK::Trust->write( undef, root_pem => $root->{pem} ); 1 }, 'dies without a directory';
   like $@, qr/^SICK::Trust->write needs a directory/, '... saying so';
 
-  my $blocked = spew( $tmp.'/a-file', "in the way\n" );
+  my $blocked = $tmp.'/a-file';
+
+  path($blocked)->spew_raw("in the way\n");
   ok !eval { SICK::Trust->write( $blocked.'/site', root_pem => $root->{pem} ); 1 }, 'a directory that cannot be made';
   like $@, qr/^cannot create directory '\Q$blocked\E\/site': \S/, '... is named with the reason';
 
@@ -310,10 +313,10 @@ subtest 'with an intermediate: three files more' => sub {
   is sprintf( '%04o', ( stat $_ )[2] & 07777 ), '0644', $_ =~ s{.*/}{}r.' is readable for everybody' for @chained_paths;
 
   is raw( $chained.'/'.$_ ), raw( $dir.'/'.$_ ), $_.' is what it is without an intermediate' for qw( root_ca.pem root_ca.crt );
-  is slurp( $chained.'/intermediate_ca.pem' ), $inter->{pem}, 'intermediate_ca.pem is the intermediate certificate';
+  is path($chained.'/intermediate_ca.pem')->slurp_raw, $inter->{pem}, 'intermediate_ca.pem is the intermediate certificate';
   unlike raw( $chained.'/intermediate_ca.crt' ), qr/BEGIN CERTIFICATE/, 'intermediate_ca.crt is not PEM';
   is fingerprint_of_der( $chained.'/intermediate_ca.crt' ), $inter_facts->fingerprint_sha256, '... but the same certificate in DER';
-  is slurp( $chained.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}, 'ca_bundle.pem is the root followed by the intermediate';
+  is path($chained.'/ca_bundle.pem')->slurp_raw, $root->{pem}.$inter->{pem}, 'ca_bundle.pem is the root followed by the intermediate';
   unlike join( q{}, map { raw($_) } @chained_paths ), qr/PRIVATE KEY/, 'no key in any of them';
 };
 
@@ -340,8 +343,8 @@ subtest 'a certificate presented alone validates with what was written, and with
 SKIP: {
     my $store = $tmp.'/system-store';
     mkdir $store or die 'mkdir: '.$!;
-    spew( $store.'/internal-root-ca.crt',         slurp( $chained.'/root_ca.pem' ) );
-    spew( $store.'/internal-intermediate-ca.crt', slurp( $chained.'/intermediate_ca.pem' ) );
+    path($store.'/internal-root-ca.crt')->spew_raw(path($chained.'/root_ca.pem')->slurp_raw);
+    path($store.'/internal-intermediate-ca.crt')->spew_raw(path($chained.'/intermediate_ca.pem')->slurp_raw);
     my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'rehash', $store ] );
     skip 'openssl rehash does not work here', 2 if $exit;
     ( $ok, $said ) = verifies( [ '-CApath', $store ], $leaf->{cert} );
@@ -354,7 +357,7 @@ SKIP: {
 };
 
 subtest 'the profile carries the root as root and the intermediate as a certificate' => sub {
-  my $profile = slurp( $chained.'/root_ca.mobileconfig' );
+  my $profile = path($chained.'/root_ca.mobileconfig')->slurp_raw;
   is xml_problem($profile), undef, 'well-formed XML';
 
   my @payloads = $profile =~ m{<dict>\s*(<key>PayloadCertificateFileName</key>.*?)</dict>}sg;
@@ -384,7 +387,7 @@ subtest 'the profile carries the root as root and the intermediate as a certific
 
   # A device that has the profile of the root alone has to take this one as
   # its successor, not as a second profile.
-  my $alone        = slurp( $dir.'/root_ca.mobileconfig' );
+  my $alone        = path($dir.'/root_ca.mobileconfig')->slurp_raw;
   my @alone_uuids  = $alone =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
   my ($alone_id)   = $alone =~ m{<key>PayloadIdentifier</key>\s*<string>(sick\.trust\.[^<]+)</string>};
   my ($chained_id) = $profile =~ m{<key>PayloadIdentifier</key>\s*<string>(sick\.trust\.[^<]+)</string>};
@@ -395,7 +398,7 @@ subtest 'the profile carries the root as root and the intermediate as a certific
 };
 
 subtest 'the page with an intermediate' => sub {
-  my $page = slurp( $chained.'/index.html' );
+  my $page = path($chained.'/index.html')->slurp_raw;
   like $page, qr/\A<!DOCTYPE html>\n<html lang="en">/, 'an HTML page';
   like $page, qr/<a href="\Q$_\E"/, 'a link to '.$_ for grep { $_ ne 'index.html' } @with;
   like $page, qr/<h2 id="[a-z]+">[^<]*\Q$_\E/, 'instructions for '.$_ for qw( Firefox Chrome Linux macOS Windows iPhone Android );
@@ -488,25 +491,25 @@ subtest 'several intermediates' => sub {
   is_deeply [ SICK::Trust->files(2) ], \@names, 'files(2)';
   is_deeply \@paths, [ map { $target.'/'.$_ } @names ], 'the paths';
   is_deeply files_in($target), [ sort @names ], 'the files';
-  is slurp( $target.'/intermediate_ca.pem' ), $inter->{pem}.$issuing->{pem}, 'intermediate_ca.pem has all of them, in the order they were given';
-  is slurp( $target.'/intermediate_ca_1.pem' ), $inter->{pem},   'intermediate_ca_1.pem is the first one alone';
-  is slurp( $target.'/intermediate_ca_2.pem' ), $issuing->{pem}, 'intermediate_ca_2.pem the second';
+  is path($target.'/intermediate_ca.pem')->slurp_raw, $inter->{pem}.$issuing->{pem}, 'intermediate_ca.pem has all of them, in the order they were given';
+  is path($target.'/intermediate_ca_1.pem')->slurp_raw, $inter->{pem},   'intermediate_ca_1.pem is the first one alone';
+  is path($target.'/intermediate_ca_2.pem')->slurp_raw, $issuing->{pem}, 'intermediate_ca_2.pem the second';
   is fingerprint_of_der( $target.'/intermediate_ca_2.crt' ), SICK::Bundle->new( cert => $issuing->{pem} )->fingerprint_sha256,
     'intermediate_ca_2.crt is the second one in DER';
-  is slurp( $target.'/ca_bundle.pem' ), $root->{pem}.$inter->{pem}.$issuing->{pem}, 'ca_bundle.pem has the root and both';
+  is path($target.'/ca_bundle.pem')->slurp_raw, $root->{pem}.$inter->{pem}.$issuing->{pem}, 'ca_bundle.pem has the root and both';
 
   my ( $ok, $said ) = verifies( [ '-CAfile', $target.'/ca_bundle.pem' ], $deep->{cert} );
   ok $ok, 'a certificate two steps below the root validates with the bundle' or diag $said;
   ( $ok ) = verifies( [ '-CAfile', $chained.'/ca_bundle.pem' ], $deep->{cert} );
   ok !$ok, '... and not with the bundle that lacks the second step';
 
-  my $profile = slurp( $target.'/root_ca.mobileconfig' );
+  my $profile = path($target.'/root_ca.mobileconfig')->slurp_raw;
   is xml_problem($profile), undef, 'the profile is well-formed';
   is scalar( () = $profile =~ m{<string>com\.apple\.security\.pkcs1</string>}g ), 2, '... with two intermediate payloads';
   is scalar( () = $profile =~ m{<string>com\.apple\.security\.root</string>}g ), 1, '... and one root';
   like $profile, qr{<string>intermediate_ca_2\.crt</string>}, '... named like their files';
 
-  my $page    = slurp( $target.'/index.html' );
+  my $page    = path($target.'/index.html')->slurp_raw;
   my %written = map { $_ => 1 } @names;
   my @files   = grep { !/\A#/ } $page =~ /href="([^"]*)"/g;
   is_deeply [ grep { !$written{$_} } @files ], [], 'the page links to nothing that was not written';
@@ -521,9 +524,9 @@ subtest 'several intermediates' => sub {
 subtest 'what an earlier write left and this one does not write is removed' => sub {
   my $target = $tmp.'/site/shrinking';
   SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem} );
-  spew( $target.'/robots.txt',             "User-agent: *\n" );
-  spew( $target.'/intermediate_ca_7.crt',  "left by a CA with more of them\n" );
-  spew( $target.'/intermediate_ca.pem.bak', "somebody's copy\n" );
+  path($target.'/robots.txt')->spew_raw("User-agent: *\n");
+  path($target.'/intermediate_ca_7.crt')->spew_raw("left by a CA with more of them\n");
+  path($target.'/intermediate_ca.pem.bak')->spew_raw("somebody's copy\n");
 
   SICK::Trust->write( $target, root_pem => $root->{pem}, intermediates_pem => $inter->{pem} );
   is_deeply files_in($target), [ sort @with, 'intermediate_ca.pem.bak', 'robots.txt' ],
@@ -589,10 +592,10 @@ subtest 'with an additional root: its files and the bundle' => sub {
   is sprintf( '%04o', ( stat $_ )[2] & 07777 ), '0644', $_ =~ s{.*/}{}r.' is readable for everybody' for @rollover_paths;
 
   is raw( $rollover.'/'.$_ ), raw( $dir.'/'.$_ ), $_.' is the current root, as without an additional one' for qw( root_ca.pem root_ca.crt );
-  is slurp( $rollover.'/root_ca_2.pem' ), $next->{pem}, 'root_ca_2.pem is the additional root';
+  is path($rollover.'/root_ca_2.pem')->slurp_raw, $next->{pem}, 'root_ca_2.pem is the additional root';
   unlike raw( $rollover.'/root_ca_2.crt' ), qr/BEGIN CERTIFICATE/, 'root_ca_2.crt is not PEM';
   is fingerprint_of_der( $rollover.'/root_ca_2.crt' ), $next_facts->fingerprint_sha256, '... but the same certificate in DER';
-  is slurp( $rollover.'/ca_bundle.pem' ), $root->{pem}.$next->{pem}, 'ca_bundle.pem is the current root followed by the additional one';
+  is path($rollover.'/ca_bundle.pem')->slurp_raw, $root->{pem}.$next->{pem}, 'ca_bundle.pem is the current root followed by the additional one';
 
   my ( $ok, $said ) = verifies( [ '-CAfile', $rollover.'/ca_bundle.pem' ], $next_leaf->{cert} );
   ok $ok, 'a certificate of the next root validates with the bundle' or diag $said;
@@ -609,18 +612,18 @@ subtest 'with an additional root: its files and the bundle' => sub {
   is_deeply [ SICK::Trust->files( 1, 2 ) ], \@names, 'files(1, 2): the roots first, then the intermediate';
   is_deeply \@paths, [ map { $target.'/'.$_ } @names ], '... and that is what write returns';
   is_deeply files_in($target), [ sort @names ], '... and what is there';
-  is slurp( $target.'/root_ca_2.pem' ), $next->{pem},     'root_ca_2.pem is the first additional root';
-  is slurp( $target.'/root_ca_3.pem' ), $previous->{pem}, 'root_ca_3.pem the second';
-  is slurp( $target.'/ca_bundle.pem' ), $root->{pem}.$next->{pem}.$previous->{pem}.$inter->{pem},
+  is path($target.'/root_ca_2.pem')->slurp_raw, $next->{pem},     'root_ca_2.pem is the first additional root';
+  is path($target.'/root_ca_3.pem')->slurp_raw, $previous->{pem}, 'root_ca_3.pem the second';
+  is path($target.'/ca_bundle.pem')->slurp_raw, $root->{pem}.$next->{pem}.$previous->{pem}.$inter->{pem},
     'ca_bundle.pem: the current root, the additional ones in their order, then the intermediate';
-  is slurp( $target.'/intermediate_ca.pem' ), $inter->{pem}, 'intermediate_ca.pem is the intermediate alone';
+  is path($target.'/intermediate_ca.pem')->slurp_raw, $inter->{pem}, 'intermediate_ca.pem is the intermediate alone';
   ( $ok, $said ) = verifies( [ '-CAfile', $target.'/ca_bundle.pem' ], $leaf->{cert} );
   ok $ok, 'the leaf under the intermediate still validates with the bundle' or diag $said;
   unlike join( q{}, map { raw($_) } @rollover_paths, @paths ), qr/PRIVATE KEY/, 'no key in any of them';
 };
 
 subtest 'the profile carries each additional root as a root' => sub {
-  my $profile = slurp( $rollover.'/root_ca.mobileconfig' );
+  my $profile = path($rollover.'/root_ca.mobileconfig')->slurp_raw;
   is xml_problem($profile), undef, 'well-formed XML';
 
   my @payloads = $profile =~ m{<dict>\s*(<key>PayloadCertificateFileName</key>.*?)</dict>}sg;
@@ -640,23 +643,23 @@ subtest 'the profile carries each additional root as a root' => sub {
   like $profile, qr{<key>PayloadDescription</key>\s*<string>Makes this device trust[^<]*root replacement[^<]*</string>},
     'the description of the profile speaks of the replacement';
 
-  my ($alone_id)    = slurp( $dir.'/root_ca.mobileconfig' ) =~ m{<string>(sick\.trust\.[^<]+)</string>};
+  my ($alone_id)    = path($dir.'/root_ca.mobileconfig')->slurp_raw =~ m{<string>(sick\.trust\.[^<]+)</string>};
   my ($rollover_id) = $profile =~ m{<string>(sick\.trust\.[^<]+)</string>};
   is $rollover_id, $alone_id, 'the identifier stays with the current root: this profile replaces the one without';
   my @uuids = $profile =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g;
   my %distinct = map { $_ => 1 } @uuids;
   is scalar keys %distinct, 3, 'three UUIDs, all different';
-  isnt $uuids[-1], ( slurp( $dir.'/root_ca.mobileconfig' ) =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g )[-1],
+  isnt $uuids[-1], ( path($dir.'/root_ca.mobileconfig')->slurp_raw =~ m{<key>PayloadUUID</key>\s*<string>([^<]+)</string>}g )[-1],
     'the profile as a whole has another UUID than the one without';
 
-  my $chained_profile = slurp( $tmp.'/site/rollover-chained/root_ca.mobileconfig' );
+  my $chained_profile = path($tmp.'/site/rollover-chained/root_ca.mobileconfig')->slurp_raw;
   is xml_problem($chained_profile), undef, 'with two additional roots and an intermediate: well-formed';
   is scalar( () = $chained_profile =~ m{<string>com\.apple\.security\.root</string>}g ), 3, '... three roots';
   is scalar( () = $chained_profile =~ m{<string>com\.apple\.security\.pkcs1</string>}g ), 1, '... and the intermediate';
 };
 
 subtest 'the page with an additional root' => sub {
-  my $page = slurp( $rollover.'/index.html' );
+  my $page = path($rollover.'/index.html')->slurp_raw;
   like $page, qr/\A<!DOCTYPE html>\n<html lang="en">/, 'an HTML page';
   like $page, qr/<a href="\Q$_\E"/, 'a link to '.$_ for grep { $_ ne 'index.html' } @rollover_names;
   my @references = $page =~ /(?:href|src|action)\s*=\s*"([^"]*)"/g;
@@ -691,7 +694,7 @@ subtest 'the page with an additional root' => sub {
   like $section{linux},   qr/internal-root-ca-2/, '... and it gets a file of its own in the system store';
   like $section{ios},     qr/full trust for it in the same place/, 'iPhone: full trust for the further root of the profile';
 
-  my $chained_page = slurp( $tmp.'/site/rollover-chained/index.html' );
+  my $chained_page = path($tmp.'/site/rollover-chained/index.html')->slurp_raw;
   unlike $chained_page, qr/[ \t]\n|<!--|\n\n\n/, 'with an intermediate as well: no trailing blanks, no placeholder, no hole';
   ( $shown = $chained_page ) =~ s/<br>//g;
   for my $facts ( $facts, $next_facts, $previous_facts, $inter_facts ) {
@@ -736,9 +739,9 @@ subtest 'writing twice with an additional root produces the same bytes' => sub {
 subtest 'the files of additional roots go when the replacement is over' => sub {
   my $target = $tmp.'/site/replaced';
   SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $next->{pem}.$previous->{pem} );
-  spew( $target.'/robots.txt',       "User-agent: *\n" );
-  spew( $target.'/root_ca_9.crt',    "left by a replacement with more roots\n" );
-  spew( $target.'/root_ca_2.pem.bak', "somebody's copy\n" );
+  path($target.'/robots.txt')->spew_raw("User-agent: *\n");
+  path($target.'/root_ca_9.crt')->spew_raw("left by a replacement with more roots\n");
+  path($target.'/root_ca_2.pem.bak')->spew_raw("somebody's copy\n");
 
   SICK::Trust->write( $target, root_pem => $root->{pem}, additional_roots_pem => $next->{pem} );
   is_deeply files_in($target), [ sort @rollover_names, 'robots.txt', 'root_ca_2.pem.bak' ],
@@ -784,7 +787,8 @@ mkdir $_ or die 'mkdir '.$_.': '.$! for $sandbox, $fakebin;
 
 sub fake {
   my ( $name, $body ) = @_;
-  my $path = spew( $fakebin.'/'.$name, "#!/bin/sh\nprintf '%s\\n' \"$name\${1+ \$*}\" >> \"\$SICK_TEST_LOG\"\n".$body );
+  my $path = $fakebin.'/'.$name;
+  path($path)->spew_raw("#!/bin/sh\nprintf '%s\\n' \"$name\${1+ \$*}\" >> \"\$SICK_TEST_LOG\"\n".$body);
   chmod 0755, $path or die 'chmod: '.$!;
   return $path;
 }
@@ -915,15 +919,15 @@ subtest 'the scripts are written, and carry exactly the certificates they instal
   for my $where ( $dir, $chained, $site ) {
     ok -s $where.'/'.$_, $where =~ s{.*/}{}r.': '.$_.' is there' for @scripts;
   }
-  my $linux = slurp( $site.'/trust-linux.sh' );
+  my $linux = path($site.'/trust-linux.sh')->slurp_raw;
   is_deeply pem_blocks($linux), [ $root->{pem}, $next->{pem} ],
     'trust-linux.sh: the root and the additional root, and no intermediate - the system store is a store of anchors';
   for my $file (qw( trust-macos.sh trust-nss.sh )) {
-    is_deeply pem_blocks( slurp( $site.'/'.$file ) ), [ $root->{pem}, $next->{pem}, $inter->{pem} ],
+    is_deeply pem_blocks( path($site.'/'.$file)->slurp_raw ), [ $root->{pem}, $next->{pem}, $inter->{pem} ],
       $file.': the roots, then the intermediate';
   }
-  is_deeply pem_blocks( slurp( $dir.'/trust-linux.sh' ) ), [ $root->{pem} ], 'one root: that root alone';
-  is_deeply pem_blocks( slurp( $dir.'/trust-nss.sh' ) ),   [ $root->{pem} ], '... in trust-nss.sh as well';
+  is_deeply pem_blocks( path($dir.'/trust-linux.sh')->slurp_raw ), [ $root->{pem} ], 'one root: that root alone';
+  is_deeply pem_blocks( path($dir.'/trust-nss.sh')->slurp_raw ),   [ $root->{pem} ], '... in trust-nss.sh as well';
 
   my $ps1 = raw( $site.'/trust-windows.ps1' );
   unlike $ps1, qr/[^\x09\x0a\x0d\x20-\x7e]/, 'trust-windows.ps1 is plain ASCII, whatever the name of the CA';
@@ -963,7 +967,8 @@ SKIP: {
     my $pwsh = eval { ( SICK::Command::run( [ 'pwsh', '-NoProfile', '-Command', 'exit 0' ] ) )[2] };
     skip 'pwsh is not installed: the syntax of trust-windows.ps1 is not checked', 2 unless defined $pwsh && $pwsh == 0;
     for my $where ( $dir, $site ) {
-      my $check = spew( $tmp.'/parse-check.ps1', '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$e); if ($e.Count) { $e | ForEach-Object { $_.ToString() }; exit 1 }'."\n" );
+      my $check = $tmp.'/parse-check.ps1';
+      path($check)->spew_raw('$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$e); if ($e.Count) { $e | ForEach-Object { $_.ToString() }; exit 1 }'."\n");
       my ( $out, $err, $exit ) = SICK::Command::run( [ 'pwsh', '-NoProfile', '-NonInteractive', '-File', $check, $where.'/trust-windows.ps1' ] );
       is $exit, 0, 'pwsh parses trust-windows.ps1 ('.( $where =~ s{.*/}{}r ).')' or diag $out.$err;
     }
@@ -1002,7 +1007,7 @@ for my $os ( sort keys %family ) {
     my ( $release, $store, $ext, $update ) = @{ $family{$os} };
     my $box = $sandbox.'/linux-'.$os;
     mkdir $box; mkdir $box.'/etc';
-    spew( $box.'/etc/os-release', $release );
+    path($box.'/etc/os-release')->spew_raw($release);
     my $file = $site.'/trust-linux.sh';
     unlink $log;
 
@@ -1037,21 +1042,21 @@ for my $os ( sort keys %family ) {
     my @stored = @{ tree( $box.'/'.$store ) };
     is scalar @stored, 2, '... two files in /'.$store;
     like $_, qr/\Asick-root-[0-9a-f]{16}\Q$ext\E\z/, '... '.$_.' named by its fingerprint' for @stored;
-    is_deeply [ sort map { slurp( $box.'/'.$store.'/'.$_ ) } @stored ], [ sort $root->{pem}, $next->{pem} ],
+    is_deeply [ sort map { path($box.'/'.$store.'/'.$_)->slurp_raw } @stored ], [ sort $root->{pem}, $next->{pem} ],
       '... holding exactly the two roots';
-    unlike join( q{}, map { slurp($_) } map { $box.'/'.$store.'/'.$_ } @stored ), qr/\Q${\ substr( $inter->{pem}, 30, 60 ) }\E/,
+    unlike join( q{}, map { path($_)->slurp_raw } map { $box.'/'.$store.'/'.$_ } @stored ), qr/\Q${\ substr( $inter->{pem}, 30, 60 ) }\E/,
       '... and never the intermediate';
     is_deeply [ grep { !m{\A\Q$store\E/} && $_ ne 'etc/os-release' } @{ tree($box) } ], [], '... and nothing anywhere else';
-    like slurp($log), qr/^\Q$update\E$/m, '... then '.$update;
+    like path($log)->slurp_raw, qr/^\Q$update\E$/m, '... then '.$update;
     like $out, qr/restart/i, '... and it says what still needs a restart';
 
-    spew( $box.'/'.$store.'/somebody-else.crt', "not ours\n" );
+    path($box.'/'.$store.'/somebody-else.crt')->spew_raw("not ours\n");
     unlink $log;
     ( $exit, $out, $err ) = script( $file, $box, 'remove' );
     is $exit, 0, 'remove: exit code 0' or diag $err;
     is_deeply tree( $box.'/'.$store ), ['somebody-else.crt'], '... both roots are gone, the file of somebody else stays';
     like $out, qr/removed/, '... saying what it removed';
-    like slurp($log), qr/^\Q$update\E$/m, '... and the store is updated';
+    like path($log)->slurp_raw, qr/^\Q$update\E$/m, '... and the store is updated';
 
     unlink $log;
     ( $exit, $out, $err ) = script( $file, $box, 'remove' );
@@ -1064,7 +1069,7 @@ for my $os ( sort keys %family ) {
 subtest 'trust-linux.sh with p11-kit (Arch and others)' => sub {
   my $box = $sandbox.'/linux-arch';
   mkdir $box; mkdir $box.'/etc';
-  spew( $box.'/etc/os-release', "ID=arch\n" );
+  path($box.'/etc/os-release')->spew_raw("ID=arch\n");
   my $file = $site.'/trust-linux.sh';
   unlink $log;
   my ( $exit, $out, $err ) = script( $file, $box, 'install', '--fingerprint', $others_sha );
@@ -1074,7 +1079,7 @@ subtest 'trust-linux.sh with p11-kit (Arch and others)' => sub {
   ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
   is $exit, 0, 'the right ones: exit code 0' or diag $err;
   is_deeply tree( $box.'/p11kit' ), [ sort map { $sha->($_).'.pem' } @site_roots ], '... trust anchor --store for each root, and for nothing else';
-  like slurp($log), qr/^trust anchor --store /m, '... called as trust anchor --store';
+  like path($log)->slurp_raw, qr/^trust anchor --store /m, '... called as trust anchor --store';
   ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
   is $exit, 0, 'installing again: exit code 0' or diag $err;
 
@@ -1098,7 +1103,7 @@ SKIP: {
     skip 'this machine has '.$real[0].' in /usr/bin:/bin, which the script would find', 2 if @real;
     my $box = $sandbox.'/linux-unknown';
     mkdir $box; mkdir $box.'/etc';
-    spew( $box.'/etc/os-release', "ID=plan9\n" );
+    path($box.'/etc/os-release')->spew_raw("ID=plan9\n");
     ( $out, $err, $exit ) = SICK::Command::run(
       [ 'sh', $site.'/trust-linux.sh', 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots ],
       env => { PATH => '/usr/bin:/bin', SICK_TRUST_ROOT => $box, SICK_TEST_LOG => $log } );
@@ -1125,7 +1130,7 @@ subtest 'trust-nss.sh: roots trusted as CA, intermediates without trust, removed
   like $err, qr/cert9\.db/, '... saying what is missing';
   like $err, qr{made with: mkdir -p \$HOME/\.pki/nssdb && certutil -N -d sql:\$HOME/\.pki/nssdb --empty-password},
     '... and the hint makes the directory before certutil -N, which fails in one that is not there';
-  spew( $db.'/cert9.db', q{} );
+  path($db.'/cert9.db')->spew_raw(q{});
 
   ( $exit, $out, $err ) = script( $file, $sandbox.'/none', 'install', '--fingerprint', $sha->($facts), $db );
   is $exit, 1, 'one root of two: refused';
@@ -1137,7 +1142,7 @@ subtest 'trust-nss.sh: roots trusted as CA, intermediates without trust, removed
   is $exit, 0, 'both fingerprints: installed' or diag $err;
   my @entries = grep { /\.trust\z/ } @{ tree($db) };
   is scalar @entries, 3, '... three certificates in the database';
-  my %trust = map { ( slurp( $db.'/'.( s/\.trust\z/.pem/r ) ) => slurp( $db.'/'.$_ ) ) } @entries;
+  my %trust = map { ( path($db.'/'.( s/\.trust\z/.pem/r ))->slurp_raw => path($db.'/'.$_)->slurp_raw ) } @entries;
   is $trust{ $root->{pem} },  "C,,\n", '... the root trusted as a CA for websites (C,,)';
   is $trust{ $next->{pem} },  "C,,\n", '... the additional root as well';
   is $trust{ $inter->{pem} }, ",,\n",  '... the intermediate without any trust (,,)';
@@ -1169,7 +1174,7 @@ subtest 'trust-macos.sh: roots trusted in the System keychain, intermediates add
   ok $in{ $sha1->( $_->[1] ).'.pem' },   '... '.$_->[0].' is in the keychain' for [ 'the root', $root->{pem} ], [ 'the additional root', $next->{pem} ], [ 'the intermediate', $inter->{pem} ];
   ok $in{ $sha1->( $_->[1] ).'.trust' }, '... '.$_->[0].' is trusted as a root' for [ 'the root', $root->{pem} ], [ 'the additional root', $next->{pem} ];
   ok !$in{ $sha1->( $inter->{pem} ).'.trust' }, '... the intermediate has no trust setting';
-  is slurp( $box.'/keychain/'.$sha1->( $root->{pem} ).'.trust' ), "trustRoot\n", '... the roots with -r trustRoot';
+  is path($box.'/keychain/'.$sha1->( $root->{pem} ).'.trust')->slurp_raw, "trustRoot\n", '... the roots with -r trustRoot';
 
   ( $exit, $out, $err ) = script( $file, $box, 'install', map { ( '--fingerprint', $sha->($_) ) } @site_roots );
   is $exit, 0, 'installing again: exit code 0' or diag $err;
@@ -1183,7 +1188,7 @@ subtest 'trust-macos.sh: roots trusted in the System keychain, intermediates add
 };
 
 subtest 'the page: the fingerprint from another channel first, the scripts, removal, the limits' => sub {
-  my $page = slurp( $site.'/index.html' );
+  my $page = path($site.'/index.html')->slurp_raw;
   ( my $text = $page ) =~ s/\s+/ /g;
   my $oob = index $text, 'not from this page';
   ok $oob > 0, 'the page says the fingerprint does not come from this page';
@@ -1200,7 +1205,7 @@ subtest 'the page: the fingerprint from another channel first, the scripts, remo
   like $section{firefox}, qr/sh trust-nss\.sh install \Q$two\E/,         'Firefox: trust-nss.sh';
   like $section{chrome},  qr/trust-nss\.sh/,                             'Chrome on Linux: trust-nss.sh';
   unlike $text, qr/--fingerprint [0-9A-Fa-f]{2}:/, 'no command on the page carries a fingerprint';
-  my $one = slurp( $dir.'/index.html' );
+  my $one = path($dir.'/index.html')->slurp_raw;
   like $one, qr/trust-linux\.sh install --fingerprint &lt;from your admin&gt;<\/pre>/, 'one root: one placeholder';
 
   for my $platform (qw( ios android macos windows linux firefox chrome )) {

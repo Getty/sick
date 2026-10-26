@@ -7,7 +7,7 @@ use lib 't/lib';
 
 use SICK::Bundle;
 use SICK::OpenSSL;
-use Test::SICK::PKI qw( new_ca new_cert slurp spew );
+use Test::SICK::PKI qw( new_ca new_cert );
 
 # SICK::Bundle: PEM in, and what openssl reads from the certificate out.
 # All certificates are made here, into a temporary directory.

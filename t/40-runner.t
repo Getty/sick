@@ -17,7 +17,8 @@ use SICK::State;
 use SICK::Target::Files;
 use JSON::MaybeXS qw( decode_json );
 use POSIX qw( strftime );
-use Test::SICK::PKI qw( new_ca new_cert new_csr slurp spew );
+use Path::Tiny qw( path );
+use Test::SICK::PKI qw( new_ca new_cert new_csr );
 
 # SICK::Runner with the SelfSigned issuer and the files target: the four
 # steps, and everything that can go wrong between them. Nothing leaves this
@@ -395,16 +396,18 @@ subtest 'a CA that refuses' => sub {
 subtest 'what step says reaches the user' => sub {
   # the real step-ca issuer with a step that refuses, as t/21 has it
   my $step = $tmp.'/step';
-  ( my $source = slurp('t/bin/fake-step') ) =~ s/\A#![^\n]*\n/#!$^X\n/;
-  spew( $step, $source );
+  ( my $source = path('t/bin/fake-step')->slurp_raw ) =~ s/\A#![^\n]*\n/#!$^X\n/;
+  path($step)->spew_raw($source);
   chmod 0755, $step or die 'chmod: '.$!;
   my $root = new_ca( dir => $tmp, name => 'step-root' );
   my $marker = 'placeholder-'.$$.'-not-a-real-password';
+  my $refusing_pw = $tmp.'/provisioner.pw';
+  path($refusing_pw)->spew_raw($marker."\n");
   my $refusing = SICK::Issuer->from_ca(
     url           => 'https://ca.example.internal:9000',
     root          => $root->{cert},
     provisioner   => 'sick',
-    password_file => spew( $tmp.'/provisioner.pw', $marker."\n" ),
+    password_file => $refusing_pw,
     step          => $step,
   );
   local $ENV{FAKE_STEP_EXIT}   = 1;
@@ -431,8 +434,8 @@ subtest 'a CA that signs through an intermediate, a device that presents its cer
     san => 'DNS:chained.example.internal', days => 90 );
   my $fixtures = $tmp.'/chain-fixtures';
   mkdir $fixtures or die 'mkdir: '.$!;
-  spew( $fixtures.'/fullchain.pem', $leaf->{cert_pem}.$inter->{pem} );
-  spew( $fixtures.'/key.pem',       $leaf->{key_pem} );
+  path($fixtures.'/fullchain.pem')->spew_raw($leaf->{cert_pem}.$inter->{pem});
+  path($fixtures.'/key.pem')->spew_raw($leaf->{key_pem});
   local $ENV{FAKE_STEP_FIXTURES} = $fixtures;
 
   my %ca = (
@@ -493,7 +496,7 @@ subtest 'a device that makes its own key' => sub {
     'the request was signed; no key was made and none was handed to the target';
   is_deeply files_in( $tmp.'/keeper' ), [qw( .sick cert.pem chain.pem fullchain.pem )], 'no key on disk';
 
-  my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'x509', '-noout', '-pubkey' ], stdin => slurp( $tmp.'/keeper/cert.pem' ) );
+  my ( $out, $err, $exit ) = SICK::OpenSSL::run( [ 'x509', '-noout', '-pubkey' ], stdin => path($tmp.'/keeper/cert.pem')->slurp_raw );
   my ( $want ) = SICK::OpenSSL::run( [ 'req', '-noout', '-pubkey' ], stdin => $request->{csr_pem} );
   is $out, $want, 'the certificate is for the key of the request';
 
@@ -653,7 +656,7 @@ sub new_state { SICK::State->new( dir => $tmp.'/state-'.++$states ) }
 sub record {
   my ( $state, $name ) = @_;
   my $path = $state->record_path($name);
-  return -e $path ? decode_json( slurp($path) ) : undef;
+  return -e $path ? decode_json( path($path)->slurp_raw ) : undef;
 }
 
 sub iso { strftime( '%Y-%m-%dT%H:%M:%SZ', gmtime $_[0] ) }
@@ -748,9 +751,9 @@ subtest 'a device whose deployment keeps failing is deferred' => sub {
   is record( $state, 'shaky' )->{last_check}{time}, iso($now), 'the look is on record';
   is record( $state, 'shaky' )->{consecutive_failures}, 1, '... and the count unchanged';
 
-  my $before = slurp( $state->record_path('shaky') );
+  my $before = path($state->record_path('shaky'))->slurp_raw;
   is_deeply brief( $runner->run( [], dry_run => 1 ) ), [ [ 'shaky', 'deferred', 'missing' ] ], 'a dry run says deferred too';
-  is slurp( $state->record_path('shaky') ), $before, '... and writes nothing';
+  is path($state->record_path('shaky'))->slurp_raw, $before, '... and writes nothing';
 
   # 1, 2, 4, 8, 16, 24, 24 hours
   my $at = $start + 3600;
@@ -857,8 +860,8 @@ subtest 'a record that cannot be read' => sub {
   local $now = time + 60;
   my %path = map { $_ => $state->record_path($_) } qw( broken listed blocked );
   File::Path::make_path( $state->dir.'/devices', $path{blocked} );
-  spew( $path{broken}, "{\"consecutive_failures\": 3, \"next_attempt\": \"2999-01-01T00:00:00Z\"" );
-  spew( $path{listed}, "[1, 2]\n" );
+  path($path{broken})->spew_raw("{\"consecutive_failures\": 3, \"next_attempt\": \"2999-01-01T00:00:00Z\"");
+  path($path{listed})->spew_raw("[1, 2]\n");
 
   my @results = $runner->run;
   is_deeply brief(@results), [ [ 'broken', 'renewed', 'missing' ], [ 'listed', 'renewed', 'missing' ], [ 'blocked', 'renewed', 'missing' ] ],
@@ -897,8 +900,8 @@ subtest 'the file of a device' => sub {
 subtest 'no record holds a key' => sub {
   my @records = glob $tmp.'/state-*/devices/*.json';
   cmp_ok scalar @records, '>=', 8, 'there are records to look at';
-  for my $path (@records) {
-    my $text = slurp($path);
+  for my $path ( grep { -f } @records ) {   # a record that is a directory (see the state-error test) has no text
+    my $text = path($path)->slurp_raw;
     unlike $text, qr/PRIVATE KEY/, $path.': no private key';
     unlike $text, qr/key\.pem/,    '... and no path of one';
   }
