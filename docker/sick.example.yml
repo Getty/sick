@@ -36,6 +36,7 @@ devices:
   #   host: web.example.internal
   #   port: 443
   #   names: [web.example.internal]
+  #   mode_key: 0640                 # nginx runs with group 0, never as root
   #   dir: /var/lib/sick/certs/web
   #
   # A Cisco SB switch (SICK-Target-CiscoSB, in the image):

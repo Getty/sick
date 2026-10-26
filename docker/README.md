@@ -48,6 +48,10 @@ docker compose up -d --build
 docker compose logs -f sick
 ```
 
+The `mkdir -m 700 secrets` above is for lab mode. For a real CA the secrets
+directory belongs to root (`sudo install -d -m 0700 -o root`): see chapter 2 of
+the handbook (`docs/handbook/02-the-ca.md`).
+
 `sick.yml` and `secrets/` are yours and are ignored by git. To keep them
 somewhere else – outside the checkout is the better place – name them in an
 `.env` file next to `compose.yml`, or in the environment:
@@ -333,7 +337,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
   --out /work/for-the-ca --root-key /work/root/root_ca_key \
   --root-password-file /work/root/root.pw \
   --dns example.internal --ip 192.0.2.0/24
-SICK_CA_IMPORT=/media/offline/for-the-ca SICK_CA_DNS=ca.example.internal \
+SICK_CA_IMPORT=/media/transfer/for-the-ca SICK_CA_DNS=ca.example.internal \
   docker compose -f compose.yml -f compose.import.yml up -d
 ```
 
@@ -490,7 +494,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
   --out /work/new-intermediate --root-cert /work/for-the-ca/root_ca.crt \
   --root-key /work/root/root_ca_key --root-password-file /work/root/root.pw \
   --intermediate /work/for-the-ca/intermediate_ca.crt
-docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose cp /media/transfer/new-intermediate/. ca:/home/step/switch
 docker compose exec ca /bin/bash /usr/local/bin/init-ca.sh --switch-intermediate
 ```
 
@@ -520,7 +524,7 @@ give every command the same `-f` files as the CA:
 
 ```bash
 docker compose stop ca
-docker compose cp /media/offline/new-intermediate/. ca:/home/step/switch
+docker compose cp /media/transfer/new-intermediate/. ca:/home/step/switch
 docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --switch-intermediate
 docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --retire-intermediate
 docker compose run --rm --no-deps --entrypoint /bin/bash ca /usr/local/bin/init-ca.sh --rotate-provisioner
