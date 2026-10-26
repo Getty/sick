@@ -102,7 +102,8 @@ first real rollout:
    first, then the two target distributions pinned to `SICK 0.001`), image
    name and registry, and whether `docker/`, `k8s/`, `contrib/`, `t/e2e/`
    ship in the tarball (card k72; proposal: ship `docker/`, `contrib/`,
-   `docs/`, leave `t/e2e/` out).
+   `docs/`, leave `t/e2e/` out; the agent and CI configuration ship
+   either way).
 6. Smaller ones: signing the Apple profile, a separate client CA, OIDC
    enrolment, and cards k10 (tests on the house stack) and k11 (which
    hand-written plumbing gives way to CPAN).
@@ -150,7 +151,7 @@ iDRAC 7/8 (needs `WWW::iDRAC` first).
 | k34 | the other hierarchy's intermediate during a root replacement | documented limit; build only if a leaf-only device must work through phase B |
 | k51 | external account binding for ACME | your decision |
 | k72 | which directories ship on CPAN | agent and CI configuration ship as the bundle gathers them (the prune was reverted on 2026-10-26); `docker/`, `k8s/`, `contrib/`, `t/e2e/` are your decision |
-| k73, k74 (and #6 in cisco, #8 in proxmox) | release blockers: pin `SICK 0.001` in the target dists; GitHub metadata wrong because the remotes are SSH host aliases | need the core released first, and the release machine's remote |
+| k73, k74 (and #6 in cisco, #8 in proxmox) | release blockers: pin `SICK 0.001` in the target dists; GitHub metadata wrong because the remotes are SSH host aliases | done on 2026-10-26: both targets pin `SICK 0.001` ahead of CPAN (released together), and with `github.com` remotes the builds carry repository, bugtracker and SUPPORT |
 | k75, k76 | two small fixes (a hint in `trust-nss.sh`, an example's `mode_key`) | found in the last walkthroughs, not release-blocking |
 | k77 | `docker/README.md` still shows the lab form of the secrets directory and the root-key medium on the CA host, where the handbook now uses a root-owned directory and a transfer medium | prose under `docker/`, the worker's lane; not release-blocking |
 | cisco #4, #5; proxmox #9 | small findings in the target distributions | not release-blocking |
