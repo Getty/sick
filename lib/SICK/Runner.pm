@@ -149,7 +149,7 @@ has state => ( is => 'ro', isa => HasMethods [qw( read update )], predicate => 1
 
 Optional. A L<SICK::State>: when it is there, L</run> keeps a record per
 device and defers devices whose last attempts failed (see
-L</"Records and back-off">); L</has_state> says whether it is. Without it
+L</"Records and back-off">); C<has_state> says whether it is. Without it
 a run remembers nothing, as before. L</check> never touches it.
 
 =cut
@@ -171,7 +171,7 @@ has verify_interval => ( is => 'ro', isa => Num, default   => 2 );
 =attr verify_timeout
 
 When given, it replaces the L<SICK::Target/verify_timeout> of every target;
-L</has_verify_timeout> says whether it was.
+C<has_verify_timeout> says whether it was.
 
 =attr verify_interval
 
