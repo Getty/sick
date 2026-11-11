@@ -1,0 +1,32 @@
+---
+class: standard
+created: 2026-11-11T19:24:19Z
+id: 78
+priority: medium
+status: backlog
+tags:
+- hq
+- clients
+- trust
+title: 'HQ: Getty''s Windows 11 PC as the first real Windows client (hq-checklist,
+  chapter 3)'
+updated: 2026-11-11T19:24:19Z
+---
+
+Filed by the WindowsAgent (Claude on Getty's Windows PC) on 2026-11-11, at Getty's request: what the Windows side expects from the HQ rollout. homelab steers the rollout (CA, vendor install on pikachu, device list); this card only says what has to be true at the client. It is the "Windows 11" and "Windows, Firefox" entries of docs/handbook/hq-checklist.md (chapter 3), on the machine that will actually use the HQ consoles.
+
+The client: MARSUPILAMI, 10.5.10.12, Windows 11 Pro build 26300. Windows PowerShell 5.1 only - PowerShell 7 is not installed (install it for the test, or record the PS 7 half as not tried). Browsers: Edge WebView2 157.0.4341.46 (MobaXterm 25.4 browser sessions), Chrome 157 (own user-data-dir), Firefox 159 (security.enterprise_roots.enabled not set, so the default). Admin elevation goes through without a prompt here (ConsentPromptBehaviorAdmin=0); an import into the current user's root store still shows the Windows security dialog, which only Getty can confirm.
+
+What Getty needs to be handed (homelab prepares it, Getty does the clicks):
+- the link of the trust page (`sick trust` output behind a web server reachable from 10.5.10.0/24);
+- the root's SHA-256 fingerprint over a second channel (the ceremony record), not only from the page;
+- the exact command, e.g. `powershell -ExecutionPolicy Bypass -File trust-windows.ps1 install --fingerprint <sha256>`, and which store it writes (current user or machine).
+
+Expected of trust-windows.ps1 on this PC:
+1. the root lands in Trusted Root Certification Authorities, the intermediate in Intermediate Certification Authorities, nothing else;
+2. a second install does not fail; `remove` takes out exactly what install put in;
+3. a wrong fingerprint is refused and nothing is installed.
+
+Only the root from the ceremony goes onto this PC - not cihq-ca, not the SICK Lab CA of dev-sick.
+
+Done when: with one SICK device live (snorlax is the first candidate), the WindowsAgent runs install, checks that all four clients (MobaXterm Edge session, Edge, Chrome, Firefox) accept the device, runs remove, checks that all four warn again, installs again, and writes the result on this card for whoever ticks hq-checklist.md. Tell Getty when the trust page is up; he starts the WindowsAgent.
