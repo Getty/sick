@@ -1,0 +1,24 @@
+---
+class: standard
+created: 2026-11-11T20:02:14Z
+id: 80
+priority: high
+status: backlog
+tags:
+- ceremony
+- portability
+- hq
+title: 'ceremony.sh: awk interval expressions fail under Debian 12 mawk (read-back
+  empty)'
+updated: 2026-11-11T20:02:14Z
+---
+
+Found by homelab at the HQ ceremony on 2026-11-11 (pikachu, Debian 12).
+
+ceremony.sh, function extension(): the awk patterns use interval expressions (/^ {12}X509v3 /, /^ {0,12}[^ ]/). Debian 12's default awk is mawk 1.3.4-20200120, which does not support intervals (added in mawk 20200717). There the patterns never match, every read-back is empty, and the ceremony ends with "MISMATCH in root key usage ... read back: |" for all five extensions although the certificates are correct (checked with openssl x509 -text). Debian 13 (mawk 20250131) and gawk are fine, which is why the lab never saw it.
+
+Workaround used at HQ: gawk installed, linked as awk first in PATH for the run. The failed run's root key and out/ were shredded as the script says.
+
+Fix: no interval expressions in awk (e.g. match 12 spaces literally, or ^ +X509v3 and compare length of the leading blanks), or check other scripts under docker/ and contrib/ for the same pattern (grep -n '{[0-9]' over the awk programs). Add a test that runs extension() under mawk without intervals if one is available, or at least a POSIX-awk lint. Note in chapter 2 that the ceremony needs an awk with interval support until fixed.
+
+Done when: ceremony.sh passes with Debian 12's mawk 1.3.4-20200120; grep finds no other awk interval in the repo (or each is fixed).
