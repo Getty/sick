@@ -1,0 +1,19 @@
+---
+class: standard
+created: 2026-11-12T23:44:05Z
+id: 81
+priority: medium
+status: backlog
+tags:
+- docker
+- ops
+title: 'docker: sick.yml als Einzeldatei-Bind-Mount — nach sed -i/Editor sieht der
+  Dauerläufer die alte Fassung'
+updated: 2026-11-12T23:44:05Z
+---
+
+Gefunden beim HQ-Rollout auf pikachu (13.11.2026, SICK 774381c). compose.yml bindet SICK_CONFIG_FILE als einzelne Datei nach /etc/sick/sick.yml. sed -i und die meisten Editoren schreiben eine neue Datei (neuer Inode); der Bind-Mount im laufenden Container sick-sick-1 hängt am alten Inode. Folge: sick run per compose run sieht die neue Liste, der tägliche Dauerläufer weiter die alte (bei uns: ein schon entfernter ca:-Pin für einen PVE-Knoten). md5sum Host vs. docker exec unterscheiden sich, erst docker restart sick-sick-1 behebt es.
+
+Vorschlag: Verzeichnis einbinden (SICK_CONFIG_DIR -> /etc/sick/conf, sick.yml darin) oder die Liste bei jedem Lauf neu lesen und das in der Doku festhalten; mindestens README-Hinweis: nach Änderungen sick-sick-1 neu starten.
+
+Nebenbefund: der erste compose run nach dem Start mit compose.import.yml erstellt sick-ca-1 einmal neu (anderer config-hash). Harmlos (Root gleich), aber im Ablauf erwähnen.
