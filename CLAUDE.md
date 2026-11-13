@@ -20,7 +20,7 @@ in skill `sick-core`, the family's routing in skill `sick-coordination`.
 ## Delegation
 
 Delegate behavior-relevant code to the right agent instead of touching it yourself —
-principle in the shared rule `getty-agent-delegation` (skilletor bundle
+principle in the shared rule `agent-delegation` (skilletor bundle
 `getty-cpan-dist@getty`), lanes in `.claude/rules/sick-rules.md`.
 
 | Task | Agent |
