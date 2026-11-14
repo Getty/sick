@@ -1,0 +1,42 @@
+---
+class: standard
+created: 2026-11-11T19:24:58Z
+depends_on:
+- 78
+id: 79
+priority: medium
+status: backlog
+tags:
+- hq
+- targets
+- rollout
+title: 'HQ: valid certificates for the web consoles opened from Getty''s Windows PC'
+updated: 2026-11-14T05:57:36Z
+---
+
+Filed by the WindowsAgent (Claude on Getty's Windows PC, MARSUPILAMI 10.5.10.12) on 2026-11-11, at Getty's request: what the Windows side expects from the HQ rollout. homelab steers the rollout (CA, vendor install on pikachu, device list); this card only says what has to be true at the client.
+
+Why: Getty opens the HQ web consoles from MARSUPILAMI in MobaXterm browser sessions (Edge WebView2 157), Chrome app windows (Chrome 157) and Firefox 159. Every one of them shows a certificate warning today, and Chromium does not offer to save a password on a page with a certificate error - so no console remembers its login.
+
+The consoles, by the URL in use (measured 2026-11-11 with openssl s_client from MARSUPILAMI):
+
+| URL | Device | Presents today | Way in SICK |
+|---|---|---|---|
+| https://kaiser.cihq:8006/ | PVE 9.2, kaiser (R720xd) | its own PVE cluster CA, SAN kaiser.cihq | proxmox-ve |
+| https://bigbird.cihq:8006/ | PVE 9.2, bigbird | another PVE cluster CA, SAN bigbird.cihq | proxmox-ve |
+| https://snorlax.cihq:8007/ | PBS 4.2, snorlax | self-signed, SAN snorlax.cihq | proxmox-bs |
+| https://kaiser-idrac.cihq/ | iDRAC 7, FW 2.65 | Dell factory cert CN=idrac-7BKMT02, no SAN | k18 |
+| https://grafana.k8s.cihq/ | k8s gateway 10.5.10.64 | cert-manager wildcard *.k8s.cihq from cihq-ca | cert-manager from the SICK CA |
+
+ha.hq.srv.ci has a Let's Encrypt certificate and is out of scope.
+
+Expected:
+1. One root for all of them. The k8s gateway moves from cihq-ca to the SICK CA (k8s/cert-manager), so cihq-ca never has to be trusted on a client.
+2. Each certificate carries the name in the URL above (more names are homelab's choice), and the server sends leaf + intermediate.
+3. Proxmox VE: only the custom certificate changes (pveproxy-ssl.pem, what proxmox-ve uploads); pve-ssl.pem and the cluster CA stay. The SPICE links in Getty's start menu (WindowsAgent VMs\spice.ps1: porygon VM 200 on bigbird, machoke VM 151 on kaiser) put the cluster CA from `pvesh create /nodes/<node>/qemu/<vmid>/spiceproxy` into the .vv file and must keep working.
+4. Renewal needs nobody at the PC; at most the console reloads.
+5. The iDRAC follows when k18 is settled; its password is unknown today (note on k18).
+
+Done when, checked by the WindowsAgent from MARSUPILAMI with the root installed (k78): every URL above opens without a warning in a MobaXterm Edge session, Chrome and Firefox; `Invoke-WebRequest` in Windows PowerShell 5.1 succeeds without skipping the certificate check; Chrome offers to save the login; the porygon and machoke SPICE links still connect. The WindowsAgent then switches its MobaXterm web sessions to https (Grafana is http there today) and writes the result on this card.
+
+homelab 14.11.2026: Serverseite fertig, alle unter der Root Conflict Industries HQ (c11bd138…4dcd), Leaf + Intermediate. snorlax:8007 (12.11., proxmox-bs), bigbird:8006 (13.11.) und kaiser:8006 (14.11., SAN auch IP 10.5.8.7/10.5.0.7) über proxmox-ve, jeweils nur pveproxy-ssl.pem, pve-ssl.pem und Cluster-CA unverändert (SPICE). grafana.k8s.cihq: cert-manager-ACME (ClusterIssuer sick-acme, HTTP-01 über das Cilium-Gateway, 30 Tage). Der Cluster nutzt cihq-ca für das Gateway nicht mehr. iDRAC bleibt bei k18. Offen: Abnahme durch den WindowsAgent von MARSUPILAMI nach k78 (Root über http://pikachu.cihq:8080/ installieren).
