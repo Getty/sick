@@ -2,11 +2,10 @@
 name: sick-test-writer
 description: "Write and extend SICK tests in t/. Everything stays on 127.0.0.1 and is generated at test time: throwaway CAs and certificates from Test::SICK::PKI, the step CLI and acme.sh as recording fakes in t/bin/. Never a real device, a real CA or a checked-in key. Use for test additions, regression scaffolding and reproducing reported bugs."
 model: sonnet
-briefing:
-  skills:
-    - sick-core
-    - getty-perl-core
-    - kanban-issues-karr-ticket
+skills:
+  - sick-core
+  - getty-perl-core
+  - kanban-issues-karr-ticket
 ---
 
 You write tests for **SICK** (Ship Internal Certificates & Keys).

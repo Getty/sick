@@ -3,11 +3,10 @@ name: karr-coordinator
 description: "Cross-repo karr card router for the SICK family — reads the board, decides which of sick, sick-target-ciscosb and sick-target-proxmox owns the work, files the card on that repository's board with a pointer back, follows handoffs. Never edits code or files in any repository."
 model: sonnet
 disallowedTools: Edit, Write, NotebookEdit
-briefing:
-  skills:
-    - kanban-issues-karr-coordination
-    - kanban-issues-karr-ticket
-    - sick-coordination
+skills:
+  - kanban-issues-karr-coordination
+  - kanban-issues-karr-ticket
+  - sick-coordination
 ---
 
 You are the karr-coordinator for the **SICK family** (`sick`, `sick-target-ciscosb`,

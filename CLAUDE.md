@@ -33,7 +33,7 @@ principle in the shared rule `agent-delegation` (skilletor bundle
 
 Every subagent is one of these agents — never the built-in `general-purpose`/`Explore`/`Plan`.
 
-The agents carry their skills via `briefing.skills` (see `.claude/agents/`); the main agent
+The agents carry their skills via `skills:` (see `.claude/agents/`); the main agent
 delegates rather than loading them. `sick-core` and `sick-coordination` under
 `.claude/skills/` are this family's own and are installed from here into the targets; the
 other skills come from `.claude/skilletor.json` and are changed in their source, never here.

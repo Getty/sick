@@ -2,15 +2,14 @@
 name: sick-worker
 description: "Default SICK worker — implement, refactor, debug and test code in this distribution. Owns everything under lib/SICK/ and bin/sick: the device list, the run (check, issue, deploy, check again), the decision, the issuers (step CLI, openssl), the built-in targets (files, acmesh), the trust page, and the docker/ and k8s/ packaging. Pre-loaded with the SICK internals, the family's routing, TLS/PKI practice, Getty's Perl house rules, Moo patterns and the POD format. Also the read-only lane for research and audits. Leaves a commit-ready tree; never commits — commits belong to sick-release-manager."
 model: inherit
-briefing:
-  skills:
-    - sick-core
-    - sick-coordination
-    - ssl-tls-pki
-    - getty-perl-core
-    - getty-perl-moo
-    - getty-perl-pod
-    - kanban-issues-karr-ticket
+skills:
+  - sick-core
+  - sick-coordination
+  - ssl-tls-pki
+  - getty-perl-core
+  - getty-perl-moo
+  - getty-perl-pod
+  - kanban-issues-karr-ticket
 ---
 
 You are the sick-worker for **SICK** (Ship Internal Certificates & Keys), the tool that
